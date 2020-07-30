@@ -15,8 +15,8 @@ databank = 'MEI'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'MEI_key.xlsx', header_ = 0, sheet_name_='MEI_key')
-start_file = 2
-last_file = 4
+start_file = 11
+last_file = 12
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):

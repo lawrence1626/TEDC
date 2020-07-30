@@ -100,80 +100,80 @@ def CONCATE(df_key, DB_A, DB_Q, DB_name_A, DB_name_Q):
         sys.stdout.flush()
         KEY_DATA_t.loc[s, 'snl'] = KEY_DATA_t.loc[0, 'snl'] + s
     sys.stdout.write("\n")
-    if repeated > 0:
-        print('Setting new files, Time: ', int(time.time() - tStart),'s'+'\n')
+    #if repeated > 0:
+    print('Setting new files, Time: ', int(time.time() - tStart),'s'+'\n')
+    
+    start_code_A = 1
+    start_code_Q = 1
+    start_table_A = 1
+    start_table_Q = 1
+    DB_A_new = {}
+    DB_Q_new = {}
+    db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
+    db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
+    DB_name_A_new = []
+    DB_name_Q_new = []
+    db_table_new = 0
+    db_code_new = 0
+    for f in range(KEY_DATA_t.shape[0]):
+        sys.stdout.write("\rSetting new keys: "+str(db_table_new)+" "+str(db_code_new))
+        sys.stdout.flush()
+        if KEY_DATA_t.iloc[f]['freq'] == 'A':
+            if start_code_A >= 200:
+                DB_A_new[db_table_A] = db_table_A_t
+                DB_name_A_new.append(db_table_A)
+                start_table_A += 1
+                start_code_A = 1
+                db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
+            db_table_A = DB_TABLE+'A_'+str(start_table_A).rjust(4,'0')
+            db_code_A = DB_CODE+str(start_code_A).rjust(3,'0')
+            db_table_A_t[db_code_A] = DATA_BASE_t[KEY_DATA_t.iloc[f]['db_table']][KEY_DATA_t.iloc[f]['db_code']]
+            KEY_DATA_t.loc[f, 'db_table'] = db_table_A
+            KEY_DATA_t.loc[f, 'db_code'] = db_code_A
+            start_code_A += 1
+            db_table_new = db_table_A
+            db_code_new = db_code_A
+        elif KEY_DATA_t.iloc[f]['freq'] == 'Q':
+            if start_code_Q >= 200:
+                DB_Q_new[db_table_Q] = db_table_Q_t
+                DB_name_Q_new.append(db_table_Q)
+                start_table_Q += 1
+                start_code_Q = 1
+                db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
+            db_table_Q = DB_TABLE+'Q_'+str(start_table_Q).rjust(4,'0')
+            db_code_Q = DB_CODE+str(start_code_Q).rjust(3,'0')
+            db_table_Q_t[db_code_Q] = DATA_BASE_t[KEY_DATA_t.iloc[f]['db_table']][KEY_DATA_t.iloc[f]['db_code']]
+            KEY_DATA_t.loc[f, 'db_table'] = db_table_Q
+            KEY_DATA_t.loc[f, 'db_code'] = db_code_Q
+            start_code_Q += 1
+            db_table_new = db_table_Q
+            db_code_new = db_code_Q
         
-        start_code_A = 1
-        start_code_Q = 1
-        start_table_A = 1
-        start_table_Q = 1
-        DB_A_new = {}
-        DB_Q_new = {}
-        db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
-        db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
-        DB_name_A_new = []
-        DB_name_Q_new = []
-        db_table_new = 0
-        db_code_new = 0
-        for f in range(KEY_DATA_t.shape[0]):
-            sys.stdout.write("\rSetting new keys: "+str(db_table_new)+" "+str(db_code_new))
-            sys.stdout.flush()
-            if KEY_DATA_t.iloc[f]['freq'] == 'A':
-                if start_code_A >= 200:
-                    DB_A_new[db_table_A] = db_table_A_t
-                    DB_name_A_new.append(db_table_A)
-                    start_table_A += 1
-                    start_code_A = 1
-                    db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
-                db_table_A = DB_TABLE+'A_'+str(start_table_A).rjust(4,'0')
-                db_code_A = DB_CODE+str(start_code_A).rjust(3,'0')
-                db_table_A_t[db_code_A] = DATA_BASE_t[KEY_DATA_t.iloc[f]['db_table']][KEY_DATA_t.iloc[f]['db_code']]
-                KEY_DATA_t.loc[f, 'db_table'] = db_table_A
-                KEY_DATA_t.loc[f, 'db_code'] = db_code_A
-                start_code_A += 1
-                db_table_new = db_table_A
-                db_code_new = db_code_A
-            elif KEY_DATA_t.iloc[f]['freq'] == 'Q':
-                if start_code_Q >= 200:
-                    DB_Q_new[db_table_Q] = db_table_Q_t
-                    DB_name_Q_new.append(db_table_Q)
-                    start_table_Q += 1
-                    start_code_Q = 1
-                    db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
-                db_table_Q = DB_TABLE+'Q_'+str(start_table_Q).rjust(4,'0')
-                db_code_Q = DB_CODE+str(start_code_Q).rjust(3,'0')
-                db_table_Q_t[db_code_Q] = DATA_BASE_t[KEY_DATA_t.iloc[f]['db_table']][KEY_DATA_t.iloc[f]['db_code']]
-                KEY_DATA_t.loc[f, 'db_table'] = db_table_Q
-                KEY_DATA_t.loc[f, 'db_code'] = db_code_Q
-                start_code_Q += 1
-                db_table_new = db_table_Q
-                db_code_new = db_code_Q
-            
-            if f == KEY_DATA_t.shape[0]-1:
-                if db_table_A_t.empty == False:
-                    DB_A_new[db_table_A] = db_table_A_t
-                    DB_name_A_new.append(db_table_A)
-                if db_table_Q_t.empty == False:
-                    DB_Q_new[db_table_Q] = db_table_Q_t
-                    DB_name_Q_new.append(db_table_Q)
-        sys.stdout.write("\n")
-        DB_A = DB_A_new
-        DB_Q = DB_Q_new
-        DB_name_A = DB_name_A_new
-        DB_name_Q = DB_name_Q_new
+        if f == KEY_DATA_t.shape[0]-1:
+            if db_table_A_t.empty == False:
+                DB_A_new[db_table_A] = db_table_A_t
+                DB_name_A_new.append(db_table_A)
+            if db_table_Q_t.empty == False:
+                DB_Q_new[db_table_Q] = db_table_Q_t
+                DB_name_Q_new.append(db_table_Q)
+    sys.stdout.write("\n")
+    DB_A = DB_A_new
+    DB_Q = DB_Q_new
+    DB_name_A = DB_name_A_new
+    DB_name_Q = DB_name_Q_new
 
-        print('Concating new files: QNIA_database, Time: ', int(time.time() - tStart),'s'+'\n')
-        DATA_BASE_t = {}
-        for d in DB_name_A:
-            sys.stdout.write("\rConcating sheet: "+str(d))
-            sys.stdout.flush()
-            DATA_BASE_t[d] = DB_A[d]
-        sys.stdout.write("\n")
-        for d in DB_name_Q:
-            sys.stdout.write("\rConcating sheet: "+str(d))
-            sys.stdout.flush()
-            DATA_BASE_t[d] = DB_Q[d]
-        sys.stdout.write("\n")
+    print('Concating new files: QNIA_database, Time: ', int(time.time() - tStart),'s'+'\n')
+    DATA_BASE_t = {}
+    for d in DB_name_A:
+        sys.stdout.write("\rConcating sheet: "+str(d))
+        sys.stdout.flush()
+        DATA_BASE_t[d] = DB_A[d]
+    sys.stdout.write("\n")
+    for d in DB_name_Q:
+        sys.stdout.write("\rConcating sheet: "+str(d))
+        sys.stdout.flush()
+        DATA_BASE_t[d] = DB_Q[d]
+    sys.stdout.write("\n")
     print(KEY_DATA_t)
     print('Time: ', int(time.time() - tStart),'s'+'\n')
 
