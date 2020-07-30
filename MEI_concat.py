@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 
+ENCODING = 'utf-8-sig'
 data_path = './output/'
 
 def ERROR(error_text):
