@@ -15,8 +15,8 @@ databank = 'MEI'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'MEI_key.xlsx', header_ = 0, sheet_name_='MEI_key')
-start_file = 58
-last_file = 58
+start_file = 2
+last_file = 4
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -519,86 +519,86 @@ for s in range(1,df_key.shape[0]):
     sys.stdout.flush()
     df_key.loc[s, 'snl'] = df_key.loc[0, 'snl'] + s
 sys.stdout.write("\n")
-if repeated_A > 0 or repeated_Q > 0 or repeated_M > 0:
-    print('Setting new files, Time: ', int(time.time() - tStart),'s'+'\n')
+#if repeated_A > 0 or repeated_Q > 0 or repeated_M > 0:
+print('Setting new files, Time: ', int(time.time() - tStart),'s'+'\n')
+
+DATA_BASE_A_new = {}
+DATA_BASE_Q_new = {}
+DATA_BASE_M_new = {}
+db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
+db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
+db_table_M_t = pd.DataFrame(index = Month_list, columns = [])
+DB_name_A_new = []
+DB_name_Q_new = []
+DB_name_M_new = []
+db_table_new = 0
+db_code_new = 0
+for f in range(df_key.shape[0]):
+    sys.stdout.write("\rSetting new keys: "+str(db_table_new)+" "+str(db_code_new))
+    sys.stdout.flush()
+    if df_key.iloc[f]['freq'] == 'A':
+        if start_code_A >= 200:
+            DATA_BASE_A_new[db_table_A] = db_table_A_t
+            DB_name_A_new.append(db_table_A)
+            start_table_A += 1
+            start_code_A = 1
+            db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
+        db_table_A = DB_TABLE+'A_'+str(start_table_A).rjust(4,'0')
+        db_code_A = DB_CODE+str(start_code_A).rjust(3,'0')
+        db_table_A_t[db_code_A] = DATA_BASE_A[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+        df_key.loc[f, 'db_table'] = db_table_A
+        df_key.loc[f, 'db_code'] = db_code_A
+        start_code_A += 1
+        db_table_new = db_table_A
+        db_code_new = db_code_A
+    elif df_key.iloc[f]['freq'] == 'Q':
+        if start_code_Q >= 200:
+            DATA_BASE_Q_new[db_table_Q] = db_table_Q_t
+            DB_name_Q_new.append(db_table_Q)
+            start_table_Q += 1
+            start_code_Q = 1
+            db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
+        db_table_Q = DB_TABLE+'Q_'+str(start_table_Q).rjust(4,'0')
+        db_code_Q = DB_CODE+str(start_code_Q).rjust(3,'0')
+        db_table_Q_t[db_code_Q] = DATA_BASE_Q[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+        df_key.loc[f, 'db_table'] = db_table_Q
+        df_key.loc[f, 'db_code'] = db_code_Q
+        start_code_Q += 1
+        db_table_new = db_table_Q
+        db_code_new = db_code_Q
+    elif df_key.iloc[f]['freq'] == 'M':
+        if start_code_M >= 200:
+            DATA_BASE_M_new[db_table_M] = db_table_M_t
+            DB_name_M_new.append(db_table_M)
+            start_table_M += 1
+            start_code_M = 1
+            db_table_M_t = pd.DataFrame(index = Month_list, columns = [])
+        db_table_M = DB_TABLE+'M_'+str(start_table_M).rjust(4,'0')
+        db_code_M = DB_CODE+str(start_code_M).rjust(3,'0')
+        db_table_M_t[db_code_M] = DATA_BASE_M[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+        df_key.loc[f, 'db_table'] = db_table_M
+        df_key.loc[f, 'db_code'] = db_code_M
+        start_code_M += 1
+        db_table_new = db_table_M
+        db_code_new = db_code_M
     
-    DATA_BASE_A_new = {}
-    DATA_BASE_Q_new = {}
-    DATA_BASE_M_new = {}
-    db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
-    db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
-    db_table_M_t = pd.DataFrame(index = Month_list, columns = [])
-    DB_name_A_new = []
-    DB_name_Q_new = []
-    DB_name_M_new = []
-    db_table_new = 0
-    db_code_new = 0
-    for f in range(df_key.shape[0]):
-        sys.stdout.write("\rSetting new keys: "+str(db_table_new)+" "+str(db_code_new))
-        sys.stdout.flush()
-        if df_key.iloc[f]['freq'] == 'A':
-            if start_code_A >= 200:
-                DATA_BASE_A_new[db_table_A] = db_table_A_t
-                DB_name_A_new.append(db_table_A)
-                start_table_A += 1
-                start_code_A = 1
-                db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
-            db_table_A = DB_TABLE+'A_'+str(start_table_A).rjust(4,'0')
-            db_code_A = DB_CODE+str(start_code_A).rjust(3,'0')
-            db_table_A_t[db_code_A] = DATA_BASE_A[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
-            df_key.loc[f, 'db_table'] = db_table_A
-            df_key.loc[f, 'db_code'] = db_code_A
-            start_code_A += 1
-            db_table_new = db_table_A
-            db_code_new = db_code_A
-        elif df_key.iloc[f]['freq'] == 'Q':
-            if start_code_Q >= 200:
-                DATA_BASE_Q_new[db_table_Q] = db_table_Q_t
-                DB_name_Q_new.append(db_table_Q)
-                start_table_Q += 1
-                start_code_Q = 1
-                db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
-            db_table_Q = DB_TABLE+'Q_'+str(start_table_Q).rjust(4,'0')
-            db_code_Q = DB_CODE+str(start_code_Q).rjust(3,'0')
-            db_table_Q_t[db_code_Q] = DATA_BASE_Q[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
-            df_key.loc[f, 'db_table'] = db_table_Q
-            df_key.loc[f, 'db_code'] = db_code_Q
-            start_code_Q += 1
-            db_table_new = db_table_Q
-            db_code_new = db_code_Q
-        elif df_key.iloc[f]['freq'] == 'M':
-            if start_code_M >= 200:
-                DATA_BASE_M_new[db_table_M] = db_table_M_t
-                DB_name_M_new.append(db_table_M)
-                start_table_M += 1
-                start_code_M = 1
-                db_table_M_t = pd.DataFrame(index = Month_list, columns = [])
-            db_table_M = DB_TABLE+'M_'+str(start_table_M).rjust(4,'0')
-            db_code_M = DB_CODE+str(start_code_M).rjust(3,'0')
-            db_table_M_t[db_code_M] = DATA_BASE_M[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
-            df_key.loc[f, 'db_table'] = db_table_M
-            df_key.loc[f, 'db_code'] = db_code_M
-            start_code_M += 1
-            db_table_new = db_table_M
-            db_code_new = db_code_M
-        
-        if f == df_key.shape[0]-1:
-            if db_table_A_t.empty == False:
-                DATA_BASE_A_new[db_table_A] = db_table_A_t
-                DB_name_A_new.append(db_table_A)
-            if db_table_Q_t.empty == False:
-                DATA_BASE_Q_new[db_table_Q] = db_table_Q_t
-                DB_name_Q_new.append(db_table_Q)
-            if db_table_M_t.empty == False:
-                DATA_BASE_M_new[db_table_M] = db_table_M_t
-                DB_name_M_new.append(db_table_M)
-    sys.stdout.write("\n")
-    DATA_BASE_A = DATA_BASE_A_new
-    DATA_BASE_Q = DATA_BASE_Q_new
-    DATA_BASE_M = DATA_BASE_M_new
-    DB_name_A = DB_name_A_new
-    DB_name_Q = DB_name_Q_new
-    DB_name_M = DB_name_M_new
+    if f == df_key.shape[0]-1:
+        if db_table_A_t.empty == False:
+            DATA_BASE_A_new[db_table_A] = db_table_A_t
+            DB_name_A_new.append(db_table_A)
+        if db_table_Q_t.empty == False:
+            DATA_BASE_Q_new[db_table_Q] = db_table_Q_t
+            DB_name_Q_new.append(db_table_Q)
+        if db_table_M_t.empty == False:
+            DATA_BASE_M_new[db_table_M] = db_table_M_t
+            DB_name_M_new.append(db_table_M)
+sys.stdout.write("\n")
+DATA_BASE_A = DATA_BASE_A_new
+DATA_BASE_Q = DATA_BASE_Q_new
+DATA_BASE_M = DATA_BASE_M_new
+DB_name_A = DB_name_A_new
+DB_name_Q = DB_name_Q_new
+DB_name_M = DB_name_M_new
   
 print(df_key)
 #print(DATA_BASE_t)
@@ -607,7 +607,7 @@ print('Time: ', int(time.time() - tStart),'s'+'\n')
 if merge_file.empty == False:
     df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_A, DATA_BASE_Q, DATA_BASE_M, DB_name_A, DB_name_Q, DB_name_M)
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer:
+    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
         endl = True
         for key in sorted(DATA_BASE.keys()):
             if key.find('DB_A') >= 0:
@@ -629,7 +629,7 @@ if merge_file.empty == False:
     sys.stdout.write("\n")
 else:
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer:
+    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
         for d in DB_name_A:
             sys.stdout.write("\rOutputing sheet: "+str(d))
             sys.stdout.flush()
