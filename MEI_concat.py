@@ -199,17 +199,17 @@ def CONCATE(df_key, DB_A, DB_Q, DB_M, DB_name_A, DB_name_Q, DB_name_M):
     print('Concating new files: MEI_database, Time: ', int(time.time() - tStart),'s'+'\n')
     DATA_BASE_t = {}
     for d in DB_name_A:
-        sys.stdout.write("\rConcating sheet: "+str(d))
+        sys.stdout.write("\rConcating new sheet: "+str(d))
         sys.stdout.flush()
         DATA_BASE_t[d] = DB_A[d]
     sys.stdout.write("\n")
     for d in DB_name_Q:
-        sys.stdout.write("\rConcating sheet: "+str(d))
+        sys.stdout.write("\rConcating new sheet: "+str(d))
         sys.stdout.flush()
         DATA_BASE_t[d] = DB_Q[d]
     sys.stdout.write("\n")
     for d in DB_name_M:
-        sys.stdout.write("\rConcating sheet: "+str(d))
+        sys.stdout.write("\rConcating new sheet: "+str(d))
         sys.stdout.flush()
         DATA_BASE_t[d] = DB_M[d]
     sys.stdout.write("\n")
