@@ -203,7 +203,7 @@ for coun in c_list:
                 name_ord = QNIA_t.columns[i][0]
                 book = COUNTRY_NAME(QNIA_t.columns[i][0])
                 if QNIA_t.columns[i][5] != '':
-                    form_c = int(QNIA_t.columns[i][5])
+                    form_c = str(QNIA_t.columns[i][5])
                 else:
                     form_c = QNIA_t.columns[i][5]
                 #flags = QNIA_t['Flags'][i]
@@ -254,7 +254,7 @@ for coun in c_list:
                 name_ord = QNIA_t.columns[i][0]
                 book = COUNTRY_NAME(QNIA_t.columns[i][0])
                 if QNIA_t.columns[i][5] != '':
-                    form_c = int(QNIA_t.columns[i][5])
+                    form_c = str(QNIA_t.columns[i][5])
                 else:
                     form_c = QNIA_t.columns[i][5]
                 #flags = QNIA_t['Flags'][i]
