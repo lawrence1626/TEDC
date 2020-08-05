@@ -15,8 +15,8 @@ databank = 'MEI'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'MEI_key.xlsx', header_ = 0, sheet_name_='MEI_key')
-start_file = 17
-last_file = 20
+start_file = 61
+last_file = 66
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -51,12 +51,12 @@ def takeFirst(alist):
 
 def COUNTRY_CODE(location):
     country_list={'A5M':555,'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'BRIICS':259,'CAN':156,'CHL':228,'CHN':924, \
-                'COL':233,'CRI':238,'CYP':423,'CZE':935,'DNK':128,'EA19':163,'EST':939,'EU15':715,'EU27_2020':727, \
-                'EU28':728,'FIN':172,'FRA':132,'G-20':120,'G4E':147,'G-7':107,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
+                'COL':233,'CRI':238,'CYP':423,'CZE':935,'DNK':128,'EA19':719,'EST':939,"EU15":715,'EU27_2020':727, \
+                'EU28':728,'FIN':172,'FRA':132,'G-20':920,'G4E':704,'G-7':907,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
                 'IND':534,'ISL':176,'IRL':178,'ISR':436,'ITA':136,'JPN':158,'KOR':542,'LVA':941,'LTU':946,'LUX':126, \
-                'MEX':273,'MLT':181,'NAFTA':121,'NZL':196,'NOR':142,'OECD':999,'OECDE':997,'ONM':996,'OXE':903,'OTF':990,'POL':964, \
+                'MEX':273,'MLT':181,'NAFTA':121,'NZL':196,'NOR':142,'OECD':930,'OECDE':950,'ONM':996,'OXE':903,"OTF":990,'POL':964, \
                 'PRT':182,'ROU':968,'RUS':922,'SAU':456,'SDR':919,'SVK':936,'SVN':961,'ESP':184,'SWE':144,'CHE':146,'NLD':138, \
-                'TUR':186,'IKR':926,'GBR':112,'USA':111,'DEW':134,'ZAF':199}
+                'TUR':186,"IKR":926,'GBR':112,'USA':111,"DEW":134,'ZAF':199}
     if location in country_list:
         return country_list[location]
     else:

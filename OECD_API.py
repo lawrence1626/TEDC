@@ -3,12 +3,13 @@ from cif import cif
 import pandas as pd
 
 #def create_DataFrame_from_OECD(country = 'CZE', subject = [], measure = [], frequency = 'M',  startDate = None, endDate = None):
-data, subjects, measures = cif.createDataFrameFromOECD(countries = ['USA'], dsname = 'QNA', frequency = 'Q', startDate = '2020-01')
+data, subjects, measures = cif.createDataFrameFromOECD(countries = ['JPN'], dsname = 'QNA', frequency = 'A')
 print(data)
 print(subjects)
 print(measures)
-
-path = 'C:/Users/lawre/Desktop/'
-data.to_csv(path+'data.csv')
-subjects.to_csv(path+'subjects.csv')
-measures.to_csv(path+'measures.csv')
+"""
+out_path = "./output/"
+data.to_csv(out_path+'data.csv')
+subjects.to_csv(out_path+'subjects.csv')
+measures.to_csv(out_path+'measures.csv')
+"""
