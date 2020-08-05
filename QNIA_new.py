@@ -4,7 +4,7 @@ import math, re, sys, calendar, os, copy, time
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
-from cif import cif
+from cif_new import createDataFrameFromOECD
 from QNIA_concat import CONCATE, readExcelFile
 
 ENCODING = 'utf-8-sig'
@@ -51,19 +51,29 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False, \
 def takeFirst(alist):
 	return alist[0]
 
-def COUNTRY_CODE(location):
-    global country_list
-    country_list={'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'CAN':156,'CHL':228,'CHN':924, \
+country_list={'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'CAN':156,'CHL':228,'CHN':924, \
                 'COL':233,'CRI':238,'CZE':935,'DNK':128,'EA19':719,'EST':939,'EU15':715,'EU27_2020':727, \
                 'EU28':728,'FIN':172,'FRA':132,'G-20':920,'G-7':907,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
                 'IND':534,'ISL':176,'IRL':178,'ISR':436,'ITA':136,'JPN':158,'KOR':542,'LVA':941,'LTU':946,'LUX':126, \
                 'MEX':273,'NAFTA':121,'NZL':196,'NOR':142,'OECD':950,'OECDE':930,'OTF':990,'POL':964, \
                 'PRT':182,'ROU':968,'RUS':922,'SAU':456,'SVK':936,'SVN':961,'ESP':184,'SWE':144,'CHE':146,'NLD':138, \
-                'TUR':186,"IKR":926,'GBR':112,'USA':111,"DEW":134,'ZAF':199}
+                'TUR':186,'GBR':112,'USA':111,'ZAF':199}
+def COUNTRY_CODE(location):
     if location in country_list:
         return country_list[location]
     else:
         ERROR('國家代碼錯誤: '+location)
+
+country_name = readFile(data_path+'Country_Name.csv', header_ = 0)
+def COUNTRY_NAME(location):
+    country_found = False
+    for loc in range(country_name.shape[0]):
+        if country_name['location'][loc] == location:
+            country_found = True
+            return country_name['Country_Name'][loc]
+            break
+    if country_found == False:
+        ERROR('找不到國家: '+location)
 
 this_year = datetime.now().year + 1
 Year_list = [tmp for tmp in range(1947,this_year)]
@@ -137,198 +147,133 @@ c_list = list(country_list)
 c_list.sort()
 
 for coun in c_list:
-    for freq in frequency_list:
-        print('Getting data: country = '+coun+', frequency = '+freq+' Time: ', int(time.time() - tStart),'s'+'\n')
-        QNIA_t, subjects, measures = cif.createDataFrameFromOECD(countries = [coun], dsname = 'QNA', frequency = freq)
+    for frequency in frequency_list:
+        print('Getting data: country = '+COUNTRY_NAME(coun)+', frequency = '+frequency+' Time: ', int(time.time() - tStart),'s'+'\n')
+        QNIA_t, subjects, measures = createDataFrameFromOECD(countries = [coun], dsname = 'QNA', frequency = frequency)
         #QNIA_t = readFile(data_path+NAME+str(g)+'.csv', header_ = 0)
+        subjects_list = {}
+        for s in range(subjects.shape[0]):
+            subjects_list[subjects['id'][s]] = subjects['name'][s]
+        measures_list = {}
+        for m in range(measures.shape[0]):
+            measures_list[measures['id'][m]] = measures['name'][m]
         nG = QNIA_t.shape[1]
         
         for i in range(nG):
-            sys.stdout.write("\rLoading...("+str(round(i*100/nG, 1))+"%)*")
+            sys.stdout.write("\rLoading...("+str(int(i*100/nG))+"%)*")
             sys.stdout.flush()
             
-            if i==0:
-                if freq == 'A':
-                    if code_num_A >= 200:
-                        DATA_BASE_A[db_table_A] = db_table_A_t
-                        DB_name_A.append(db_table_A)
-                        table_num_A += 1
-                        code_num_A = 1
-                        db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
-                    
-                    name = freq+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(QNIA_t.columns[i][1])+'__'+str(QNIA_t.columns[i][2])+'.a'
+            if frequency == 'A':
+                if code_num_A >= 200:
+                    DATA_BASE_A[db_table_A] = db_table_A_t
+                    DB_name_A.append(db_table_A)
+                    table_num_A += 1
+                    code_num_A = 1
+                    db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
                 
-                    value = data[data.columns[i]]
-                    db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
-                    db_code_A = DB_CODE+str(code_num_A).rjust(3,'0')
-                    db_table_A_t[db_code_A] = ['' for tmp in range(nY)]
-                    for j in range(nY):
-                        if db_table_A_t.index[j] == int(value.index[0]):
-                            time_index = j
-                            for k in range(value.shape[0]):
-                                db_table_A_t[db_code_A][db_table_A_t.index[time_index]] = value[k]
-                                time_index += 1
-                            break
-                    
-                    Subject = 
-                    Measure = 
-                    PowerCode = 
-                    Unit = 
-                    
-                    desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
-                    form_e = str(Subject)
-                    
-                    desc_c = ''
-                    freq = QNIA_t['FREQUENCY'][i]
-                    start = int(QNIA_t['TIME'][i])
-                    unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
-                    name_ord = QNIA_t['LOCATION'][i]
-                    book = QNIA_t['Country'][i]
-                    form_c = QNIA_t['Reference Period'][i]
-                    #flags = QNIA_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
-                    KEY_DATA.append(key_tmp)
-                    sort_tmp_A = [name, snl, db_table_A, db_code_A]
-                    SORT_DATA_A.append(sort_tmp_A)
-                    snl += 1
-
-                    code_num_A += 1
-                elif QNIA_t['FREQUENCY'][i] == 'Q':
-                    if code_num_Q >= 200:
-                        DATA_BASE_Q[db_table_Q] = db_table_Q_t
-                        DB_name_Q.append(db_table_Q)
-                        table_num_Q += 1
-                        code_num_Q = 1
-                        db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
-                    
-                    name = str(QNIA_t['FREQUENCY'][i])+str(COUNTRY_CODE(QNIA_t['LOCATION'][i]))+str(QNIA_t['SUBJECT'][i])+'__'+str(QNIA_t['MEASURE'][i])+'.q'
+                name = frequency+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(QNIA_t.columns[i][1])+'__'+str(QNIA_t.columns[i][2])+'.a'
+            
+                value = QNIA_t[QNIA_t.columns[i]]
+                db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
+                db_code_A = DB_CODE+str(code_num_A).rjust(3,'0')
+                db_table_A_t[db_code_A] = ['' for tmp in range(nY)]
+                for j in range(nY):
+                    if db_table_A_t.index[j] == int(value.index[0]):
+                        time_index = j
+                        start_found = False
+                        for k in range(value.shape[0]):
+                            if start_found == False:
+                                if str(value[k]) != 'nan':
+                                    start = int(value.index[k])
+                                    start_found = True
+                            db_table_A_t[db_code_A][db_table_A_t.index[time_index]] = value[k]
+                            time_index += 1
+                        break
                 
-                    value = QNIA_t['Value'][i]
-                    db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
-                    db_code_Q = DB_CODE+str(code_num_Q).rjust(3,'0')
-                    db_table_Q_t[db_code_Q] = ['' for tmp in range(nQ)]
-                    for j in range(nQ):
-                        if db_table_Q_t.index[j] == QNIA_t['TIME'][i]:
-                            db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = value
-                            break
+                Subject = subjects_list[QNIA_t.columns[i][1]]
+                Measure = measures_list[QNIA_t.columns[i][2]]
+                PowerCode = QNIA_t.columns[i][4]
+                Unit = QNIA_t.columns[i][3]
+                desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
+                form_e = str(Subject)
                 
-                    desc_e = str(QNIA_t['Subject'][i]) + ', '+str(QNIA_t['Measure'][i]) + ', ' + str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
-                    form_e = str(QNIA_t['Subject'][i])
-                    
-                    desc_c = ''
-                    freq = QNIA_t['FREQUENCY'][i]
-                    start = QNIA_t['TIME'][i]
-                    unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
-                    name_ord = QNIA_t['LOCATION'][i]
-                    book = QNIA_t['Country'][i]
-                    form_c = QNIA_t['Reference Period'][i]
-                    #flags = QNIA_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
-                    KEY_DATA.append(key_tmp)
-                    sort_tmp_Q = [name, snl, db_table_Q, db_code_Q]
-                    SORT_DATA_Q.append(sort_tmp_Q)
-                    snl += 1
-
-                    code_num_Q += 1
-            else:
-                if QNIA_t['LOCATION'][i] == QNIA_t['LOCATION'][i-1] and QNIA_t['SUBJECT'][i] == QNIA_t['SUBJECT'][i-1] and QNIA_t['MEASURE'][i] == QNIA_t['MEASURE'][i-1] and QNIA_t['FREQUENCY'][i] == QNIA_t['FREQUENCY'][i-1]:
-                    value = QNIA_t['Value'][i]
-                    if QNIA_t['FREQUENCY'][i] == 'A':
-                        for j in range(nY):
-                            if db_table_A_t.index[j] == int(QNIA_t['TIME'][i]):
-                                db_table_A_t[db_code_A][db_table_A_t.index[j]] = value
-                                break
-                    elif QNIA_t['FREQUENCY'][i] == 'Q':
-                        for j in range(nQ):
-                            if db_table_Q_t.index[j] == QNIA_t['TIME'][i]:
-                                db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = value
-                                break
-                    continue
+                desc_c = ''
+                freq = frequency
+                unit = str(PowerCode) + ' of ' + str(Unit)
+                name_ord = QNIA_t.columns[i][0]
+                book = COUNTRY_NAME(QNIA_t.columns[i][0])
+                if QNIA_t.columns[i][5] != '':
+                    form_c = int(QNIA_t.columns[i][5])
                 else:
-                    if QNIA_t['FREQUENCY'][i] == 'A':
-                        if code_num_A >= 200:
-                            DATA_BASE_A[db_table_A] = db_table_A_t
-                            DB_name_A.append(db_table_A)
-                            table_num_A += 1
-                            code_num_A = 1
-                            db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
-                    
-                        name = str(QNIA_t['FREQUENCY'][i])+str(COUNTRY_CODE(QNIA_t['LOCATION'][i]))+str(QNIA_t['SUBJECT'][i])+'__'+str(QNIA_t['MEASURE'][i])+'.a'
-                    
-                        value = QNIA_t['Value'][i]
-                        db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
-                        db_code_A = DB_CODE+str(code_num_A).rjust(3,'0')
-                        db_table_A_t[db_code_A] = ['' for tmp in range(nY)]
-                        for j in range(nY):
-                            if db_table_A_t.index[j] == int(QNIA_t['TIME'][i]):
-                                db_table_A_t[db_code_A][db_table_A_t.index[j]] = value
-                                break
-                        
-                        desc_e = str(QNIA_t['Subject'][i]) + ', '+str(QNIA_t['Measure'][i]) + ', ' + str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
-                        form_e = str(QNIA_t['Subject'][i])
-                        
-                        desc_c = ''
-                        freq = QNIA_t['FREQUENCY'][i]
-                        start = int(QNIA_t['TIME'][i])
-                        unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
-                        name_ord = QNIA_t['LOCATION'][i]
-                        book = QNIA_t['Country'][i]
-                        form_c = QNIA_t['Reference Period'][i]
-                        #flags = QNIA_t['Flags'][i]
-                        key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
-                        KEY_DATA.append(key_tmp)
-                        sort_tmp_A = [name, snl, db_table_A, db_code_A]
-                        SORT_DATA_A.append(sort_tmp_A)
-                        snl += 1
+                    form_c = QNIA_t.columns[i][5]
+                #flags = QNIA_t['Flags'][i]
+                key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+                KEY_DATA.append(key_tmp)
+                sort_tmp_A = [name, snl, db_table_A, db_code_A]
+                SORT_DATA_A.append(sort_tmp_A)
+                snl += 1
 
-                        code_num_A += 1
-                    elif QNIA_t['FREQUENCY'][i] == 'Q':
-                        if code_num_Q >= 200:
-                            DATA_BASE_Q[db_table_Q] = db_table_Q_t
-                            DB_name_Q.append(db_table_Q)
-                            table_num_Q += 1
-                            code_num_Q = 1
-                            db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
-                    
-                        name = str(QNIA_t['FREQUENCY'][i])+str(COUNTRY_CODE(QNIA_t['LOCATION'][i]))+str(QNIA_t['SUBJECT'][i])+'__'+str(QNIA_t['MEASURE'][i])+'.q'
-                    
-                        value = QNIA_t['Value'][i]
-                        db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
-                        db_code_Q = DB_CODE+str(code_num_Q).rjust(3,'0')
-                        db_table_Q_t[db_code_Q] = ['' for tmp in range(nQ)]
-                        for j in range(nQ):
-                            if db_table_Q_t.index[j] == QNIA_t['TIME'][i]:
-                                db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = value
-                                break
-                        
-                        desc_e = str(QNIA_t['Subject'][i]) + ', '+str(QNIA_t['Measure'][i]) + ', ' + str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
-                        form_e = str(QNIA_t['Subject'][i])
-                        
-                        desc_c = ''
-                        freq = QNIA_t['FREQUENCY'][i]
-                        start = QNIA_t['TIME'][i]
-                        unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
-                        name_ord = QNIA_t['LOCATION'][i]
-                        book = QNIA_t['Country'][i]
-                        form_c = QNIA_t['Reference Period'][i]
-                        #flags = QNIA_t['Flags'][i]
-                        key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
-                        KEY_DATA.append(key_tmp)
-                        sort_tmp_Q = [name, snl, db_table_Q, db_code_Q]
-                        SORT_DATA_Q.append(sort_tmp_Q)
-                        snl += 1
+                code_num_A += 1
+            elif frequency == 'Q':
+                if code_num_Q >= 200:
+                    DATA_BASE_Q[db_table_Q] = db_table_Q_t
+                    DB_name_Q.append(db_table_Q)
+                    table_num_Q += 1
+                    code_num_Q = 1
+                    db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
+                
+                name = str(frequency)+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(QNIA_t.columns[i][1])+'__'+str(QNIA_t.columns[i][2])+'.q'
+                
+                value = QNIA_t[QNIA_t.columns[i]]
+                db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
+                db_code_Q = DB_CODE+str(code_num_Q).rjust(3,'0')
+                db_table_Q_t[db_code_Q] = ['' for tmp in range(nQ)]
+                for j in range(nQ):
+                    if db_table_Q_t.index[j] == value.index[0]:
+                        time_index = j
+                        start_found = False
+                        for k in range(value.shape[0]):
+                            if start_found == False:
+                                if str(value[k]) != 'nan':
+                                    start = value.index[k]
+                                    start_found = True
+                            db_table_Q_t[db_code_Q][db_table_Q_t.index[time_index]] = value[k]
+                            time_index += 1
+                        break
+                
+                Subject = subjects_list[QNIA_t.columns[i][1]]
+                Measure = measures_list[QNIA_t.columns[i][2]]
+                PowerCode = QNIA_t.columns[i][4]
+                Unit = QNIA_t.columns[i][3]
+                desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
+                form_e = str(Subject)
+                
+                desc_c = ''
+                freq = frequency
+                unit = str(PowerCode) + ' of ' + str(Unit)
+                name_ord = QNIA_t.columns[i][0]
+                book = COUNTRY_NAME(QNIA_t.columns[i][0])
+                if QNIA_t.columns[i][5] != '':
+                    form_c = int(QNIA_t.columns[i][5])
+                else:
+                    form_c = QNIA_t.columns[i][5]
+                #flags = QNIA_t['Flags'][i]
+                key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+                KEY_DATA.append(key_tmp)
+                sort_tmp_Q = [name, snl, db_table_Q, db_code_Q]
+                SORT_DATA_Q.append(sort_tmp_Q)
+                snl += 1
 
-                        code_num_Q += 1
-        
-        if g == last_file:
-            if db_table_A_t.empty == False:
-                DATA_BASE_A[db_table_A] = db_table_A_t
-                DB_name_A.append(db_table_A)
-            if db_table_Q_t.empty == False:
-                DATA_BASE_Q[db_table_Q] = db_table_Q_t
-                DB_name_Q.append(db_table_Q)
-        
-        sys.stdout.write("\n")        
+                code_num_Q += 1
+                
+        sys.stdout.write("\n\n") 
+
+if db_table_A_t.empty == False:
+    DATA_BASE_A[db_table_A] = db_table_A_t
+    DB_name_A.append(db_table_A)
+if db_table_Q_t.empty == False:
+    DATA_BASE_Q[db_table_Q] = db_table_Q_t
+    DB_name_Q.append(db_table_Q)       
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')    
 SORT_DATA_A.sort(key=takeFirst)

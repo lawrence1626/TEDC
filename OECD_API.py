@@ -1,9 +1,9 @@
 #import cif
-from cif import cif
+from cif_new import createDataFrameFromOECD
 import pandas as pd
 
 #def create_DataFrame_from_OECD(country = 'CZE', subject = [], measure = [], frequency = 'M',  startDate = None, endDate = None):
-data, subjects, measures = cif.createDataFrameFromOECD(countries = ['JPN'], dsname = 'QNA', frequency = 'A')
+data, subjects, measures = createDataFrameFromOECD(countries = ['USA'], dsname = 'QNA', frequency = 'Q')
 print(data)
 print(subjects)
 print(measures)
