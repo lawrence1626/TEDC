@@ -179,7 +179,7 @@ def createOneCountryDataFrameFromOECD(country = 'CZE', dsname = 'MEI', subject =
             obs.rename(columns = {0: 'series',3: 'unitCode',4: 'powercodeCode',5: 'reference_periodCode'}, inplace = True)
             obs['id'] = obs.index
             obs = obs[['id', 'series', 'unitCode', 'powercodeCode', 'reference_periodCode']]
-            obs['dimensions'] = obs.apply(lambda x: re.findall('\d+', x['id']), axis = 1)
+            obs['dimensions'] = obs.apply(lambda x: re.findall('\\d+', x['id']), axis = 1)
             obs['subject'] = obs.apply(lambda x: subjectList[int(x['dimensions'][1])]['id'], axis = 1)
             obs['measure'] = obs.apply(lambda x: measureList[int(x['dimensions'][2])]['id'], axis = 1)
             obs['time'] = obs.apply(lambda x: timeList[int(x['dimensions'][4])]['id'], axis = 1)

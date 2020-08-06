@@ -3,7 +3,7 @@ from cif_new import createDataFrameFromOECD
 import pandas as pd
 
 #def create_DataFrame_from_OECD(country = 'CZE', subject = [], measure = [], frequency = 'M',  startDate = None, endDate = None):
-data, subjects, measures = createDataFrameFromOECD(countries = ['USA'], dsname = 'QNA', frequency = 'Q')
+data, subjects, measures = createDataFrameFromOECD(countries = ['CZE'], dsname = 'QNA', subject = ['DB1_GA'], measure = ['LNBQR'], frequency = 'Q')
 print(data)
 print(subjects)
 print(measures)

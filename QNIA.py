@@ -15,7 +15,7 @@ databank = 'QNIA'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'QNIA_key.xlsx', header_ = 0, sheet_name_='QNIA_key')
-start_file = 13
+start_file = 8
 last_file = 14
 
 # 回報錯誤、儲存錯誤檔案並結束程式
@@ -163,7 +163,7 @@ for g in range(start_file,last_file+1):
                 desc_e = str(QNIA_t['Subject'][i]) + ', '+str(QNIA_t['Measure'][i]) + ', ' + str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                 form_e = str(QNIA_t['Subject'][i])
                 
-                desc_c = ''
+                desc_c = 'from_csv'
                 freq = QNIA_t['FREQUENCY'][i]
                 start = int(QNIA_t['TIME'][i])
                 unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
@@ -200,7 +200,7 @@ for g in range(start_file,last_file+1):
                 desc_e = str(QNIA_t['Subject'][i]) + ', '+str(QNIA_t['Measure'][i]) + ', ' + str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                 form_e = str(QNIA_t['Subject'][i])
                  
-                desc_c = ''
+                desc_c = 'from_csv'
                 freq = QNIA_t['FREQUENCY'][i]
                 start = QNIA_t['TIME'][i]
                 unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
@@ -252,7 +252,7 @@ for g in range(start_file,last_file+1):
                     desc_e = str(QNIA_t['Subject'][i]) + ', '+str(QNIA_t['Measure'][i]) + ', ' + str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                     form_e = str(QNIA_t['Subject'][i])
                     
-                    desc_c = ''
+                    desc_c = 'from_csv'
                     freq = QNIA_t['FREQUENCY'][i]
                     start = int(QNIA_t['TIME'][i])
                     unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
@@ -289,7 +289,7 @@ for g in range(start_file,last_file+1):
                     desc_e = str(QNIA_t['Subject'][i]) + ', '+str(QNIA_t['Measure'][i]) + ', ' + str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                     form_e = str(QNIA_t['Subject'][i])
                      
-                    desc_c = ''
+                    desc_c = 'from_csv'
                     freq = QNIA_t['FREQUENCY'][i]
                     start = QNIA_t['TIME'][i]
                     unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])

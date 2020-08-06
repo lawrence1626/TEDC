@@ -4,6 +4,7 @@ import math, re, sys, calendar, os, copy, time
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
+from cif_new import createDataFrameFromOECD
 from MEI_concat import CONCATE, readExcelFile
 
 ENCODING = 'utf-8-sig'
@@ -15,8 +16,7 @@ databank = 'MEI'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'MEI_key.xlsx', header_ = 0, sheet_name_='MEI_key')
-start_file = 61
-last_file = 66
+frequency_list = ['A','Q','M']
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -49,18 +49,28 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False, \
 def takeFirst(alist):
 	return alist[0]
 
-def COUNTRY_CODE(location):
-    country_list={'A5M':555,'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'BRIICS':259,'CAN':156,'CHL':228,'CHN':924, \
-                'COL':233,'CRI':238,'CYP':423,'CZE':935,'DNK':128,'EA19':719,'EST':939,"EU15":715,'EU27_2020':727, \
+country_list={'A5M':555,'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'BRIICS':259,'CAN':156,'CHL':228,'CHN':924, \
+                'COL':233,'CRI':238,'CYP':423,'CZE':935,'DNK':128,'EA19':719,'EST':939,'EU27_2020':727, \
                 'EU28':728,'FIN':172,'FRA':132,'G-20':920,'G4E':704,'G-7':907,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
                 'IND':534,'ISL':176,'IRL':178,'ISR':436,'ITA':136,'JPN':158,'KOR':542,'LVA':941,'LTU':946,'LUX':126, \
-                'MEX':273,'MLT':181,'NAFTA':121,'NZL':196,'NOR':142,'OECD':930,'OECDE':950,'ONM':996,'OXE':903,"OTF":990,'POL':964, \
+                'MEX':273,'MLT':181,'NAFTA':121,'NZL':196,'NOR':142,'OECD':930,'OECDE':950,'ONM':996,'OXE':903,'POL':964, \
                 'PRT':182,'ROU':968,'RUS':922,'SAU':456,'SDR':919,'SVK':936,'SVN':961,'ESP':184,'SWE':144,'CHE':146,'NLD':138, \
-                'TUR':186,"IKR":926,'GBR':112,'USA':111,"DEW":134,'ZAF':199}
+                'TUR':186,'GBR':112,'USA':111,'ZAF':199}
+def COUNTRY_CODE(location):
     if location in country_list:
         return country_list[location]
     else:
         ERROR('國家代碼錯誤: '+location)
+
+country_name = readFile(data_path+'Country_Name.csv', header_ = 0)
+def COUNTRY_NAME(location):
+    country_found = False
+    for loc in range(country_name.shape[0]):
+        if country_name['location'][loc] == location:
+            country_found = True
+            return country_name['Country_Name'][loc]
+    if country_found == False:
+        ERROR('找不到國家: '+location)
 
 this_year = datetime.now().year + 1
 Year_list = [tmp for tmp in range(1947,this_year)]
@@ -158,53 +168,69 @@ start_code_M = code_num_M
 #for i in range(10):
 #    print(MEI_t['TIME'][i], MEI_t['Value'][i])
 tStart = time.time()
+c_list = list(country_list)
+c_list.sort()
 
-for g in range(start_file,last_file+1):
-    print('Reading file: '+NAME+str(g)+' Time: ', int(time.time() - tStart),'s'+'\n')
-    MEI_t = readFile(data_path+NAME+str(g)+'.csv', header_ = 0)
-    nG = MEI_t.shape[0]
-    if 'MEASURE' not in MEI_t.columns:
-        MEI_t['MEASURE'] = ['' for tmp in range(nG)]
-        MEI_t['Measure'] = ['' for tmp in range(nG)]
+for coun in c_list:
+    for frequency in frequency_list:
+        print('Getting data: country = '+COUNTRY_NAME(coun)+', frequency = '+frequency+' Time: ', int(time.time() - tStart),'s'+'\n')
+        MEI_t, subjects, measures = createDataFrameFromOECD(countries = [coun], dsname = 'MEI', frequency = frequency)
+        #MEI_t = readFile(data_path+NAME+str(g)+'.csv', header_ = 0)
+        subjects_list = {}
+        for s in range(subjects.shape[0]):
+            subjects_list[subjects['id'][s]] = subjects['name'][s]
+        measures_list = {}
+        for m in range(measures.shape[0]):
+            measures_list[measures['id'][m]] = measures['name'][m]
+        nG = MEI_t.shape[1]
     
-    for i in range(nG):
-        sys.stdout.write("\rLoading...("+str(round(i*100/nG, 1))+"%)*")
-        sys.stdout.flush()
-        
-        if i==0:
-            if MEI_t['FREQUENCY'][i] == 'A':
+        for i in range(nG):
+            sys.stdout.write("\rLoading...("+str(int(i*100/nG))+"%)*")
+            sys.stdout.flush()
+            
+            if frequency == 'A':
                 if code_num_A >= 200:
                     DATA_BASE_A[db_table_A] = db_table_A_t
                     DB_name_A.append(db_table_A)
                     table_num_A += 1
                     code_num_A = 1
-                    db_table_A_t = pd.DataFrame(index = Year_list, columns = [])    
+                    db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
                 
-                name = str(MEI_t['FREQUENCY'][i])+str(COUNTRY_CODE(MEI_t['LOCATION'][i]))+str(MEI_t['SUBJECT'][i])+'__'+str(MEI_t['MEASURE'][i])+'.a'
+                name = frequency+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(MEI_t.columns[i][1])+'__'+str(MEI_t.columns[i][2])+'.a'
             
-                value = MEI_t['Value'][i]
+                value = MEI_t[MEI_t.columns[i]]
                 db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
                 db_code_A = DB_CODE+str(code_num_A).rjust(3,'0')
                 db_table_A_t[db_code_A] = ['' for tmp in range(nY)]
                 for j in range(nY):
-                    if db_table_A_t.index[j] == int(MEI_t['TIME'][i]):
-                        db_table_A_t[db_code_A][db_table_A_t.index[j]] = value
+                    if db_table_A_t.index[j] == int(value.index[0]):
+                        time_index = j
+                        start_found = False
+                        for k in range(value.shape[0]):
+                            if start_found == False:
+                                if str(value[k]) != 'nan':
+                                    start = int(value.index[k])
+                                    start_found = True
+                            db_table_A_t[db_code_A][db_table_A_t.index[time_index]] = value[k]
+                            time_index += 1
                         break
-
-                if MEI_t['Measure'][i] == '':
-                    desc_e = str(MEI_t['Subject'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    form_e = str(MEI_t['Subject'][i])
-                else:
-                    desc_e = str(MEI_t['Subject'][i]) + ', '+str(MEI_t['Measure'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    form_e = str(MEI_t['Subject'][i])
                 
-                desc_c = 'from_csv'
-                freq = MEI_t['FREQUENCY'][i]
-                start = int(MEI_t['TIME'][i])
-                unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                name_ord = MEI_t['LOCATION'][i]
-                book = MEI_t['Country'][i]
-                form_c = MEI_t['Reference Period'][i]
+                Subject = subjects_list[MEI_t.columns[i][1]]
+                Measure = measures_list[MEI_t.columns[i][2]]
+                PowerCode = MEI_t.columns[i][4]
+                Unit = MEI_t.columns[i][3]
+                desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
+                form_e = str(Subject)
+                
+                desc_c = ''
+                freq = frequency
+                unit = str(PowerCode) + ' of ' + str(Unit)
+                name_ord = MEI_t.columns[i][0]
+                book = COUNTRY_NAME(MEI_t.columns[i][0])
+                if MEI_t.columns[i][5] != '' and MEI_t.columns[i][5].find('=') < 0:
+                    form_c = int(MEI_t.columns[i][5])
+                else:
+                    form_c = MEI_t.columns[i][5]
                 #flags = MEI_t['Flags'][i]
                 key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -213,7 +239,7 @@ for g in range(start_file,last_file+1):
                 snl += 1
 
                 code_num_A += 1
-            elif MEI_t['FREQUENCY'][i] == 'Q':
+            elif frequency == 'Q':
                 if code_num_Q >= 200:
                     DATA_BASE_Q[db_table_Q] = db_table_Q_t
                     DB_name_Q.append(db_table_Q)
@@ -221,31 +247,41 @@ for g in range(start_file,last_file+1):
                     code_num_Q = 1
                     db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
                 
-                name = str(MEI_t['FREQUENCY'][i])+str(COUNTRY_CODE(MEI_t['LOCATION'][i]))+str(MEI_t['SUBJECT'][i])+'__'+str(MEI_t['MEASURE'][i])+'.q'
-            
-                value = MEI_t['Value'][i]
+                name = str(frequency)+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(MEI_t.columns[i][1])+'__'+str(MEI_t.columns[i][2])+'.q'
+                
+                value = MEI_t[MEI_t.columns[i]]
                 db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
                 db_code_Q = DB_CODE+str(code_num_Q).rjust(3,'0')
                 db_table_Q_t[db_code_Q] = ['' for tmp in range(nQ)]
                 for j in range(nQ):
-                    if db_table_Q_t.index[j] == MEI_t['TIME'][i]:
-                        db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = value
+                    if db_table_Q_t.index[j] == value.index[0]:
+                        time_index = j
+                        start_found = False
+                        for k in range(value.shape[0]):
+                            if start_found == False:
+                                if str(value[k]) != 'nan':
+                                    start = value.index[k]
+                                    start_found = True
+                            db_table_Q_t[db_code_Q][db_table_Q_t.index[time_index]] = value[k]
+                            time_index += 1
                         break
-            
-                if MEI_t['Measure'][i] == '':
-                    desc_e = str(MEI_t['Subject'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    form_e = str(MEI_t['Subject'][i])
+                
+                Subject = subjects_list[MEI_t.columns[i][1]]
+                Measure = measures_list[MEI_t.columns[i][2]]
+                PowerCode = MEI_t.columns[i][4]
+                Unit = MEI_t.columns[i][3]
+                desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
+                form_e = str(Subject)
+                
+                desc_c = ''
+                freq = frequency
+                unit = str(PowerCode) + ' of ' + str(Unit)
+                name_ord = MEI_t.columns[i][0]
+                book = COUNTRY_NAME(MEI_t.columns[i][0])
+                if MEI_t.columns[i][5] != '' and MEI_t.columns[i][5].find('=') < 0:
+                    form_c = int(MEI_t.columns[i][5])
                 else:
-                    desc_e = str(MEI_t['Subject'][i]) + ', '+str(MEI_t['Measure'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    form_e = str(MEI_t['Subject'][i])
-                 
-                desc_c = 'from_csv'
-                freq = MEI_t['FREQUENCY'][i]
-                start = MEI_t['TIME'][i]
-                unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                name_ord = MEI_t['LOCATION'][i]
-                book = MEI_t['Country'][i]
-                form_c = MEI_t['Reference Period'][i]
+                    form_c = MEI_t.columns[i][5]
                 #flags = MEI_t['Flags'][i]
                 key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -254,7 +290,7 @@ for g in range(start_file,last_file+1):
                 snl += 1
 
                 code_num_Q += 1
-            elif MEI_t['FREQUENCY'][i] == 'M': 
+            elif frequency == 'M':
                 if code_num_M >= 200:
                     DATA_BASE_M[db_table_M] = db_table_M_t
                     DB_name_M.append(db_table_M)
@@ -262,31 +298,41 @@ for g in range(start_file,last_file+1):
                     code_num_M = 1
                     db_table_M_t = pd.DataFrame(index = Month_list, columns = [])
                 
-                name = str(MEI_t['FREQUENCY'][i])+str(COUNTRY_CODE(MEI_t['LOCATION'][i]))+str(MEI_t['SUBJECT'][i])+'__'+str(MEI_t['MEASURE'][i])+'.m'
-            
-                value = MEI_t['Value'][i]
+                name = str(frequency)+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(MEI_t.columns[i][1])+'__'+str(MEI_t.columns[i][2])+'.m'
+                
+                value = MEI_t[MEI_t.columns[i]]
                 db_table_M = DB_TABLE+'M_'+str(table_num_M).rjust(4,'0')
                 db_code_M = DB_CODE+str(code_num_M).rjust(3,'0')
                 db_table_M_t[db_code_M] = ['' for tmp in range(nM)]
                 for j in range(nM):
-                    if db_table_M_t.index[j] == MEI_t['TIME'][i]:
-                        db_table_M_t[db_code_M][db_table_M_t.index[j]] = value
+                    if db_table_M_t.index[j] == value.index[0]:
+                        time_index = j
+                        start_found = False
+                        for k in range(value.shape[0]):
+                            if start_found == False:
+                                if str(value[k]) != 'nan':
+                                    start = value.index[k]
+                                    start_found = True
+                            db_table_M_t[db_code_M][db_table_M_t.index[time_index]] = value[k]
+                            time_index += 1
                         break
-            
-                if MEI_t['Measure'][i] == '':
-                    desc_e = str(MEI_t['Subject'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    form_e = str(MEI_t['Subject'][i])
+                
+                Subject = subjects_list[MEI_t.columns[i][1]]
+                Measure = measures_list[MEI_t.columns[i][2]]
+                PowerCode = MEI_t.columns[i][4]
+                Unit = MEI_t.columns[i][3]
+                desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
+                form_e = str(Subject)
+                
+                desc_c = ''
+                freq = frequency
+                unit = str(PowerCode) + ' of ' + str(Unit)
+                name_ord = MEI_t.columns[i][0]
+                book = COUNTRY_NAME(MEI_t.columns[i][0])
+                if MEI_t.columns[i][5] != '' and MEI_t.columns[i][5].find('=') < 0:
+                    form_c = int(MEI_t.columns[i][5])
                 else:
-                    desc_e = str(MEI_t['Subject'][i]) + ', '+str(MEI_t['Measure'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    form_e = str(MEI_t['Subject'][i])
-                 
-                desc_c = 'from_csv'
-                freq = MEI_t['FREQUENCY'][i]
-                start = MEI_t['TIME'][i]
-                unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                name_ord = MEI_t['LOCATION'][i]
-                book = MEI_t['Country'][i]
-                form_c = MEI_t['Reference Period'][i]
+                    form_c = MEI_t.columns[i][5]
                 #flags = MEI_t['Flags'][i]
                 key_tmp= [databank, name, db_table_M, db_code_M, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -295,162 +341,20 @@ for g in range(start_file,last_file+1):
                 snl += 1
 
                 code_num_M += 1
-        else:
-            if MEI_t['LOCATION'][i] == MEI_t['LOCATION'][i-1] and MEI_t['SUBJECT'][i] == MEI_t['SUBJECT'][i-1] and MEI_t['MEASURE'][i] == MEI_t['MEASURE'][i-1] and MEI_t['FREQUENCY'][i] == MEI_t['FREQUENCY'][i-1]:
-                value = MEI_t['Value'][i]
-                if MEI_t['FREQUENCY'][i] == 'A':
-                    for j in range(nY):
-                        if db_table_A_t.index[j] == int(MEI_t['TIME'][i]):
-                            db_table_A_t[db_code_A][db_table_A_t.index[j]] = value
-                            break
-                elif MEI_t['FREQUENCY'][i] == 'Q':
-                    for j in range(nQ):
-                        if db_table_Q_t.index[j] == MEI_t['TIME'][i]:
-                            db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = value
-                            break
-                elif MEI_t['FREQUENCY'][i] == 'M':
-                    for j in range(nM):
-                        if db_table_M_t.index[j] == MEI_t['TIME'][i]:
-                            db_table_M_t[db_code_M][db_table_M_t.index[j]] = value
-                            break
-                continue
-            else:
-                if MEI_t['FREQUENCY'][i] == 'A':
-                    if code_num_A >= 200:
-                        DATA_BASE_A[db_table_A] = db_table_A_t
-                        DB_name_A.append(db_table_A)
-                        table_num_A += 1
-                        code_num_A = 1
-                        db_table_A_t = pd.DataFrame(index = Year_list, columns = [])    
-                    
-                    name = str(MEI_t['FREQUENCY'][i])+str(COUNTRY_CODE(MEI_t['LOCATION'][i]))+str(MEI_t['SUBJECT'][i])+'__'+str(MEI_t['MEASURE'][i])+'.a'
-                
-                    value = MEI_t['Value'][i]
-                    db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
-                    db_code_A = DB_CODE+str(code_num_A).rjust(3,'0')
-                    db_table_A_t[db_code_A] = ['' for tmp in range(nY)]
-                    for j in range(nY):
-                        if db_table_A_t.index[j] == int(MEI_t['TIME'][i]):
-                            db_table_A_t[db_code_A][db_table_A_t.index[j]] = value
-                            break
-                    
-                    if MEI_t['Measure'][i] == '':
-                        desc_e = str(MEI_t['Subject'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                        form_e = str(MEI_t['Subject'][i])
-                    else:
-                        desc_e = str(MEI_t['Subject'][i]) + ', '+str(MEI_t['Measure'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                        form_e = str(MEI_t['Subject'][i])
-                    
-                    desc_c = 'from_csv'
-                    freq = MEI_t['FREQUENCY'][i]
-                    start = int(MEI_t['TIME'][i])
-                    unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    name_ord = MEI_t['LOCATION'][i]
-                    book = MEI_t['Country'][i]
-                    form_c = MEI_t['Reference Period'][i]
-                    #flags = MEI_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
-                    KEY_DATA.append(key_tmp)
-                    sort_tmp_A = [name, snl, db_table_A, db_code_A]
-                    SORT_DATA_A.append(sort_tmp_A)
-                    snl += 1
-
-                    code_num_A += 1
-                elif MEI_t['FREQUENCY'][i] == 'Q': 
-                    if code_num_Q >= 200:
-                        DATA_BASE_Q[db_table_Q] = db_table_Q_t
-                        DB_name_Q.append(db_table_Q)
-                        table_num_Q += 1
-                        code_num_Q = 1
-                        db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
-                    
-                    name = str(MEI_t['FREQUENCY'][i])+str(COUNTRY_CODE(MEI_t['LOCATION'][i]))+str(MEI_t['SUBJECT'][i])+'__'+str(MEI_t['MEASURE'][i])+'.q'
-                
-                    value = MEI_t['Value'][i]
-                    db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
-                    db_code_Q = DB_CODE+str(code_num_Q).rjust(3,'0')
-                    db_table_Q_t[db_code_Q] = ['' for tmp in range(nQ)]
-                    for j in range(nQ):
-                        if db_table_Q_t.index[j] == MEI_t['TIME'][i]:
-                            db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = value
-                            break
-                    
-                    if MEI_t['Measure'][i] == '':
-                        desc_e = str(MEI_t['Subject'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                        form_e = str(MEI_t['Subject'][i])
-                    else:
-                        desc_e = str(MEI_t['Subject'][i]) + ', '+str(MEI_t['Measure'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                        form_e = str(MEI_t['Subject'][i])
-                     
-                    desc_c = 'from_csv'
-                    freq = MEI_t['FREQUENCY'][i]
-                    start = MEI_t['TIME'][i]
-                    unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    name_ord = MEI_t['LOCATION'][i]
-                    book = MEI_t['Country'][i]
-                    form_c = MEI_t['Reference Period'][i]
-                    #flags = MEI_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
-                    KEY_DATA.append(key_tmp)
-                    sort_tmp_Q = [name, snl, db_table_Q, db_code_Q]
-                    SORT_DATA_Q.append(sort_tmp_Q)
-                    snl += 1
-
-                    code_num_Q += 1
-                elif MEI_t['FREQUENCY'][i] == 'M':
-                    if code_num_M >= 200:
-                        DATA_BASE_M[db_table_M] = db_table_M_t
-                        DB_name_M.append(db_table_M)
-                        table_num_M += 1
-                        code_num_M = 1
-                        db_table_M_t = pd.DataFrame(index = Month_list, columns = [])
-                    
-                    name = str(MEI_t['FREQUENCY'][i])+str(COUNTRY_CODE(MEI_t['LOCATION'][i]))+str(MEI_t['SUBJECT'][i])+'__'+str(MEI_t['MEASURE'][i])+'.m'
-                
-                    value = MEI_t['Value'][i]
-                    db_table_M = DB_TABLE+'M_'+str(table_num_M).rjust(4,'0')
-                    db_code_M = DB_CODE+str(code_num_M).rjust(3,'0')
-                    db_table_M_t[db_code_M] = ['' for tmp in range(nM)]
-                    for j in range(nM):
-                        if db_table_M_t.index[j] == MEI_t['TIME'][i]:
-                            db_table_M_t[db_code_M][db_table_M_t.index[j]] = value
-                            break
-                    
-                    if MEI_t['Measure'][i] == '':
-                        desc_e = str(MEI_t['Subject'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                        form_e = str(MEI_t['Subject'][i])
-                    else:
-                        desc_e = str(MEI_t['Subject'][i]) + ', '+str(MEI_t['Measure'][i]) + ', ' + str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                        form_e = str(MEI_t['Subject'][i])
-                     
-                    desc_c = 'from_csv'
-                    freq = MEI_t['FREQUENCY'][i]
-                    start = MEI_t['TIME'][i]
-                    unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
-                    name_ord = MEI_t['LOCATION'][i]
-                    book = MEI_t['Country'][i]
-                    form_c = MEI_t['Reference Period'][i]
-                    #flags = MEI_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_M, db_code_M, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
-                    KEY_DATA.append(key_tmp)
-                    sort_tmp_M = [name, snl, db_table_M, db_code_M]
-                    SORT_DATA_M.append(sort_tmp_M)
-                    snl += 1
-
-                    code_num_M += 1
     
-    if g == last_file:
-        if db_table_A_t.empty == False:
-            DATA_BASE_A[db_table_A] = db_table_A_t
-            DB_name_A.append(db_table_A)
-        if db_table_Q_t.empty == False:
-            DATA_BASE_Q[db_table_Q] = db_table_Q_t
-            DB_name_Q.append(db_table_Q)
-        if db_table_M_t.empty == False:
-            DATA_BASE_M[db_table_M] = db_table_M_t
-            DB_name_M.append(db_table_M)
-    
-    sys.stdout.write("\n")        
+        sys.stdout.write("\n\n")
+
+if db_table_A_t.empty == False:
+    DATA_BASE_A[db_table_A] = db_table_A_t
+    DB_name_A.append(db_table_A)
+if db_table_Q_t.empty == False:
+    DATA_BASE_Q[db_table_Q] = db_table_Q_t
+    DB_name_Q.append(db_table_Q)
+if db_table_M_t.empty == False:
+    DATA_BASE_M[db_table_M] = db_table_M_t
+    DB_name_M.append(db_table_M)
+
+        
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')    
 SORT_DATA_A.sort(key=takeFirst)
