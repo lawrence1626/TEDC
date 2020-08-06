@@ -51,7 +51,7 @@ def takeFirst(alist):
 
 country_list={'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'CAN':156,'CHL':228,'CHN':924, \
                 'COL':233,'CRI':238,'CZE':935,'DNK':128,'EA19':719,'EST':939,'EU15':715,'EU27_2020':727, \
-                'EU28':728,'FIN':172,'FRA':132,'G-20':920,'G-7':907,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
+                'FIN':172,'FRA':132,'G-20':920,'G-7':907,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
                 'IND':534,'ISL':176,'IRL':178,'ISR':436,'ITA':136,'JPN':158,'KOR':542,'LVA':941,'LTU':946,'LUX':126, \
                 'MEX':273,'NAFTA':121,'NZL':196,'NOR':142,'OECD':950,'OECDE':930,'OTF':990,'POL':964, \
                 'PRT':182,'ROU':968,'RUS':922,'SAU':456,'SVK':936,'SVN':961,'ESP':184,'SWE':144,'CHE':146,'NLD':138, \
@@ -199,7 +199,7 @@ for coun in c_list:
                 unit = str(PowerCode) + ' of ' + str(Unit)
                 name_ord = QNIA_t.columns[i][0]
                 book = COUNTRY_NAME(QNIA_t.columns[i][0])
-                if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') == False:
+                if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') < 0:
                     form_c = int(QNIA_t.columns[i][5])
                 else:
                     form_c = QNIA_t.columns[i][5]
@@ -250,7 +250,7 @@ for coun in c_list:
                 unit = str(PowerCode) + ' of ' + str(Unit)
                 name_ord = QNIA_t.columns[i][0]
                 book = COUNTRY_NAME(QNIA_t.columns[i][0])
-                if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') == False:
+                if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') < 0:
                     form_c = int(QNIA_t.columns[i][5])
                 else:
                     form_c = QNIA_t.columns[i][5]
