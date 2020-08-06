@@ -17,8 +17,6 @@ databank = 'QNIA'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'QNIA_key.xlsx', header_ = 0, sheet_name_='QNIA_key')
 frequency_list = ['A','Q']
-#start_file = 13
-#last_file = 14
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -71,7 +69,6 @@ def COUNTRY_NAME(location):
         if country_name['location'][loc] == location:
             country_found = True
             return country_name['Country_Name'][loc]
-            break
     if country_found == False:
         ERROR('找不到國家: '+location)
 
