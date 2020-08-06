@@ -202,8 +202,8 @@ for coun in c_list:
                 unit = str(PowerCode) + ' of ' + str(Unit)
                 name_ord = QNIA_t.columns[i][0]
                 book = COUNTRY_NAME(QNIA_t.columns[i][0])
-                if QNIA_t.columns[i][5] != '':
-                    form_c = str(QNIA_t.columns[i][5])
+                if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') == False:
+                    form_c = int(QNIA_t.columns[i][5])
                 else:
                     form_c = QNIA_t.columns[i][5]
                 #flags = QNIA_t['Flags'][i]
@@ -253,8 +253,8 @@ for coun in c_list:
                 unit = str(PowerCode) + ' of ' + str(Unit)
                 name_ord = QNIA_t.columns[i][0]
                 book = COUNTRY_NAME(QNIA_t.columns[i][0])
-                if QNIA_t.columns[i][5] != '':
-                    form_c = str(QNIA_t.columns[i][5])
+                if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') == False:
+                    form_c = int(QNIA_t.columns[i][5])
                 else:
                     form_c = QNIA_t.columns[i][5]
                 #flags = QNIA_t['Flags'][i]
