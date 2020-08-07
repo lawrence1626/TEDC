@@ -15,8 +15,8 @@ databank = 'MEI'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'MEI_key.xlsx', header_ = 0, sheet_name_='MEI_key')
-start_file = 61
-last_file = 66
+start_file = 63
+last_file = 63
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -204,7 +204,11 @@ for g in range(start_file,last_file+1):
                 unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
                 name_ord = MEI_t['LOCATION'][i]
                 book = MEI_t['Country'][i]
-                form_c = MEI_t['Reference Period'][i]
+                #form_c = MEI_t['Reference Period'][i]
+                if str(MEI_t['Reference Period'][i]) != 'nan' and str(MEI_t['Reference Period'][i]).find('=') < 0:
+                    form_c = int(MEI_t['Reference Period'][i])
+                else:
+                    form_c = MEI_t['Reference Period'][i]
                 #flags = MEI_t['Flags'][i]
                 key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -245,7 +249,11 @@ for g in range(start_file,last_file+1):
                 unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
                 name_ord = MEI_t['LOCATION'][i]
                 book = MEI_t['Country'][i]
-                form_c = MEI_t['Reference Period'][i]
+                #form_c = MEI_t['Reference Period'][i]
+                if str(MEI_t['Reference Period'][i]) != 'nan' and str(MEI_t['Reference Period'][i]).find('=') < 0:
+                    form_c = int(MEI_t['Reference Period'][i])
+                else:
+                    form_c = MEI_t['Reference Period'][i]
                 #flags = MEI_t['Flags'][i]
                 key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -286,7 +294,11 @@ for g in range(start_file,last_file+1):
                 unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
                 name_ord = MEI_t['LOCATION'][i]
                 book = MEI_t['Country'][i]
-                form_c = MEI_t['Reference Period'][i]
+                #form_c = MEI_t['Reference Period'][i]
+                if str(MEI_t['Reference Period'][i]) != 'nan' and str(MEI_t['Reference Period'][i]).find('=') < 0:
+                    form_c = int(MEI_t['Reference Period'][i])
+                else:
+                    form_c = MEI_t['Reference Period'][i]
                 #flags = MEI_t['Flags'][i]
                 key_tmp= [databank, name, db_table_M, db_code_M, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -347,7 +359,11 @@ for g in range(start_file,last_file+1):
                     unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
                     name_ord = MEI_t['LOCATION'][i]
                     book = MEI_t['Country'][i]
-                    form_c = MEI_t['Reference Period'][i]
+                    #form_c = MEI_t['Reference Period'][i]
+                    if str(MEI_t['Reference Period'][i]) != 'nan' and str(MEI_t['Reference Period'][i]).find('=') < 0:
+                        form_c = int(MEI_t['Reference Period'][i])
+                    else:
+                        form_c = MEI_t['Reference Period'][i]
                     #flags = MEI_t['Flags'][i]
                     key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
@@ -388,7 +404,11 @@ for g in range(start_file,last_file+1):
                     unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
                     name_ord = MEI_t['LOCATION'][i]
                     book = MEI_t['Country'][i]
-                    form_c = MEI_t['Reference Period'][i]
+                    #form_c = MEI_t['Reference Period'][i]
+                    if str(MEI_t['Reference Period'][i]) != 'nan' and str(MEI_t['Reference Period'][i]).find('=') < 0:
+                        form_c = int(MEI_t['Reference Period'][i])
+                    else:
+                        form_c = MEI_t['Reference Period'][i]
                     #flags = MEI_t['Flags'][i]
                     key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
@@ -429,7 +449,11 @@ for g in range(start_file,last_file+1):
                     unit = str(MEI_t['PowerCode'][i]) + ' of ' + str(MEI_t['Unit'][i])
                     name_ord = MEI_t['LOCATION'][i]
                     book = MEI_t['Country'][i]
-                    form_c = MEI_t['Reference Period'][i]
+                    #form_c = MEI_t['Reference Period'][i]
+                    if str(MEI_t['Reference Period'][i]) != 'nan' and str(MEI_t['Reference Period'][i]).find('=') < 0:
+                        form_c = int(MEI_t['Reference Period'][i])
+                    else:
+                        form_c = MEI_t['Reference Period'][i]
                     #flags = MEI_t['Flags'][i]
                     key_tmp= [databank, name, db_table_M, db_code_M, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)

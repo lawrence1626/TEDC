@@ -15,8 +15,8 @@ databank = 'QNIA'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'QNIA_key.xlsx', header_ = 0, sheet_name_='QNIA_key')
-start_file = 8
-last_file = 14
+start_file = 1
+last_file = 1
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -169,7 +169,11 @@ for g in range(start_file,last_file+1):
                 unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                 name_ord = QNIA_t['LOCATION'][i]
                 book = QNIA_t['Country'][i]
-                form_c = QNIA_t['Reference Period'][i]
+                #form_c = QNIA_t['Reference Period'][i]
+                if str(QNIA_t['Reference Period'][i]) != 'nan' and str(QNIA_t['Reference Period'][i]).find('-') < 0:
+                    form_c = int(QNIA_t['Reference Period'][i])
+                else:
+                    form_c = QNIA_t['Reference Period'][i]
                 #flags = QNIA_t['Flags'][i]
                 key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -206,7 +210,11 @@ for g in range(start_file,last_file+1):
                 unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                 name_ord = QNIA_t['LOCATION'][i]
                 book = QNIA_t['Country'][i]
-                form_c = QNIA_t['Reference Period'][i]
+                #form_c = QNIA_t['Reference Period'][i]
+                if str(QNIA_t['Reference Period'][i]) != 'nan' and str(QNIA_t['Reference Period'][i]).find('-') < 0:
+                    form_c = int(QNIA_t['Reference Period'][i])
+                else:
+                    form_c = QNIA_t['Reference Period'][i]
                 #flags = QNIA_t['Flags'][i]
                 key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                 KEY_DATA.append(key_tmp)
@@ -258,7 +266,11 @@ for g in range(start_file,last_file+1):
                     unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                     name_ord = QNIA_t['LOCATION'][i]
                     book = QNIA_t['Country'][i]
-                    form_c = QNIA_t['Reference Period'][i]
+                    #form_c = QNIA_t['Reference Period'][i]
+                    if str(QNIA_t['Reference Period'][i]) != 'nan' and str(QNIA_t['Reference Period'][i]).find('-') < 0:
+                        form_c = int(QNIA_t['Reference Period'][i])
+                    else:
+                        form_c = QNIA_t['Reference Period'][i]
                     #flags = QNIA_t['Flags'][i]
                     key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
@@ -295,7 +307,11 @@ for g in range(start_file,last_file+1):
                     unit = str(QNIA_t['PowerCode'][i]) + ' of ' + str(QNIA_t['Unit'][i])
                     name_ord = QNIA_t['LOCATION'][i]
                     book = QNIA_t['Country'][i]
-                    form_c = QNIA_t['Reference Period'][i]
+                    #form_c = QNIA_t['Reference Period'][i]
+                    if str(QNIA_t['Reference Period'][i]) != 'nan' and str(QNIA_t['Reference Period'][i]).find('-') < 0:
+                        form_c = int(QNIA_t['Reference Period'][i])
+                    else:
+                        form_c = QNIA_t['Reference Period'][i]
                     #flags = QNIA_t['Flags'][i]
                     key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
