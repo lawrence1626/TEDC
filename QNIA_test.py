@@ -7,6 +7,8 @@ from datetime import datetime, date
 
 ENCODING = 'utf-8-sig'
 data_path = './output/'
+NAME1 = ''
+NAME2 = '_old'
 
 def ERROR(error_text):
     print('\n\n= ! = '+error_text+'\n\n')
@@ -48,14 +50,14 @@ for y in range(1947,this_year):
         Month_list.append(str(y)+'-'+str(m).rjust(2,'0'))
 
 tStart = time.time()
-print('Reading file: MEI_key, Time: ', int(time.time() - tStart),'s'+'\n')
-KEY_DATA_t = readExcelFile(data_path+'MEI_key.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='MEI_key')
-print('Reading file: MEI_key_new2, Time: ', int(time.time() - tStart),'s'+'\n')
-df_key = readExcelFile(data_path+'MEI_key_new2.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='MEI_key')
+print('Reading file: QNIA_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
+KEY_DATA_t = readExcelFile(data_path+'QNIA_key'+NAME1+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='QNIA_key')
+print('Reading file: QNIA_key'+NAME2+', Time: ', int(time.time() - tStart),'s'+'\n')
+df_key = readExcelFile(data_path+'QNIA_key'+NAME2+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='QNIA_key')
 #print('Reading file: MEI_database, Time: ', int(time.time() - tStart),'s'+'\n')
 #DATA_BASE_t = readExcelFile(data_path+'MEI_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
 
-print('Concating file: MEI_key, Time: ', int(time.time() - tStart),'s'+'\n')
+print('Concating file: QNIA_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
 KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
 """
 print('Concating file: MEI_database, Time: ', int(time.time() - tStart),'s'+'\n')
@@ -86,12 +88,12 @@ sys.stdout.write("\n")
 """
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 KEY_DATA_t = KEY_DATA_t.sort_values(by=['name', 'db_table'], ignore_index=True)
-#repeated = 0
+unrepeated = 0
 #unrepeated_index = []
 for i in range(1, len(KEY_DATA_t)):
     if KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i-1] and KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i+1]:
-        print(list(KEY_DATA_t.iloc[i]))
-        #repeated += 1
+        print(list(KEY_DATA_t.iloc[i]),'\n')
+        unrepeated += 1
         #repeated_index.append(i)
         #print(KEY_DATA_t['name'][i],' ',KEY_DATA_t['name'][i-1])
         #key = KEY_DATA_t.iloc[i]
@@ -101,7 +103,7 @@ for i in range(1, len(KEY_DATA_t)):
     #sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
     #sys.stdout.flush()
 #sys.stdout.write("\n")
-
+print('unrepeated: ', unrepeated)
 #for i in unrepeated_index:
     #sys.stdout.write("\rDropping repeated data key(s): "+str(i))
     #sys.stdout.flush()

@@ -3,6 +3,7 @@
 
 import os
 import requests as rq
+from requests.adapters import HTTPAdapter
 import pandas as pd
 import numpy as np
 import re
@@ -22,7 +23,7 @@ import zipfile
 
 # OECD API FUNCTIONS
 
-def makeOECDRequest(dsname, dimensions, params = None, root_dir = 'http://stats.oecd.org/SDMX-JSON/data'):
+def makeOECDRequest(dsname, dimensions, params = None, root_dir = 'https://stats.oecd.org/SDMX-JSON/data'):
     
     """
     Make URL for the OECD API and return a response.
@@ -54,7 +55,10 @@ def makeOECDRequest(dsname, dimensions, params = None, root_dir = 'http://stats.
     url = root_dir + '/' + dsname + '/' + dim_str + '/all'
     
     print('Requesting URL ' + url)
-    return rq.get(url = url, params = params)
+    s = rq.Session()
+    s.mount('http://', HTTPAdapter(max_retries=3))
+    s.mount('https://', HTTPAdapter(max_retries=3))
+    return s.get(url = url, params = params)
 
     
 def getOECDJSONStructure(dsname, root_dir = 'http://stats.oecd.org/SDMX-JSON/dataflow', showValues = [], returnValues = False):
@@ -147,9 +151,18 @@ def createOneCountryDataFrameFromOECD(country = 'CZE', dsname = 'MEI', subject =
     
     # Data download
     
-    response = makeOECDRequest(dsname
-                                 , [[country], subject, measure, [frequency]]
-                                 , {'startTime': startDate, 'endTime': endDate, 'dimensionAtObservation': 'AllDimensions'})
+    if dsname == 'MEI_CLI':
+        response = makeOECDRequest(dsname
+                                    , [subject, [country], [frequency]]
+                                    , {'startTime': startDate, 'endTime': endDate, 'dimensionAtObservation': 'AllDimensions'})
+    elif dsname == 'MEI_BTS_COS':
+        response = makeOECDRequest(dsname
+                                    , [subject, [country], measure, [frequency]]
+                                    , {'startTime': startDate, 'endTime': endDate, 'dimensionAtObservation': 'AllDimensions'})
+    else:
+        response = makeOECDRequest(dsname
+                                    , [[country], subject, measure, [frequency]]
+                                    , {'startTime': startDate, 'endTime': endDate, 'dimensionAtObservation': 'AllDimensions'})
     
     # Data transformation
     
@@ -167,22 +180,36 @@ def createOneCountryDataFrameFromOECD(country = 'CZE', dsname = 'MEI', subject =
             print('Data downloaded from %s' % response.url)
             
             timeList = [item for item in responseJson.get('structure').get('dimensions').get('observation') if item['id'] == 'TIME_PERIOD'][0]['values']
-            #subjectList = [item for item in responseJson.get('structure').get('dimensions').get('observation') if item['id'] == 'SUBJECT'][0]['values']
-            #measureList = [item for item in responseJson.get('structure').get('dimensions').get('observation') if item['id'] == 'MEASURE'][0]['values']
-            subjectList = responseJson.get('structure').get('dimensions').get('observation')[1]['values']
-            measureList = responseJson.get('structure').get('dimensions').get('observation')[2]['values']
-            unitList = responseJson.get('structure').get('attributes').get('observation')[2]['values']
-            powercodeList = responseJson.get('structure').get('attributes').get('observation')[3]['values']
-            reference_periodList = responseJson.get('structure').get('attributes').get('observation')[4]['values']
+            subjectList = [item for item in responseJson.get('structure').get('dimensions').get('observation') if item['id'] == 'SUBJECT'][0]['values']
+            if dsname == 'MEI_CLI':
+                measureList = []
+            else:
+                measureList = [item for item in responseJson.get('structure').get('dimensions').get('observation') if item['id'] == 'MEASURE'][0]['values']
+            #subjectList = responseJson.get('structure').get('dimensions').get('observation')[1]['values']
+            #measureList = responseJson.get('structure').get('dimensions').get('observation')[2]['values']
+            unitList = [item for item in responseJson.get('structure').get('attributes').get('observation')if item['id'] == 'UNIT'][0]['values']
+            powercodeList = [item for item in responseJson.get('structure').get('attributes').get('observation')if item['id'] == 'POWERCODE'][0]['values']
+            reference_periodList = [item for item in responseJson.get('structure').get('attributes').get('observation')if item['id'] == 'REFERENCEPERIOD'][0]['values']
             
             obs = pd.DataFrame(obsList).transpose()
             obs.rename(columns = {0: 'series',3: 'unitCode',4: 'powercodeCode',5: 'reference_periodCode'}, inplace = True)
             obs['id'] = obs.index
             obs = obs[['id', 'series', 'unitCode', 'powercodeCode', 'reference_periodCode']]
             obs['dimensions'] = obs.apply(lambda x: re.findall('\\d+', x['id']), axis = 1)
-            obs['subject'] = obs.apply(lambda x: subjectList[int(x['dimensions'][1])]['id'], axis = 1)
-            obs['measure'] = obs.apply(lambda x: measureList[int(x['dimensions'][2])]['id'], axis = 1)
-            obs['time'] = obs.apply(lambda x: timeList[int(x['dimensions'][4])]['id'], axis = 1)
+            
+            if dsname == 'MEI_CLI':
+                obs['subject'] = obs.apply(lambda x: subjectList[int(x['dimensions'][0])]['id'], axis = 1)
+                id = list(obs['id'])
+                obs['measure'] = ['' for tmp in range(len(id))]
+                obs['time'] = obs.apply(lambda x: timeList[int(x['dimensions'][3])]['id'], axis = 1)
+            elif dsname == 'MEI_BTS_COS':
+                obs['subject'] = obs.apply(lambda x: subjectList[int(x['dimensions'][0])]['id'], axis = 1)
+                obs['measure'] = obs.apply(lambda x: measureList[int(x['dimensions'][2])]['id'], axis = 1)
+                obs['time'] = obs.apply(lambda x: timeList[int(x['dimensions'][4])]['id'], axis = 1)
+            else:
+                obs['subject'] = obs.apply(lambda x: subjectList[int(x['dimensions'][1])]['id'], axis = 1)
+                obs['measure'] = obs.apply(lambda x: measureList[int(x['dimensions'][2])]['id'], axis = 1)
+                obs['time'] = obs.apply(lambda x: timeList[int(x['dimensions'][4])]['id'], axis = 1)
             unit = list(obs['unitCode'])
             for i in range(len(unit)):
                 if str(unit[i]) != 'nan': 
