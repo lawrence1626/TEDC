@@ -8,7 +8,7 @@ from datetime import datetime, date
 ENCODING = 'utf-8-sig'
 data_path = './output/'
 NAME1 = ''
-NAME2 = '_old'
+NAME2 = '_new2'
 
 def ERROR(error_text):
     print('\n\n= ! = '+error_text+'\n\n')

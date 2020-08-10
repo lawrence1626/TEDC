@@ -16,7 +16,7 @@ databank = 'QNIA'
 #freq = 'A'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'QNIA_key.xlsx', header_ = 0, sheet_name_='QNIA_key')
-dataset_list = ['QNA', 'QNA_ARCIVE']
+dataset_list = ['QNA', 'QNA_ARCHIVE']
 frequency_list = ['A','Q']
 
 # 回報錯誤、儲存錯誤檔案並結束程式
@@ -50,28 +50,25 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False, \
 def takeFirst(alist):
 	return alist[0]
 
-country_list={'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'CAN':156,'CHL':228,'CHN':924, \
-                'COL':233,'CRI':238,'CZE':935,'DNK':128,'EA19':719,'EST':939,'EU15':715,'EU27_2020':727, \
-                'FIN':172,'FRA':132,'G-20':920,'G-7':907,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
-                'IND':534,'ISL':176,'IRL':178,'ISR':436,'ITA':136,'JPN':158,'KOR':542,'LVA':941,'LTU':946,'LUX':126, \
-                'MEX':273,'NAFTA':121,'NZL':196,'NOR':142,'OECD':950,'OECDE':930,'OTF':990,'POL':964, \
-                'PRT':182,'ROU':968,'RUS':922,'SAU':456,'SVK':936,'SVN':961,'ESP':184,'SWE':144,'CHE':146,'NLD':138, \
-                'TUR':186,'GBR':112,'USA':111,'ZAF':199}
+country = readFile(data_path+'Country.csv', header_ = 0, index_col_=[0])
+country.to_dict()
+
 def COUNTRY_CODE(location):
-    if location in country_list:
-        return country_list[location]
+    if location in country['Country_Code']:
+        return country['Country_Code'][location]
     else:
         ERROR('國家代碼錯誤: '+location)
 
-country_name = readFile(data_path+'Country_Name.csv', header_ = 0)
 def COUNTRY_NAME(location):
-    country_found = False
-    for loc in range(country_name.shape[0]):
-        if country_name['location'][loc] == location:
-            country_found = True
-            return country_name['Country_Name'][loc]
-    if country_found == False:
+    if location in country['Country_Name']:
+        return country['Country_Name'][location]
+    else:
         ERROR('找不到國家: '+location)
+
+form_e_file = readExcelFile(data_path+'QNIA_form_e.xlsx', header_ = 0, sheet_name_='QNIA_form_e')
+form_e_dict = {}
+for form in form_e_file:
+    form_e_dict[form] = form_e_file[form].dropna().to_list()
 
 this_year = datetime.now().year + 1
 Year_list = [tmp for tmp in range(1947,this_year)]
@@ -141,7 +138,7 @@ start_code_Q = code_num_Q
 #for i in range(10):
 #    print(QNIA_t['TIME'][i], QNIA_t['Value'][i])
 tStart = time.time()
-c_list = list(country_list)
+c_list = list(country.index)
 c_list.sort()
 
 for dataset in dataset_list:
@@ -159,7 +156,7 @@ for dataset in dataset_list:
             nG = QNIA_t.shape[1]
             
             for i in range(nG):
-                sys.stdout.write("\rLoading...("+str(int(i*100/nG))+"%)*")
+                sys.stdout.write("\rLoading...("+str(int((i+1)*100/nG))+"%)*")
                 sys.stdout.flush()
                 
                 if frequency == 'A':
@@ -194,7 +191,15 @@ for dataset in dataset_list:
                     PowerCode = QNIA_t.columns[i][4]
                     Unit = QNIA_t.columns[i][3]
                     desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
-                    form_e = str(Subject)
+                    #form_e = str(Subject)
+                    form_found = False
+                    for form in form_e_dict:
+                        if QNIA_t.columns[i][1] in form_e_dict[form]:
+                            form_e = str(form)
+                            form_found = True
+                            break
+                    if form_found == False:
+                        form_e = 'Others'
                     
                     desc_c = ''
                     freq = frequency
@@ -245,7 +250,13 @@ for dataset in dataset_list:
                     PowerCode = QNIA_t.columns[i][4]
                     Unit = QNIA_t.columns[i][3]
                     desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
-                    form_e = str(Subject)
+                    #form_e = str(Subject)
+                    for form in form_e_dict:
+                        if QNIA_t.columns[i][1] in form_e_dict[form]:
+                            form_e = str(form)
+                            break
+                    if form_found == False:
+                        form_e = 'Others'
                     
                     desc_c = ''
                     freq = frequency

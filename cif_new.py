@@ -56,8 +56,8 @@ def makeOECDRequest(dsname, dimensions, params = None, root_dir = 'https://stats
     
     print('Requesting URL ' + url)
     s = rq.Session()
-    s.mount('http://', HTTPAdapter(max_retries=3))
-    s.mount('https://', HTTPAdapter(max_retries=3))
+    s.mount('http://', HTTPAdapter(max_retries=10))
+    s.mount('https://', HTTPAdapter(max_retries=10))
     return s.get(url = url, params = params)
 
     

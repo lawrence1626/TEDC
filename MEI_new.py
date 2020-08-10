@@ -50,28 +50,29 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False, \
 def takeFirst(alist):
 	return alist[0]
 
-country_list={'A5M':555,'ARG':213,'AUS':193,'AUT':122,'BEL':124,'BGR':918,'BRA':223,'BRIICS':259,'CAN':156,'CHL':228,'CHN':924, \
-                'COL':233,'CRI':238,'CYP':423,'CZE':935,'DNK':128,'EA19':719,'EST':939,'EU27_2020':727, \
-                'EU28':728,'FIN':172,'FRA':132,'G-20':920,'G4E':704,'G-7':907,'DEU':134,'GRC':174,'HUN':944,'IDN':536, \
-                'IND':534,'ISL':176,'IRL':178,'ISR':436,'ITA':136,'JPN':158,'KOR':542,'LVA':941,'LTU':946,'LUX':126, \
-                'MEX':273,'MLT':181,'NAFTA':121,'NZL':196,'NOR':142,'OECD':930,'OECDE':950,'ONM':996,'OXE':903,'POL':964, \
-                'PRT':182,'ROU':968,'RUS':922,'SAU':456,'SDR':919,'SVK':936,'SVN':961,'ESP':184,'SWE':144,'CHE':146,'NLD':138, \
-                'TUR':186,'GBR':112,'USA':111,'ZAF':199}
+country = readFile(data_path+'Country.csv', header_ = 0, index_col_=[0])
+country.to_dict()
+
 def COUNTRY_CODE(location):
-    if location in country_list:
-        return country_list[location]
+    if location in country['Country_Code']:
+        return country['Country_Code'][location]
     else:
         ERROR('國家代碼錯誤: '+location)
 
-country_name = readFile(data_path+'Country_Name.csv', header_ = 0)
 def COUNTRY_NAME(location):
-    country_found = False
-    for loc in range(country_name.shape[0]):
-        if country_name['location'][loc] == location:
-            country_found = True
-            return country_name['Country_Name'][loc]
-    if country_found == False:
+    if location in country['Country_Name']:
+        return country['Country_Name'][location]
+    else:
         ERROR('找不到國家: '+location)
+
+form_e_file1 = readExcelFile(data_path+'MEI_form_e.xlsx', header_ = 0, sheet_name_='MEI_CLI')
+form_e_file2 = readExcelFile(data_path+'MEI_form_e.xlsx', header_ = 0, sheet_name_='MEI_BTS_COS')
+form_e_dict1 = {}
+form_e_dict2 = {}
+for form in form_e_file1:
+    form_e_dict1[form] = form_e_file1[form].dropna().to_list()
+for form in form_e_file2:
+    form_e_dict2[form] = form_e_file2[form].dropna().to_list()
 
 this_year = datetime.now().year + 1
 Year_list = [tmp for tmp in range(1947,this_year)]
@@ -169,7 +170,7 @@ start_code_M = code_num_M
 #for i in range(10):
 #    print(MEI_t['TIME'][i], MEI_t['Value'][i])
 tStart = time.time()
-c_list = list(country_list)
+c_list = list(country.index)
 c_list.sort()
 
 for dataset in dataset_list:
@@ -189,7 +190,7 @@ for dataset in dataset_list:
             nG = MEI_t.shape[1]
             
             for i in range(nG):
-                sys.stdout.write("\rLoading...("+str(int(i*100/nG))+"%)*")
+                sys.stdout.write("\rLoading...("+str(int((i+1)*100/nG))+"%)*")
                 sys.stdout.flush()
                 
                 if frequency == 'A':
@@ -227,8 +228,29 @@ for dataset in dataset_list:
                         desc_e = str(Subject) + ', ' + str(PowerCode) + ' of ' + str(Unit)
                     else:
                         desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
-                    
-                    form_e = str(Subject)
+                    if str(Subject).find('>') > 0:
+                        sub = str(Subject).find('>')-1
+                        form_e = str(Subject)[:sub]
+                    elif dataset == 'MEI_CLI':
+                        form_found = False
+                        for form in form_e_dict1:
+                            if MEI_t.columns[i][1] in form_e_dict1[form]:
+                                form_e = str(form)
+                                form_found = True
+                                break
+                        if form_found == False:
+                            form_e = 'Others'
+                    elif dataset == 'MEI_BTS_COS':
+                        form_found = False
+                        for form in form_e_dict2:
+                            if MEI_t.columns[i][1] in form_e_dict2[form]:
+                                form_e = str(form)
+                                form_found = True
+                                break
+                        if form_found == False:
+                            form_e = 'Others'
+                    else:
+                        form_e = 'Others'
                     
                     desc_c = ''
                     freq = frequency
@@ -282,8 +304,29 @@ for dataset in dataset_list:
                         desc_e = str(Subject) + ', ' + str(PowerCode) + ' of ' + str(Unit)
                     else:
                         desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
-                    
-                    form_e = str(Subject)
+                    if str(Subject).find('>') > 0:
+                        sub = str(Subject).find('>')-1
+                        form_e = str(Subject)[:sub]
+                    elif dataset == 'MEI_CLI':
+                        form_found = False
+                        for form in form_e_dict1:
+                            if MEI_t.columns[i][1] in form_e_dict1[form]:
+                                form_e = str(form)
+                                form_found = True
+                                break
+                        if form_found == False:
+                            form_e = 'Others'
+                    elif dataset == 'MEI_BTS_COS':
+                        form_found = False
+                        for form in form_e_dict2:
+                            if MEI_t.columns[i][1] in form_e_dict2[form]:
+                                form_e = str(form)
+                                form_found = True
+                                break
+                        if form_found == False:
+                            form_e = 'Others'
+                    else:
+                        form_e = 'Others'
                     
                     desc_c = ''
                     freq = frequency
@@ -337,8 +380,29 @@ for dataset in dataset_list:
                         desc_e = str(Subject) + ', ' + str(PowerCode) + ' of ' + str(Unit)
                     else:
                         desc_e = str(Subject) + ', '+str(Measure) + ', ' + str(PowerCode) + ' of ' + str(Unit)
-                    
-                    form_e = str(Subject)
+                    if str(Subject).find('>') > 0:
+                        sub = str(Subject).find('>')-1
+                        form_e = str(Subject)[:sub]
+                    elif dataset == 'MEI_CLI':
+                        form_found = False
+                        for form in form_e_dict1:
+                            if MEI_t.columns[i][1] in form_e_dict1[form]:
+                                form_e = str(form)
+                                form_found = True
+                                break
+                        if form_found == False:
+                            form_e = 'Others'
+                    elif dataset == 'MEI_BTS_COS':
+                        form_found = False
+                        for form in form_e_dict2:
+                            if MEI_t.columns[i][1] in form_e_dict2[form]:
+                                form_e = str(form)
+                                form_found = True
+                                break
+                        if form_found == False:
+                            form_e = 'Others'
+                    else:
+                        form_e = 'Others'
                     
                     desc_c = ''
                     freq = frequency
