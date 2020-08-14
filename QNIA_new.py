@@ -65,7 +65,7 @@ def COUNTRY_NAME(location):
     else:
         ERROR('找不到國家: '+location)
 
-form_e_file = readExcelFile(data_path+'QNIA_form_e.xlsx', header_ = 0, sheet_name_='QNIA_form_e')
+form_e_file = readExcelFile(data_path+'QNIA_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='QNIA_form_e')
 form_e_dict = {}
 for form in form_e_file:
     form_e_dict[form] = form_e_file[form].dropna().to_list()
