@@ -65,8 +65,8 @@ def COUNTRY_NAME(location):
     else:
         ERROR('找不到國家: '+location)
 
-form_e_file1 = readExcelFile(data_path+'MEI_form_e.xlsx', header_ = 0, sheet_name_='MEI_CLI')
-form_e_file2 = readExcelFile(data_path+'MEI_form_e.xlsx', header_ = 0, sheet_name_='MEI_BTS_COS')
+form_e_file1 = readExcelFile(data_path+'MEI_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='MEI_CLI')
+form_e_file2 = readExcelFile(data_path+'MEI_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='MEI_BTS_COS')
 form_e_dict1 = {}
 form_e_dict2 = {}
 for form in form_e_file1:
