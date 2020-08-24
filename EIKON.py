@@ -144,17 +144,17 @@ for g in range(start_file,last_file+1):
             db_table_D = DB_TABLE+'A_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
-            for j in range(nD):
-                if db_table_D_t.index[j] == str(value.index[0]).replace(' 00:00:00',''):
-                    time_index = j
-                    end_found = False
-                    start_found = False
-                    for k in range(value.shape[0]):
+            end_found = False
+            start_found = False
+            head = 0
+            for k in range(value.shape[0]):
+                for j in range(head, nD):
+                    if db_table_D_t.index[j] == str(value.index[k]).replace(' 00:00:00',''):
+                        db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
+                        head = j
                         if end_found == False:
                             if str(value[k]) != 'nan':
                                 end_found = True
-                        db_table_D_t[db_code_D][db_table_D_t.index[time_index]] = value[k]
-                        time_index += 1
                         if end_found == True and start_found == False:
                             if k == value.shape[0]-1:
                                 start_found = True
@@ -162,7 +162,7 @@ for g in range(start_file,last_file+1):
                             elif str(value[k]) == 'nan':
                                 start_found = True
                                 start = str(value.index[k-1]).replace(' 00:00:00','')
-                    break
+                        break
             
             #Subject = subjects_list[EIKON_t[sheet].columns[i][1]]
             #Measure = measures_list[EIKON_t[sheet].columns[i][2]]
