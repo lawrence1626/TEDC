@@ -14,13 +14,13 @@ data_path = './data/'
 out_path = "./output/"
 databank = 'EIKON'
 #freq = 'A'
-key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
+key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'base', 'quote', 'snl', 'source', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='EIKON_key')
 #dataset_list = ['QNA', 'QNA_DRCHIVE']
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 2
+last_file = 1
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -52,26 +52,26 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False, \
 
 def takeFirst(alist):
 	return alist[0]
+
+Datatype = readFile(data_path+'Datatype.csv', header_ = 0)
+Datatype = Datatype.set_index('Symbol').to_dict()
+source_FromUSD = readFile(data_path+'sourceFROM.csv', header_ = 0)
+source_ToUSD = readFile(data_path+'sourceTO.csv', header_ = 0)
+source_USD = pd.concat([source_FromUSD, source_ToUSD], ignore_index=True)
+source_USD = source_USD.set_index('Symbol').to_dict()
+
 """
-country = readFile(data_path+'Country.csv', header_ = 0, index_col_=[0])
-country.to_dict()
-
-def COUNTRY_CODE(location):
-    if location in country['Country_Code']:
-        return country['Country_Code'][location]
+def DATA_TYPE(code):
+    if code in Datatype['Name']:
+        return str(Datatype['Name'][code])+', '+str(Datatype['Type'][code])
     else:
-        ERROR('國家代碼錯誤: '+location)
+        ERROR('型別代碼錯誤: '+code)
 
-def COUNTRY_NAME(location):
-    if location in country['Country_Name']:
-        return country['Country_Name'][location]
+def SOURCE(code):
+    if code in source_USD['Source']:
+        return str(source_USD['Source'][code])
     else:
-        ERROR('找不到國家: '+location)
-
-form_e_file = readExcelFile(data_path+'EIKON_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='EIKON_form_e')
-form_e_dict = {}
-for form in form_e_file:
-    form_e_dict[form] = form_e_file[form].dropna().to_list()
+        ERROR('來源代碼錯誤: '+code)
 """
 
 Day_list = pd.date_range(start = '1/1/1947', end = datetime.today()).strftime('%Y-%m-%d').tolist()
@@ -144,41 +144,29 @@ for g in range(start_file,last_file+1):
             db_table_D = DB_TABLE+'A_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
-            end_found = False
-            start_found = False
             head = 0
             for k in range(value.shape[0]):
                 for j in range(head, nD):
                     if db_table_D_t.index[j] == str(value.index[k]).replace(' 00:00:00',''):
                         db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
                         head = j
-                        if end_found == False:
-                            if str(value[k]) != 'nan':
-                                end_found = True
-                        if end_found == True and start_found == False:
-                            if k == value.shape[0]-1:
-                                start_found = True
-                                start = str(value.index[k]).replace(' 00:00:00','')
-                            elif str(value[k]) == 'nan':
-                                start_found = True
-                                start = str(value.index[k-1]).replace(' 00:00:00','')
-                        break
+                        break        
             
-            #Subject = subjects_list[EIKON_t[sheet].columns[i][1]]
-            #Measure = measures_list[EIKON_t[sheet].columns[i][2]]
-            #PowerCode = EIKON_t[sheet].columns[i][4]
-            Unit = EIKON_t[sheet].columns[i][2]
-            desc_e = str(EIKON_t[sheet].columns[i][0]).replace('$TO',' $ TO ').replace('$','Dollars').replace('TO','per')
-            form_e = ''
-            
+            loc1 = str(EIKON_t[sheet].columns[i][1]).find('(')
+            loc2 = str(EIKON_t[sheet].columns[i][1]).find(')')
+            code = str(EIKON_t[sheet].columns[i][1])[:loc1]
+            dtype = str(EIKON_t[sheet].columns[i][1])[loc1+1:loc2]
+            form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
+            desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per')+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
+            start = source_USD['Start Date'][code]
+            base = source_USD['To Currency'][code]
+            quote = source_USD['From Currency'][code]
             desc_c = ''
             freq = frequency
-            unit = str(Unit)
-            name_ord = 'US dollars'
-            book = ''
+            source = str(source_USD['Source'][code])
             form_c = ''
             
-            key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+            key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
             KEY_DATA.append(key_tmp)
             sort_tmp_D = [name, snl, db_table_D, db_code_D]
             SORT_DATA_D.append(sort_tmp_D)
