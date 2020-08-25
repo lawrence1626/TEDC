@@ -20,7 +20,7 @@ merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 1
+last_file = 3
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -159,8 +159,12 @@ for g in range(start_file,last_file+1):
             form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
             desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per')+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
             start = source_USD['Start Date'][code]
-            base = source_USD['To Currency'][code]
-            quote = source_USD['From Currency'][code]
+            if str(source_USD['Full Name'][code]).find('USD /') >= 0:
+                base = source_USD['From Currency'][code]
+                quote = source_USD['To Currency'][code]
+            else:
+                base = source_USD['To Currency'][code]
+                quote = source_USD['From Currency'][code]
             desc_c = ''
             freq = frequency
             source = str(source_USD['Source'][code])
