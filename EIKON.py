@@ -20,7 +20,8 @@ merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 1
+last_file = 3
+max = 10
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -272,7 +273,6 @@ if merge_file.empty == False:
     df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_D, DB_name_D)
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
     DB_keys = sorted(DATA_BASE.keys())
-    max = 10
     database_num = int((len(DB_keys)/max))
     for d in range(1, database_num+1):
         with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
@@ -288,7 +288,6 @@ if merge_file.empty == False:
         f.write(database_num)
 else:
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    max = 10
     database_num = int((len(DB_name_D)/max))
     for d in range(1, database_num+1):
         with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
