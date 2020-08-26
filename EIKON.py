@@ -272,28 +272,37 @@ if merge_file.empty == False:
     df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_D, DB_name_D)
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
     DB_keys = sorted(DATA_BASE.keys())
-    for key in range(len(DB_keys)):
-        with pd.ExcelWriter(out_path+NAME+"database_"+str(int(key/10)+1)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
-            sys.stdout.write("\rOutputing sheet: "+str(DB_keys[key]))
-            sys.stdout.flush()
-            DATA_BASE[DB_keys[key]].to_excel(writer, sheet_name = DB_keys[key])
-    sys.stdout.write("\n")
-    database_num = int((len(DB_keys)/10)+1)
-    print('database_num = ', database_num)
+    max = 10
+    database_num = int((len(DB_keys)/max))
+    for d in range(1, database_num+1):
+        with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+            for key in range(max*(d-1), max*d):
+                sys.stdout.write("\rOutputing sheet: "+str(DB_keys[key]))
+                sys.stdout.flush()
+                DATA_BASE[DB_keys[key]].to_excel(writer, sheet_name = DB_keys[key])
+            writer.save()
+            sys.stdout.write("\n")
+    
+    print('\ndatabase_num = ', database_num)
     with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
         f.write(database_num)
 else:
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    for d in range(len(DB_name_D)):
-        with pd.ExcelWriter(out_path+NAME+"database_"+str(int(d/10)+1)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
-            sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[d]))
-            sys.stdout.flush()
-            if DATA_BASE_D[DB_name_D[d]].empty == False:
-                DATA_BASE_D[DB_name_D[d]].to_excel(writer, sheet_name = DB_name_D[d])
-    sys.stdout.write("\n")
-    database_num = int((len(DB_name_D)/10)+1)
-    print('database_num = ', database_num)
+    max = 10
+    database_num = int((len(DB_name_D)/max))
+    for d in range(1, database_num+1):
+        with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+            print('Outputing file: '+NAME+"database_"+str(d))
+            for db in range(max*(d-1), max*d):
+                sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db]))
+                sys.stdout.flush()
+                if DATA_BASE_D[DB_name_D[db]].empty == False:
+                    DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
+            writer.save()
+            sys.stdout.write("\n")
+    
+    print('\ndatabase_num = ', database_num)
     with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(database_num)
+        f.write(str(database_num))
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
