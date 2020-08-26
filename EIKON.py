@@ -63,10 +63,10 @@ Currency = readFile(data_path+'Currency.csv', header_ = 0)
 Currency = Currency.set_index('Code').to_dict()
 
 def CURRENCY(code):
-    if code in Currency:
+    if code in Currency['Name']:
         return str(Currency['Name'][code])
     else:
-        ERROR('型別代碼錯誤: '+code)
+        ERROR('貨幣代碼錯誤: '+code)
 """
 def SOURCE(code):
     if code in source_USD['Source']:
