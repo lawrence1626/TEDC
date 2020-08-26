@@ -20,7 +20,7 @@ merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 3
+last_file = 1
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -141,7 +141,7 @@ for g in range(start_file,last_file+1):
             name = frequency+'_'+str(EIKON_t[sheet].columns[i][1])+'.d'
         
             value = EIKON_t[sheet][EIKON_t[sheet].columns[i]]
-            db_table_D = DB_TABLE+'A_'+str(table_num_D).rjust(4,'0')
+            db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
             head = 0
@@ -149,7 +149,7 @@ for g in range(start_file,last_file+1):
                 for j in range(head, nD):
                     if db_table_D_t.index[j] == str(value.index[k]).replace(' 00:00:00',''):
                         db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
-                        head = j
+                        head = j+1
                         break        
             
             loc1 = str(EIKON_t[sheet].columns[i][1]).find('(')
@@ -159,16 +159,30 @@ for g in range(start_file,last_file+1):
             form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
             desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per')+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
             start = source_USD['Start Date'][code]
-            if str(source_USD['Full Name'][code]).find('USD /') >= 0:
-                base = source_USD['From Currency'][code]
-                quote = source_USD['To Currency'][code]
+            if str(source_USD['Full Name'][code]).find('USD /') >= 0 or str(source_USD['Full Name'][code]).find('USD/') >= 0:
+                if source_USD['From Currency'][code] == 'United States Dollar':
+                    base = source_USD['From Currency'][code]
+                    quote = source_USD['To Currency'][code]
+                else:
+                    base = source_USD['To Currency'][code]
+                    quote = source_USD['From Currency'][code]
+            elif str(source_USD['Full Name'][code]).find('/ USD') >= 0 or str(source_USD['Full Name'][code]).find('/USD') >= 0:
+                if source_USD['From Currency'][code] == 'United States Dollar':
+                    base = source_USD['To Currency'][code]
+                    quote = source_USD['From Currency'][code]
+                else:
+                    base = source_USD['From Currency'][code]
+                    quote = source_USD['To Currency'][code]
             else:
                 base = source_USD['To Currency'][code]
                 quote = source_USD['From Currency'][code]
             desc_c = ''
             freq = frequency
             source = str(source_USD['Source'][code])
-            form_c = ''
+            if str(source_USD['Full Name'][code]).find('Forward') >= 0 or str(source_USD['Full Name'][code]).find('F (HSBC)') >= 0 or str(source_USD['Full Name'][code]).find('FWD') >= 0 or str(source_USD['Full Name'][code]).find('F (Refinitiv)') >= 0:
+                form_c = 'Forward'
+            else:
+                form_c = ''
             
             key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
             KEY_DATA.append(key_tmp)
