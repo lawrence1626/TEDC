@@ -59,14 +59,15 @@ source_FromUSD = readFile(data_path+'sourceFROM.csv', header_ = 0)
 source_ToUSD = readFile(data_path+'sourceTO.csv', header_ = 0)
 source_USD = pd.concat([source_FromUSD, source_ToUSD], ignore_index=True)
 source_USD = source_USD.set_index('Symbol').to_dict()
+Currency = readFile(data_path+'Currency.csv', header_ = 0)
+Currency = Currency.set_index('Code').to_dict()
 
-"""
-def DATA_TYPE(code):
-    if code in Datatype['Name']:
-        return str(Datatype['Name'][code])+', '+str(Datatype['Type'][code])
+def CURRENCY(code):
+    if code in Currency:
+        return str(Currency['Name'][code])
     else:
         ERROR('型別代碼錯誤: '+code)
-
+"""
 def SOURCE(code):
     if code in source_USD['Source']:
         return str(source_USD['Source'][code])
@@ -120,7 +121,7 @@ for g in range(start_file,last_file+1):
     EIKON_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_ = [0,1,2], sheet_name_= None)
     
     for sheet in EIKON_t:
-        print('Reading sheet: '+str(sheet)+' Time: ', int(time.time() - tStart),'s'+'\n')
+        print('Reading sheet: '+CURRENCY(sheet)+' Time: ', int(time.time() - tStart),'s'+'\n')
         EIKON_t[sheet].set_index(EIKON_t[sheet].columns[0], inplace = True)
         nG = EIKON_t[sheet].shape[1]
             
