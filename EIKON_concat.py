@@ -7,6 +7,7 @@ from datetime import datetime, date
 
 ENCODING = 'utf-8-sig'
 data_path = './output/'
+NAME = 'EIKON_'
 
 def ERROR(error_text):
     print('\n\n= ! = '+error_text+'\n\n')
@@ -40,15 +41,22 @@ def CONCATE(df_key, DB_D, DB_name_D):
     Day_list.reverse()
     
     tStart = time.time()
-    print('Reading file: EIKON_key, Time: ', int(time.time() - tStart),'s'+'\n')
-    KEY_DATA_t = readExcelFile(data_path+'EIKON_key.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='EIKON_key')
-    print('Reading file: EIKON_database, Time: ', int(time.time() - tStart),'s'+'\n')
-    DATA_BASE_t = readExcelFile(data_path+'EIKON_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    print('Reading file: '+NAME+'key, Time: ', int(time.time() - tStart),'s'+'\n')
+    KEY_DATA_t = readExcelFile(data_path+NAME+'key.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='EIKON_key')
+    with open(data_path+'database_num.txt','r') as f:  #用with一次性完成open、close檔案
+        database_num = f.read().replace('\n', '')
+    DATA_BASE_t = {}
+    for i in range(1,database_num+1):
+        print('Reading file: '+NAME+'database_'+str(i)+', Time: ', int(time.time() - tStart),'s'+'\n')
+        DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+        for d in DB_t.keys():
+            DATA_BASE_t[d] = DB_t[d]
+    #DATA_BASE_t = readExcelFile(data_path+'EIKON_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
     
-    print('Concating file: EIKON_key, Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Concating file: '+NAME+'key, Time: ', int(time.time() - tStart),'s'+'\n')
     KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
     
-    print('Concating file: EIKON_database, Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Concating file: '+NAME+'database, Time: ', int(time.time() - tStart),'s'+'\n')
     for d in DB_name_D:
         sys.stdout.write("\rConcating sheet: "+str(d))
         sys.stdout.flush()
@@ -125,7 +133,7 @@ def CONCATE(df_key, DB_D, DB_name_D):
     DB_D = DB_D_new
     DB_name_D = DB_name_D_new
 
-    print('Concating new files: EIKON_database, Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Concating new files: '+NAME+'database, Time: ', int(time.time() - tStart),'s'+'\n')
     DATA_BASE_t = {}
     for d in DB_name_D:
         sys.stdout.write("\rConcating sheet: "+str(d))

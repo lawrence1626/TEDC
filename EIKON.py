@@ -270,22 +270,29 @@ print('Time: ', int(time.time() - tStart),'s'+'\n')
 if merge_file.empty == False:
     df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_D, DB_name_D)
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
-        endl = True
-        for key in sorted(DATA_BASE.keys()):
-            if key.find('DB_D') >= 0:
-                sys.stdout.write("\rOutputing sheet: "+str(key))
-                sys.stdout.flush()
-            DATA_BASE[key].to_excel(writer, sheet_name = key)
+    DB_keys = sorted(DATA_BASE.keys())
+    for key in range(len(DB_keys)):
+        with pd.ExcelWriter(out_path+NAME+"database_"+str(int(key/10)+1)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+            sys.stdout.write("\rOutputing sheet: "+str(DB_keys[key]))
+            sys.stdout.flush()
+            DATA_BASE[DB_keys[key]].to_excel(writer, sheet_name = DB_keys[key])
     sys.stdout.write("\n")
+    database_num = int((len(DB_keys)/10)+1)
+    print('database_num = ', database_num)
+    with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
+        f.write(database_num)
 else:
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
-        for d in DB_name_D:
-            sys.stdout.write("\rOutputing sheet: "+str(d))
+    for d in range(len(DB_name_D)):
+        with pd.ExcelWriter(out_path+NAME+"database_"+str(int(d/10)+1)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+            sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[d]))
             sys.stdout.flush()
-            if DATA_BASE_D[d].empty == False:
-                DATA_BASE_D[d].to_excel(writer, sheet_name = d)
+            if DATA_BASE_D[DB_name_D[d]].empty == False:
+                DATA_BASE_D[DB_name_D[d]].to_excel(writer, sheet_name = DB_name_D[d])
     sys.stdout.write("\n")
+    database_num = int((len(DB_name_D)/10)+1)
+    print('database_num = ', database_num)
+    with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
+        f.write(database_num)
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
