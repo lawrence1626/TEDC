@@ -117,7 +117,7 @@ tStart = time.time()
 
 for g in range(start_file,last_file+1):
     print('Reading file: '+NAME+str(g)+' Time: ', int(time.time() - tStart),'s'+'\n')
-    EIKON_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', acceptNoFile=False, header_ = [0,1,2], sheet_name_= None)
+    EIKON_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_ = [0,1,2], sheet_name_= None)
     
     for sheet in EIKON_t:
         print('Reading sheet: '+str(sheet)+' Time: ', int(time.time() - tStart),'s'+'\n')
