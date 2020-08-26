@@ -179,7 +179,7 @@ for g in range(start_file,last_file+1):
             desc_c = ''
             freq = frequency
             source = str(source_USD['Source'][code])
-            if str(source_USD['Full Name'][code]).find('Forward') >= 0 or str(source_USD['Full Name'][code]).find('F (HSBC)') >= 0 or str(source_USD['Full Name'][code]).find('FWD') >= 0 or str(source_USD['Full Name'][code]).find('F (Refinitiv)') >= 0:
+            if str(source_USD['Full Name'][code]).find('Forward') >= 0 or str(source_USD['Full Name'][code]).find('F (HSBC)') >= 0 or str(source_USD['Full Name'][code]).find('FWD') >= 0:
                 form_c = 'Forward'
             else:
                 form_c = ''
