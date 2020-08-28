@@ -43,8 +43,8 @@ def CONCATE(df_key, DB_D, DB_name_D):
     tStart = time.time()
     print('Reading file: '+NAME+'key, Time: ', int(time.time() - tStart),'s'+'\n')
     KEY_DATA_t = readExcelFile(data_path+NAME+'key.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='EIKON_key')
-    with open(data_path+'database_num.txt','r') as f:  #用with一次性完成open、close檔案
-        database_num = f.read().replace('\n', '')
+    with open(data_path+'database_num.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+        database_num = int(f.read().replace('\n', ''))
     DATA_BASE_t = {}
     for i in range(1,database_num+1):
         print('Reading file: '+NAME+'database_'+str(i)+', Time: ', int(time.time() - tStart),'s'+'\n')
