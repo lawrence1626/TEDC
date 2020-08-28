@@ -273,7 +273,7 @@ if merge_file.empty == False:
     df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_D, DB_name_D)
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
     DB_keys = sorted(DATA_BASE.keys())
-    database_num = int((len(DB_keys)/max))
+    database_num = int(((len(DB_name_D)-1)/max))+1
     for d in range(1, database_num+1):
         with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
             for key in range(max*(d-1), max*d):
@@ -288,7 +288,7 @@ if merge_file.empty == False:
         f.write(database_num)
 else:
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    database_num = int((len(DB_name_D)/max))
+    database_num = int(((len(DB_name_D)-1)/max))+1
     for d in range(1, database_num+1):
         with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
             print('Outputing file: '+NAME+"database_"+str(d))
