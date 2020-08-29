@@ -20,8 +20,9 @@ merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 3
+last_file = 1
 maximum = 10
+update = '26/8/2020'#datetime.today()
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -76,7 +77,7 @@ def SOURCE(code):
         ERROR('來源代碼錯誤: '+code)
 """
 
-Day_list = pd.date_range(start = '1/1/1947', end = datetime.today()).strftime('%Y-%m-%d').tolist()
+Day_list = pd.date_range(start = '1/1/1947', end = update).strftime('%Y-%m-%d').tolist()
 Day_list.reverse()
 nD = len(Day_list)
 KEY_DATA = []
@@ -87,6 +88,12 @@ DB_name_D = []
 DB_TABLE = 'DB_'
 DB_CODE = 'data'
 
+try:
+    with open(out_path+'database_num.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+        database_num = int(f.read().replace('\n', ''))
+except FileNotFoundError:
+    if merge_file.empty == False:
+        ERROR('找不到database_num.txt')
 if merge_file.empty == False:
     snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
     for d in range(1,10000):
@@ -142,15 +149,16 @@ for g in range(start_file,last_file+1):
             
             name = frequency+'_'+str(EIKON_t[sheet].columns[i][1])+'.d'
         
-            value = EIKON_t[sheet][EIKON_t[sheet].columns[i]]
+            value = list(EIKON_t[sheet][EIKON_t[sheet].columns[i]])
+            index = EIKON_t[sheet][EIKON_t[sheet].columns[i]].index
             db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
             head = 0
-            for k in range(value.shape[0]):
+            for k in range(len(value)):
                 find = False
                 for j in range(head, nD):
-                    if db_table_D_t.index[j] == str(value.index[k]).replace(' 00:00:00',''):
+                    if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
                         find = True
                         db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
                         head = j+1
@@ -163,9 +171,9 @@ for g in range(start_file,last_file+1):
             code = str(EIKON_t[sheet].columns[i][1])[:loc1]
             dtype = str(EIKON_t[sheet].columns[i][1])[loc1+1:loc2]
             form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
-            desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per')+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
+            desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous$', 'per US dollar', 1).replace('To_us_$', 'per US dollar', 1)+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
             start = source_USD['Start Date'][code]
-            if str(source_USD['Full Name'][code]).find('USD /') >= 0 or str(source_USD['Full Name'][code]).find('USD/') >= 0:
+            if str(source_USD['Full Name'][code]).find('USD /') >= 0 or str(source_USD['Full Name'][code]).find('USD/') >= 0 or str(source_USD['Full Name'][code]).find('US Dollar /') >= 0:
                 if source_USD['From Currency'][code] == 'United States Dollar':
                     base = source_USD['From Currency'][code]
                     quote = source_USD['To Currency'][code]
@@ -185,7 +193,18 @@ for g in range(start_file,last_file+1):
             desc_c = ''
             freq = frequency
             source = str(source_USD['Source'][code])
-            if str(source_USD['Full Name'][code]).find('Forward') >= 0 or str(source_USD['Full Name'][code]).find('F (HSBC)') >= 0 or str(source_USD['Full Name'][code]).find('FWD') >= 0:
+            if str(source_USD['Full Name'][code]).find('Butterfly') >= 0 or str(source_USD['Full Name'][code]).find('Reversal') >= 0:
+                form_c = 'Options'
+            elif str(source_USD['Full Name'][code]).find('Forecast') >= 0:
+                form_c = 'Forecast'
+            elif str(source_USD['Full Name'][code]).find('FX Volatility') >= 0:
+                form_c = 'FX Volatility'
+            elif str(source_USD['Full Name'][code]).find('Hourly') >= 0:
+                form_c = 'Hourly Rate'
+            elif str(source_USD['Full Name'][code]).find('Ptax') >= 0:
+                form_c = 'Ptax Rate'    
+            elif str(source_USD['Full Name'][code]).find('Forw') >= 0 or str(source_USD['Full Name'][code]).find('FW') >= 0 or str(source_USD['Full Name'][code]).find('MF') >= 0 or str(source_USD['Full Name'][code]).find('YF') >= 0 \
+                or str(source_USD['Full Name'][code]).find('Week') >= 0 or str(source_USD['Full Name'][code]).find('Month') >= 0 or str(source_USD['Full Name'][code]).find('Year') >= 0 or str(source_USD['Full Name'][code]).find('Overnight') >= 0 or str(source_USD['Full Name'][code]).find('Tomorrow Next') >= 0:
                 form_c = 'Forward'
             else:
                 form_c = ''
@@ -274,7 +293,7 @@ print(df_key)
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 if merge_file.empty == False:
-    df_key, DATA_BASE, DB_name_D = CONCATE(df_key, DATA_BASE_D, DB_name_D)
+    df_key, DATA_BASE, DB_name_D = CONCATE(df_key, DATA_BASE_D, DB_name_D, Day_list)
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
     DB_keys = sorted(DATA_BASE.keys())
     database_num = int(((len(DB_name_D)-1)/maximum))+1
@@ -285,20 +304,20 @@ if merge_file.empty == False:
                 for db in range(maximum*(d-1), len(DB_name_D)):
                     sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
                     sys.stdout.flush()
-                    if DATA_BASE_D[DB_name_D[db]].empty == False:
-                        DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
+                    if DATA_BASE[DB_name_D[db]].empty == False:
+                        DATA_BASE[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
                 writer.save()
                 sys.stdout.write("\n")
             else:
                 for db in range(maximum*(d-1), maximum*d):
                     sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
                     sys.stdout.flush()
-                    if DATA_BASE_D[DB_name_D[db]].empty == False:
-                        DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
+                    if DATA_BASE[DB_name_D[db]].empty == False:
+                        DATA_BASE[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
                 writer.save()
                 sys.stdout.write("\n")
     
-    print('\ndatabase_num = ', database_num)
+    print('\ndatabase_num =', database_num)
     with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
         f.write(str(database_num))
 else:
@@ -324,7 +343,7 @@ else:
                 writer.save()
                 sys.stdout.write("\n")
     
-    print('\ndatabase_num = ', database_num)
+    print('\ndatabase_num =', database_num)
     with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
         f.write(str(database_num))
 

@@ -33,11 +33,10 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, \
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
 
-def CONCATE(df_key, DB_D, DB_name_D):
+def CONCATE(df_key, DB_D, DB_name_D, Day_list):
     
     DB_TABLE = 'DB_'
     DB_CODE = 'data'
-    Day_list = pd.date_range(start = '1/1/1947', end = datetime.today()).strftime('%Y-%m-%d').tolist()
     Day_list.reverse()
     
     tStart = time.time()
@@ -48,7 +47,7 @@ def CONCATE(df_key, DB_D, DB_name_D):
     DATA_BASE_t = {}
     for i in range(1,database_num+1):
         print('Reading file: '+NAME+'database_'+str(i)+', Time: ', int(time.time() - tStart),'s'+'\n')
-        DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+        DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
         for d in DB_t.keys():
             DATA_BASE_t[d] = DB_t[d]
     #DATA_BASE_t = readExcelFile(data_path+'EIKON_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
@@ -75,9 +74,9 @@ def CONCATE(df_key, DB_D, DB_name_D):
     for i in range(1, len(KEY_DATA_t)):
         if key_data[i] == key_data[i-1]:
             repeated += 1
-            repeated_index.append(i)
+            repeated_index.append(i-1)
             #print(i,' ',i-1)
-            key = KEY_DATA_t.iloc[i]    
+            key = KEY_DATA_t.iloc[i-1]    
             DATA_BASE_t[key['db_table']] = DATA_BASE_t[key['db_table']].drop(columns = key['db_code'])
         sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
         sys.stdout.flush()
@@ -115,7 +114,7 @@ def CONCATE(df_key, DB_D, DB_name_D):
             start_table_D += 1
             start_code_D = 1
             db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
-        db_table_D = DB_TABLE+'A_'+str(start_table_D).rjust(4,'0')
+        db_table_D = DB_TABLE+'D_'+str(start_table_D).rjust(4,'0')
         db_code_D = DB_CODE+str(start_code_D).rjust(3,'0')
         db_table_D_t[db_code_D] = DATA_BASE_t[KEY_DATA_t.iloc[f]['db_table']][KEY_DATA_t.iloc[f]['db_code']]
         KEY_DATA_t.loc[f, 'db_table'] = db_table_D
@@ -143,4 +142,4 @@ def CONCATE(df_key, DB_D, DB_name_D):
     print(KEY_DATA_t)
     print('Time: ', int(time.time() - tStart),'s'+'\n')
 
-    return (KEY_DATA_t, DATA_BASE_t)
+    return (KEY_DATA_t, DATA_BASE_t, DB_name_D)
