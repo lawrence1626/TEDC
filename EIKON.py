@@ -13,14 +13,14 @@ NAME = 'EIKON_'
 data_path = './data/'
 out_path = "./output/"
 databank = 'EIKON'
-#freq = 'A'
+#freq = 'D'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'base', 'quote', 'snl', 'source', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='EIKON_key')
 #dataset_list = ['QNA', 'QNA_DRCHIVE']
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 1
+last_file = 14
 maximum = 10
 update = '26/8/2020'#datetime.today()
 
@@ -171,7 +171,7 @@ for g in range(start_file,last_file+1):
             code = str(EIKON_t[sheet].columns[i][1])[:loc1]
             dtype = str(EIKON_t[sheet].columns[i][1])[loc1+1:loc2]
             form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
-            desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous$', 'per US dollar', 1).replace('To_us_$', 'per US dollar', 1)+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
+            desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous', 'per US ').replace('To_us_$', 'per US dollar').replace('?', '$', 1)+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
             start = source_USD['Start Date'][code]
             if str(source_USD['Full Name'][code]).find('USD /') >= 0 or str(source_USD['Full Name'][code]).find('USD/') >= 0 or str(source_USD['Full Name'][code]).find('US Dollar /') >= 0:
                 if source_USD['From Currency'][code] == 'United States Dollar':
@@ -204,7 +204,8 @@ for g in range(start_file,last_file+1):
             elif str(source_USD['Full Name'][code]).find('Ptax') >= 0:
                 form_c = 'Ptax Rate'    
             elif str(source_USD['Full Name'][code]).find('Forw') >= 0 or str(source_USD['Full Name'][code]).find('FW') >= 0 or str(source_USD['Full Name'][code]).find('MF') >= 0 or str(source_USD['Full Name'][code]).find('YF') >= 0 \
-                or str(source_USD['Full Name'][code]).find('Week') >= 0 or str(source_USD['Full Name'][code]).find('Month') >= 0 or str(source_USD['Full Name'][code]).find('Year') >= 0 or str(source_USD['Full Name'][code]).find('Overnight') >= 0 or str(source_USD['Full Name'][code]).find('Tomorrow Next') >= 0:
+                or str(source_USD['Full Name'][code]).find('Week') >= 0 or str(source_USD['Full Name'][code]).find('Month') >= 0 or str(source_USD['Full Name'][code]).find('Year') >= 0 or str(source_USD['Full Name'][code]).find('Overnight') >= 0 \
+                or str(source_USD['Full Name'][code]).find('Tomorrow Next') >= 0 or str(source_USD['Full Name'][code]).find('MONTH') >= 0:
                 form_c = 'Forward'
             else:
                 form_c = ''

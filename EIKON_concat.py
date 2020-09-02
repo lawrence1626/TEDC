@@ -37,7 +37,6 @@ def CONCATE(df_key, DB_D, DB_name_D, Day_list):
     
     DB_TABLE = 'DB_'
     DB_CODE = 'data'
-    Day_list.reverse()
     
     tStart = time.time()
     print('Reading file: '+NAME+'key, Time: ', int(time.time() - tStart),'s'+'\n')
@@ -81,6 +80,8 @@ def CONCATE(df_key, DB_D, DB_name_D, Day_list):
         sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
         sys.stdout.flush()
     sys.stdout.write("\n")
+    #for i in repeated_index:
+    #    print(key_data[i])
     for i in repeated_index:
         sys.stdout.write("\rDropping repeated data key(s): "+str(i))
         sys.stdout.flush()
