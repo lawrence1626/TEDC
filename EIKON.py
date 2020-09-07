@@ -14,13 +14,13 @@ data_path = './data/'
 out_path = "./output/"
 databank = 'EIKON'
 #freq = 'D'
-key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'base', 'quote', 'snl', 'source', 'form_e', 'form_c']
+key_list = ['databank', 'name', 'old_name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'base', 'quote', 'snl', 'source', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='EIKON_key')
 #dataset_list = ['QNA', 'QNA_DRCHIVE']
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 14
+last_file = 5
 maximum = 10
 update = '26/8/2020'#datetime.today()
 
@@ -61,9 +61,14 @@ source_FromUSD = readFile(data_path+'sourceFROM.csv', header_ = 0)
 source_ToUSD = readFile(data_path+'sourceTO.csv', header_ = 0)
 source_USD = pd.concat([source_FromUSD, source_ToUSD], ignore_index=True)
 source_USD = source_USD.set_index('Symbol').to_dict()
-Currency = readFile(data_path+'Currency.csv', header_ = 0)
+Currency = readFile(data_path+'Currency2.csv', header_ = 0)
 Currency = Currency.set_index('Code').to_dict()
 
+def CURRENCY_CODE(code):
+    if code in Currency['Country_Code']:
+        return str(Currency['Country_Code'][code]).rjust(3,'0')
+    else:
+        return 'not_exists'
 def CURRENCY(code):
     if code in Currency['Name']:
         return str(Currency['Name'][code])
@@ -129,6 +134,8 @@ for g in range(start_file,last_file+1):
     EIKON_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_ = [0,1,2], sheet_name_= None)
     
     for sheet in EIKON_t:
+        if CURRENCY_CODE(sheet) == 'not_exists':
+            continue
         print('Reading sheet: '+CURRENCY(sheet)+' Time: ', int(time.time() - tStart),'s'+'\n')
         EIKON_t[sheet].set_index(EIKON_t[sheet].columns[0], inplace = True)
         nG = EIKON_t[sheet].shape[1]
@@ -147,7 +154,8 @@ for g in range(start_file,last_file+1):
                 code_num_D = 1
                 db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
             
-            name = frequency+'_'+str(EIKON_t[sheet].columns[i][1])+'.d'
+            name = frequency+CURRENCY_CODE(sheet)+str(EIKON_t[sheet].columns[i][1])+'.d'
+            old_name = str(EIKON_t[sheet].columns[i][1])
         
             value = list(EIKON_t[sheet][EIKON_t[sheet].columns[i]])
             index = EIKON_t[sheet][EIKON_t[sheet].columns[i]].index
@@ -210,7 +218,7 @@ for g in range(start_file,last_file+1):
             else:
                 form_c = ''
             
-            key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
+            key_tmp= [databank, name, old_name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
             KEY_DATA.append(key_tmp)
             sort_tmp_D = [name, snl, db_table_D, db_code_D]
             SORT_DATA_D.append(sort_tmp_D)
