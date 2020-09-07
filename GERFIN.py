@@ -4,8 +4,7 @@ import math, re, sys, calendar, os, copy, time
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
-#from cif_new import createDataFrameFromOECD
-from EIKON_concat import CONCATE, readExcelFile
+#from EIKON_concat import CONCATE, readExcelFile
 
 ENCODING = 'utf-8-sig'
 
@@ -13,16 +12,13 @@ NAME = 'GERFIN_'
 data_path = './data2/'
 out_path = "./output/"
 databank = 'GERFIN'
-#freq = 'D'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'base', 'quote', 'snl', 'source', 'form_e', 'form_c']
-merge_file = readExcelFile(out_path+'GERFIN_key.xlsx', header_ = 0, sheet_name_='GERFIN_key')
-#dataset_list = ['QNA', 'QNA_DRCHIVE']
-#frequency_list = ['A','Q']
+#merge_file = readExcelFile(out_path+'GERFIN_key.xlsx', header_ = 0, sheet_name_='GERFIN_key')
 frequency = 'D'
 start_file = 1
-last_file = 1
+last_file = 3
 maximum = 10
-update = '31/8/2020'#datetime.today()
+update = datetime.today()
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -52,32 +48,36 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False, \
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
 
+def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, \
+             header_=None,skiprows_=None,index_col_=None,sheet_name_=None):
+    try:
+        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,index_col=index_col_,skiprows=skiprows_)
+        #print(t)
+        return t
+    except FileNotFoundError:
+        if acceptNoFile:
+            return default
+        else:
+            ERROR('找不到檔案：'+dir)
+    except:
+        try: #檔案編碼格式不同
+            t = pd.read_excel(dir, header=header_,skiprows=skiprows_,index_col=index_col_,sheet_name=sheet_name_)
+            #print(t)
+            return t
+        except:
+            return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+
 def takeFirst(alist):
 	return alist[0]
 
 AREMOS_gerfin = readExcelFile(data_path+'AREMOS_gerfin.xlsx', header_ = [0], sheet_name_='AREMOS_gerfin')
-"""
-Datatype = readFile(data_path+'Datatype.csv', header_ = 0)
-Datatype = Datatype.set_index('Symbol').to_dict()
-source_FromUSD = readFile(data_path+'sourceFROM.csv', header_ = 0)
-source_ToUSD = readFile(data_path+'sourceTO.csv', header_ = 0)
-source_USD = pd.concat([source_FromUSD, source_ToUSD], ignore_index=True)
-source_USD = source_USD.set_index('Symbol').to_dict()
 Currency = readFile(data_path+'Currency.csv', header_ = 0)
 Currency = Currency.set_index('Code').to_dict()
-
 def CURRENCY(code):
     if code in Currency['Name']:
         return str(Currency['Name'][code])
     else:
         ERROR('貨幣代碼錯誤: '+code)
-
-def SOURCE(code):
-    if code in source_USD['Source']:
-        return str(source_USD['Source'][code])
-    else:
-        ERROR('來源代碼錯誤: '+code)
-"""
 
 Day_list = pd.date_range(start = '1/1/1970', end = update).strftime('%Y-%m-%d').tolist()
 Day_list.reverse()
@@ -90,12 +90,6 @@ DB_name_D = []
 DB_TABLE = 'DB_'
 DB_CODE = 'data'
 """
-try:
-    with open(out_path+'database_num.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
-        database_num = int(f.read().replace('\n', ''))
-except FileNotFoundError:
-    if merge_file.empty == False:
-        ERROR('找不到database_num.txt')"""
 if merge_file.empty == False:
     snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
     for d in range(1,10000):
@@ -110,11 +104,10 @@ if merge_file.empty == False:
                     code_num_D = code+1
                     break
             break
-    
-else:
-    table_num_D = 1
-    code_num_D = 1
-    snl = 1
+"""    
+table_num_D = 1
+code_num_D = 1
+snl = 1
 if code_num_D == 200:
     code_num_D = 1
 start_snl = snl
@@ -135,19 +128,211 @@ for g in range(start_file,last_file+1):
             GERFIN_t = GERFIN_t.reindex(new_index)
         
         nG = GERFIN_t.shape[1]
-        print(GERFIN_t)        
+        #print(GERFIN_t)        
         for i in range(nG):
             sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
             sys.stdout.flush()
             
+            if code_num_D >= 200:
+                DATA_BASE_D[db_table_D2] = db_table_D_t
+                DB_name_D.append(db_table_D2)
+                table_num_D += 1
+                code_num_D = 1
+                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
+            
+            AREMOS_key = AREMOS_gerfin.loc[AREMOS_gerfin['source'] == 'Official ECB & EUROSTAT Reference'].loc[AREMOS_gerfin['quote currency'] == str(GERFIN_t.columns[i][1])].to_dict('list')
+            AREMOS_key2 = AREMOS_gerfin.loc[AREMOS_gerfin['source'] == 'Official ECB & EUROSTAT Reference'].loc[AREMOS_gerfin['base currency'] == str(GERFIN_t.columns[i][1])].to_dict('list')
+            if pd.DataFrame(AREMOS_key).empty == True:
+                continue
+            name = str(AREMOS_key['code'][0])
+            name2 = str(AREMOS_key2['code'][0])
+            
+            value = list(GERFIN_t[GERFIN_t.columns[i]])
+            index = GERFIN_t[GERFIN_t.columns[i]].index
+            db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
+            db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
+            db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
+            code_num_D += 1
             if code_num_D >= 200:
                 DATA_BASE_D[db_table_D] = db_table_D_t
                 DB_name_D.append(db_table_D)
                 table_num_D += 1
                 code_num_D = 1
                 db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
+            db_table_D2 = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
+            db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
+            db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
+            head = 0
+            for k in range(len(value)):
+                find = False
+                for j in range(head, nD):
+                    if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
+                        find = True
+                        if value[k] == '-':
+                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
+                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
+                        else:
+                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
+                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                        head = j+1
+                        break
+                if k == len(value)-1:
+                    start = str(index[k]).replace(' 00:00:00','')
+                    start2 = start
+                if find == False:
+                    ERROR(str(GERFIN_t.columns[i]))        
+        
+            desc_e = str(AREMOS_key['description'][0])
+            base = str(AREMOS_key['base currency'][0])
+            quote = str(AREMOS_key['quote currency'][0])
+            desc_c = ''
+            freq = frequency
+            source = str(AREMOS_key['source'][0])
+            form_e = str(AREMOS_key['attribute'][0])
+            form_c = ''
+            desc_e2 = str(AREMOS_key2['description'][0])
+            base2 = str(AREMOS_key2['base currency'][0])
+            quote2 = str(AREMOS_key2['quote currency'][0])
+            desc_c2 = ''
+            form_c2 = ''
             
-            AREMOS_key = AREMOS_gerfin.loc[AREMOS_gerfin['source'] == 'Official ECB & EUROSTAT Reference'].loc[AREMOS_gerfin['quote currency'] == str(GERFIN_t.columns[i][1])].to_dict('list')
+            key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
+            KEY_DATA.append(key_tmp)
+            sort_tmp_D = [name, snl, db_table_D, db_code_D]
+            SORT_DATA_D.append(sort_tmp_D)
+            snl += 1
+            key_tmp2= [databank, name2, db_table_D2, db_code_D2, desc_e2, desc_c2, freq, start2, base2, quote2, snl, source, form_e, form_c2]
+            KEY_DATA.append(key_tmp2)
+            sort_tmp_D2 = [name2, snl, db_table_D2, db_code_D2]
+            SORT_DATA_D.append(sort_tmp_D2)
+            snl += 1
+
+            code_num_D += 1
+    elif g == 2:
+        GERFIN_t = readFile(data_path+NAME+str(g)+'.csv', header_ = [0,1,2], index_col_=0, skiprows_=[3,4], skipfooter_=1)
+        if GERFIN_t.index[0] < GERFIN_t.index[1]:
+            GERFIN_t = GERFIN_t[::-1]
+        
+        nG = GERFIN_t.shape[1]
+        #print(GERFIN_t)        
+        for i in range(nG):
+            sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
+            sys.stdout.flush()
+
+            if str(GERFIN_t.columns[i][0]).find('FLAGS') >= 0:
+                continue
+            
+            if code_num_D >= 200:
+                DATA_BASE_D[db_table_D2] = db_table_D_t
+                DB_name_D.append(db_table_D2)
+                table_num_D += 1
+                code_num_D = 1
+                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
+            
+            AREMOS_key = AREMOS_gerfin.loc[AREMOS_gerfin['source'] == 'Fin. Market Indicative Reference'].loc[AREMOS_gerfin['quote currency'] == CURRENCY(GERFIN_t.columns[i][2])].to_dict('list')
+            AREMOS_key2 = AREMOS_gerfin.loc[AREMOS_gerfin['source'] == 'Fin. Market Indicative Reference'].loc[AREMOS_gerfin['base currency'] == CURRENCY(GERFIN_t.columns[i][2])].to_dict('list')
+            if pd.DataFrame(AREMOS_key).empty == True:
+                continue
+            name = str(AREMOS_key['code'][0])
+            name2 = str(AREMOS_key2['code'][0])
+            
+            value = list(GERFIN_t[GERFIN_t.columns[i]])
+            index = GERFIN_t[GERFIN_t.columns[i]].index
+            db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
+            db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
+            db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
+            code_num_D += 1
+            if code_num_D >= 200:
+                DATA_BASE_D[db_table_D] = db_table_D_t
+                DB_name_D.append(db_table_D)
+                table_num_D += 1
+                code_num_D = 1
+                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
+            db_table_D2 = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
+            db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
+            db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
+            head = 0
+            for k in range(len(value)):
+                find = False
+                for j in range(head, nD):
+                    if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
+                        find = True
+                        if value[k] == '.':
+                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
+                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
+                        else:
+                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
+                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                        head = j+1
+                        break
+                if k == len(value)-1:
+                    start = str(index[k]).replace(' 00:00:00','')
+                    start2 = start
+                if find == False:
+                    ERROR(str(GERFIN_t.columns[i]))        
+        
+            desc_e = str(AREMOS_key['description'][0])
+            base = str(AREMOS_key['base currency'][0])
+            quote = str(AREMOS_key['quote currency'][0])
+            desc_c = ''
+            freq = frequency
+            source = str(AREMOS_key['source'][0])
+            form_e = str(AREMOS_key['attribute'][0])
+            form_c = ''
+            desc_e2 = str(AREMOS_key2['description'][0])
+            base2 = str(AREMOS_key2['base currency'][0])
+            quote2 = str(AREMOS_key2['quote currency'][0])
+            desc_c2 = ''
+            form_c2 = ''
+            
+            key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
+            KEY_DATA.append(key_tmp)
+            sort_tmp_D = [name, snl, db_table_D, db_code_D]
+            SORT_DATA_D.append(sort_tmp_D)
+            snl += 1
+            key_tmp2= [databank, name2, db_table_D2, db_code_D2, desc_e2, desc_c2, freq, start2, base2, quote2, snl, source, form_e, form_c2]
+            KEY_DATA.append(key_tmp2)
+            sort_tmp_D2 = [name2, snl, db_table_D2, db_code_D2]
+            SORT_DATA_D.append(sort_tmp_D2)
+            snl += 1
+
+            code_num_D += 1
+    elif g == 3:
+        GERFIN_t = readExcelFile(data_path+NAME+str(g)+'.xls', header_ =0, index_col_=0, sheet_name_='Daily')
+        README_t = readExcelFile(data_path+NAME+str(g)+'.xls', sheet_name_='README')
+        README = list(README_t[0])
+        if GERFIN_t.index[0] < GERFIN_t.index[1]:
+            GERFIN_t = GERFIN_t[::-1]
+    
+        nG = GERFIN_t.shape[1]
+        nR = len(README)
+        #print(GERFIN_t)        
+        for i in range(nG):
+            sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
+            sys.stdout.flush()
+            if str(GERFIN_t.columns[i]).find('DEX') < 0:
+                continue
+            for r in range(nR):
+                if README[r] == GERFIN_t.columns[i]:
+                    for rr in range(r,nR):
+                        if README[rr] == 'Units:':
+                            if str(GERFIN_t.columns[i]).find('DEXUS') >= 0:
+                                loc1 = README[rr+1].find('One ')
+                                currency = README[rr+1][loc1+4:]
+                            else:
+                                loc1 = README[rr+1].find(' to')
+                                currency = README[rr+1][:loc1]
+                            break
+                    break
+            
+            if code_num_D >= 200:
+                DATA_BASE_D[db_table_D2] = db_table_D_t
+                DB_name_D.append(db_table_D2)
+                table_num_D += 1
+                code_num_D = 1
+                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
+            
+            AREMOS_key = AREMOS_gerfin.loc[AREMOS_gerfin['source'] == 'FRB NY'].loc[AREMOS_gerfin['quote currency'] == currency].to_dict('list')
             if pd.DataFrame(AREMOS_key).empty == True:
                 continue
             name = str(AREMOS_key['code'][0])
@@ -163,7 +348,10 @@ for g in range(start_file,last_file+1):
                 for j in range(head, nD):
                     if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
                         find = True
-                        db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
+                        if value[k] == 0:
+                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
+                        else:
+                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
                         head = j+1
                         break
                 if k == len(value)-1:
@@ -187,198 +375,6 @@ for g in range(start_file,last_file+1):
             snl += 1
 
             code_num_D += 1
-    elif g == 2:
-        GERFIN_t = readFile(data_path+NAME+str(g)+'.csv', header_ = [0,1,2], index_col_=0, skiprows_=[3,4], skipfooter_=1)
-        if GERFIN_t.index[0] < GERFIN_t.index[1]:
-            GERFIN_t = GERFIN_t[::-1]
-        
-        nG = GERFIN_t.shape[1]
-        print(GERFIN_t)        
-        for i in range(nG):
-            sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
-            sys.stdout.flush()
-
-            if str(GERFIN_t.columns[i][0]).find('FLAGS') >= 0:
-                continue
-            
-            if code_num_D >= 200:
-                DATA_BASE_D[db_table_D] = db_table_D_t
-                DB_name_D.append(db_table_D)
-                table_num_D += 1
-                code_num_D = 1
-                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
-            
-            if g == 1:
-                name = frequency+'_'+str(GERFIN_t.columns[i][0]).replace('D', '', 1).replace('.', '')+'.d'
-            
-                value = list(GERFIN_t[GERFIN_t.columns[i]])
-                index = GERFIN_t[GERFIN_t.columns[i]].index
-                db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
-                db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
-                db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
-                head = 0
-                for k in range(len(value)):
-                    find = False
-                    for j in range(head, nD):
-                        if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
-                            find = True
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
-                            head = j+1
-                            break
-                    if k == len(value)-1:
-                        start = str(index[k]).replace(' 00:00:00','')
-                    if find == False:
-                        ERROR(str(GERFIN_t.columns[i]))        
-                
-                #loc1 = str(GERFIN_t.columns[i][1]).find('(')
-                #loc2 = str(GERFIN_t.columns[i][1]).find(')')
-                #code = str(GERFIN_t.columns[i][1])[:loc1]
-                #dtype = str(GERFIN_t.columns[i][1])[loc1+1:loc2]
-                #form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
-                if g == 1:
-                    desc_e = 
-                desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous', 'per US ').replace('To_us_$', 'per US dollar').replace('?', '$', 1)+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
-                #start = source_USD['Start Date'][code]
-                if str(source_USD['Full Name'][code]).find('USD /') >= 0 or str(source_USD['Full Name'][code]).find('USD/') >= 0 or str(source_USD['Full Name'][code]).find('US Dollar /') >= 0:
-                    if source_USD['From Currency'][code] == 'United States Dollar':
-                        base = source_USD['From Currency'][code]
-                        quote = source_USD['To Currency'][code]
-                    else:
-                        base = source_USD['To Currency'][code]
-                        quote = source_USD['From Currency'][code]
-                elif str(source_USD['Full Name'][code]).find('/ USD') >= 0 or str(source_USD['Full Name'][code]).find('/USD') >= 0:
-                    if source_USD['From Currency'][code] == 'United States Dollar':
-                        base = source_USD['To Currency'][code]
-                        quote = source_USD['From Currency'][code]
-                    else:
-                        base = source_USD['From Currency'][code]
-                        quote = source_USD['To Currency'][code]
-                else:
-                    base = source_USD['To Currency'][code]
-                    quote = source_USD['From Currency'][code]
-                desc_c = ''
-                freq = frequency
-                source = str(source_USD['Source'][code])
-                if str(source_USD['Full Name'][code]).find('Butterfly') >= 0 or str(source_USD['Full Name'][code]).find('Reversal') >= 0:
-                    form_c = 'Options'
-                elif str(source_USD['Full Name'][code]).find('Forecast') >= 0:
-                    form_c = 'Forecast'
-                elif str(source_USD['Full Name'][code]).find('FX Volatility') >= 0:
-                    form_c = 'FX Volatility'
-                elif str(source_USD['Full Name'][code]).find('Hourly') >= 0:
-                    form_c = 'Hourly Rate'
-                elif str(source_USD['Full Name'][code]).find('Ptax') >= 0:
-                    form_c = 'Ptax Rate'    
-                elif str(source_USD['Full Name'][code]).find('Forw') >= 0 or str(source_USD['Full Name'][code]).find('FW') >= 0 or str(source_USD['Full Name'][code]).find('MF') >= 0 or str(source_USD['Full Name'][code]).find('YF') >= 0 \
-                    or str(source_USD['Full Name'][code]).find('Week') >= 0 or str(source_USD['Full Name'][code]).find('Month') >= 0 or str(source_USD['Full Name'][code]).find('Year') >= 0 or str(source_USD['Full Name'][code]).find('Overnight') >= 0 \
-                    or str(source_USD['Full Name'][code]).find('Tomorrow Next') >= 0 or str(source_USD['Full Name'][code]).find('MONTH') >= 0:
-                    form_c = 'Forward'
-                else:
-                    form_c = ''
-                
-                key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
-                KEY_DATA.append(key_tmp)
-                sort_tmp_D = [name, snl, db_table_D, db_code_D]
-                SORT_DATA_D.append(sort_tmp_D)
-                snl += 1
-
-                code_num_D += 1
-    elif g == 3:
-        GERFIN_t = readExcelFile(data_path+NAME+str(g)+'.xls', header_ = [0,1], index_col_=0, sheet_name_='Daily')
-        if GERFIN_t.index[0] < GERFIN_t.index[1]:
-            GERFIN_t = GERFIN_t[::-1]
-    
-        nG = GERFIN_t.shape[1]
-        print(GERFIN_t)        
-        for i in range(nG):
-            sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
-            sys.stdout.flush()
-
-            if str(GERFIN_t.columns[i][0]).find('FLAGS') >= 0:
-                continue
-            
-            if code_num_D >= 200:
-                DATA_BASE_D[db_table_D] = db_table_D_t
-                DB_name_D.append(db_table_D)
-                table_num_D += 1
-                code_num_D = 1
-                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
-            
-            if g == 1:
-                name = frequency+'_'+str(GERFIN_t.columns[i][0]).replace('D', '', 1).replace('.', '')+'.d'
-            
-                value = list(GERFIN_t[GERFIN_t.columns[i]])
-                index = GERFIN_t[GERFIN_t.columns[i]].index
-                db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
-                db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
-                db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
-                head = 0
-                for k in range(len(value)):
-                    find = False
-                    for j in range(head, nD):
-                        if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
-                            find = True
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
-                            head = j+1
-                            break
-                    if k == len(value)-1:
-                        start = str(index[k]).replace(' 00:00:00','')
-                    if find == False:
-                        ERROR(str(GERFIN_t.columns[i]))        
-                
-                #loc1 = str(GERFIN_t.columns[i][1]).find('(')
-                #loc2 = str(GERFIN_t.columns[i][1]).find(')')
-                #code = str(GERFIN_t.columns[i][1])[:loc1]
-                #dtype = str(GERFIN_t.columns[i][1])[loc1+1:loc2]
-                #form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
-                if g == 1:
-                    desc_e = 
-                desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous', 'per US ').replace('To_us_$', 'per US dollar').replace('?', '$', 1)+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
-                #start = source_USD['Start Date'][code]
-                if str(source_USD['Full Name'][code]).find('USD /') >= 0 or str(source_USD['Full Name'][code]).find('USD/') >= 0 or str(source_USD['Full Name'][code]).find('US Dollar /') >= 0:
-                    if source_USD['From Currency'][code] == 'United States Dollar':
-                        base = source_USD['From Currency'][code]
-                        quote = source_USD['To Currency'][code]
-                    else:
-                        base = source_USD['To Currency'][code]
-                        quote = source_USD['From Currency'][code]
-                elif str(source_USD['Full Name'][code]).find('/ USD') >= 0 or str(source_USD['Full Name'][code]).find('/USD') >= 0:
-                    if source_USD['From Currency'][code] == 'United States Dollar':
-                        base = source_USD['To Currency'][code]
-                        quote = source_USD['From Currency'][code]
-                    else:
-                        base = source_USD['From Currency'][code]
-                        quote = source_USD['To Currency'][code]
-                else:
-                    base = source_USD['To Currency'][code]
-                    quote = source_USD['From Currency'][code]
-                desc_c = ''
-                freq = frequency
-                source = str(source_USD['Source'][code])
-                if str(source_USD['Full Name'][code]).find('Butterfly') >= 0 or str(source_USD['Full Name'][code]).find('Reversal') >= 0:
-                    form_c = 'Options'
-                elif str(source_USD['Full Name'][code]).find('Forecast') >= 0:
-                    form_c = 'Forecast'
-                elif str(source_USD['Full Name'][code]).find('FX Volatility') >= 0:
-                    form_c = 'FX Volatility'
-                elif str(source_USD['Full Name'][code]).find('Hourly') >= 0:
-                    form_c = 'Hourly Rate'
-                elif str(source_USD['Full Name'][code]).find('Ptax') >= 0:
-                    form_c = 'Ptax Rate'    
-                elif str(source_USD['Full Name'][code]).find('Forw') >= 0 or str(source_USD['Full Name'][code]).find('FW') >= 0 or str(source_USD['Full Name'][code]).find('MF') >= 0 or str(source_USD['Full Name'][code]).find('YF') >= 0 \
-                    or str(source_USD['Full Name'][code]).find('Week') >= 0 or str(source_USD['Full Name'][code]).find('Month') >= 0 or str(source_USD['Full Name'][code]).find('Year') >= 0 or str(source_USD['Full Name'][code]).find('Overnight') >= 0 \
-                    or str(source_USD['Full Name'][code]).find('Tomorrow Next') >= 0 or str(source_USD['Full Name'][code]).find('MONTH') >= 0:
-                    form_c = 'Forward'
-                else:
-                    form_c = ''
-                
-                key_tmp= [databank, name, db_table_D, db_code_D, desc_e, desc_c, freq, start, base, quote, snl, source, form_e, form_c]
-                KEY_DATA.append(key_tmp)
-                sort_tmp_D = [name, snl, db_table_D, db_code_D]
-                SORT_DATA_D.append(sort_tmp_D)
-                snl += 1
-
-                code_num_D += 1
                 
     sys.stdout.write("\n\n") 
 
@@ -455,59 +451,24 @@ print(df_key)
 #print(DATA_BASE_t)
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
-if merge_file.empty == False:
-    df_key, DATA_BASE, DB_name_D = CONCATE(df_key, DATA_BASE_D, DB_name_D, Day_list)
-    df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    DB_keys = sorted(DATA_BASE.keys())
-    database_num = int(((len(DB_name_D)-1)/maximum))+1
-    for d in range(1, database_num+1):
-        with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
-            print('Outputing file: '+NAME+"database_"+str(d))
-            if maximum*d > len(DB_name_D):
-                for db in range(maximum*(d-1), len(DB_name_D)):
-                    sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
-                    sys.stdout.flush()
-                    if DATA_BASE[DB_name_D[db]].empty == False:
-                        DATA_BASE[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
-                writer.save()
-                sys.stdout.write("\n")
-            else:
-                for db in range(maximum*(d-1), maximum*d):
-                    sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
-                    sys.stdout.flush()
-                    if DATA_BASE[DB_name_D[db]].empty == False:
-                        DATA_BASE[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
-                writer.save()
-                sys.stdout.write("\n")
-    
-    print('\ndatabase_num =', database_num)
-    with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(str(database_num))
-else:
-    df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    database_num = int(((len(DB_name_D)-1)/maximum))+1
-    for d in range(1, database_num+1):
-        with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
-            print('Outputing file: '+NAME+"database_"+str(d))
-            if maximum*d > len(DB_name_D):
-                for db in range(maximum*(d-1), len(DB_name_D)):
-                    sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
-                    sys.stdout.flush()
-                    if DATA_BASE_D[DB_name_D[db]].empty == False:
-                        DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
-                writer.save()
-                sys.stdout.write("\n")
-            else:
-                for db in range(maximum*(d-1), maximum*d):
-                    sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
-                    sys.stdout.flush()
-                    if DATA_BASE_D[DB_name_D[db]].empty == False:
-                        DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
-                writer.save()
-                sys.stdout.write("\n")
-    
-    print('\ndatabase_num =', database_num)
-    with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(str(database_num))
 """
+if merge_file.empty == False:
+    df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_D, DB_name_D)
+    df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
+    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+        for key in sorted(DATA_BASE.keys()):
+            sys.stdout.write("\rOutputing sheet: "+str(key))
+            sys.stdout.flush()
+            DATA_BASE[key].to_excel(writer, sheet_name = key)
+    sys.stdout.write("\n")
+"""
+df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
+with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+    for d in DB_name_D:
+        sys.stdout.write("\rOutputing sheet: "+str(d))
+        sys.stdout.flush()
+        if DATA_BASE_D[d].empty == False:
+            DATA_BASE_D[d].to_excel(writer, sheet_name = d)
+sys.stdout.write("\n")
+
 print('Time: ', int(time.time() - tStart),'s'+'\n')
