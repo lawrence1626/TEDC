@@ -19,8 +19,8 @@ merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='
 #dataset_list = ['QNA', 'QNA_DRCHIVE']
 #frequency_list = ['A','Q']
 frequency = 'D'
-start_file = 1
-last_file = 5
+start_file = 6
+last_file = 14
 maximum = 10
 update = '26/8/2020'#datetime.today()
 
@@ -147,6 +147,13 @@ for g in range(start_file,last_file+1):
             if EIKON_t[sheet].columns[i][0] == '#ERROR':
                 continue
             
+            loc1 = str(EIKON_t[sheet].columns[i][1]).find('(')
+            loc2 = str(EIKON_t[sheet].columns[i][1]).find(')')
+            code = str(EIKON_t[sheet].columns[i][1])[:loc1]
+            source = str(source_USD['Source'][code])
+            if source != 'WM/Reuters':
+                continue
+
             if code_num_D >= 200:
                 DATA_BASE_D[db_table_D] = db_table_D_t
                 DB_name_D.append(db_table_D)
@@ -174,9 +181,6 @@ for g in range(start_file,last_file+1):
                 if find == False:
                     ERROR(str(sheet)+' '+str(EIKON_t[sheet].columns[i]))        
             
-            loc1 = str(EIKON_t[sheet].columns[i][1]).find('(')
-            loc2 = str(EIKON_t[sheet].columns[i][1]).find(')')
-            code = str(EIKON_t[sheet].columns[i][1])[:loc1]
             dtype = str(EIKON_t[sheet].columns[i][1])[loc1+1:loc2]
             form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
             desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous', 'per US ').replace('To_us_$', 'per US dollar').replace('?', '$', 1)+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
@@ -200,7 +204,7 @@ for g in range(start_file,last_file+1):
                 quote = source_USD['From Currency'][code]
             desc_c = ''
             freq = frequency
-            source = str(source_USD['Source'][code])
+            
             if str(source_USD['Full Name'][code]).find('Butterfly') >= 0 or str(source_USD['Full Name'][code]).find('Reversal') >= 0:
                 form_c = 'Options'
             elif str(source_USD['Full Name'][code]).find('Forecast') >= 0:
