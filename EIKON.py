@@ -405,7 +405,8 @@ for key in range(df_key.shape[0]):
         if DATA_BASE_D[df_key.loc[key,'db_table']].index[ar] >= df_key.loc[key,'start']:
             if found == True:
                 DATA = DATA + ',' 
-            if str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan':
+            if str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
+                str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
                 DATA = DATA + 'M'
             else:
                 DATA = DATA + str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
@@ -422,7 +423,7 @@ sys.stdout.write("\n\n")
 
 aremos = pd.DataFrame(AREMOS)
 aremos_data = pd.DataFrame(AREMOS_DATA)
-aremos.to_csv(out_path+NAME+"doc.txt", header=False, index=False)
-aremos_data.to_csv(out_path+NAME+"data.txt", header=False, index=False)
+aremos.to_csv(out_path+NAME+"doc.txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
+aremos_data.to_csv(out_path+NAME+"data.txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
