@@ -18,7 +18,12 @@ frequency = 'D'
 start_file = 1
 last_file = 3
 maximum = 10
+TO_EXCEL = True
 update = datetime.today()
+for i in range(len(key_list)):
+    if key_list[i] == 'snl':
+        snl_pos = i
+        break
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -163,6 +168,7 @@ for g in range(start_file,last_file+1):
             db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
             head = 0
+            start_found = False
             last = str(index[0]).replace(' 00:00:00','')
             last2 = last
             for k in range(len(value)):
@@ -178,9 +184,15 @@ for g in range(start_file,last_file+1):
                             db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
                         head = j+1
                         break
-                if k == len(value)-1:
-                    start = str(index[k]).replace(' 00:00:00','')
-                    start2 = start
+                if start_found == False:
+                    if k == len(value)-1:
+                        start = str(index[k]).replace(' 00:00:00','')
+                        start2 = start
+                        start_found = True
+                    elif str(value[k+1]) == 'nan':
+                        start = str(index[k]).replace(' 00:00:00','')
+                        start2 = start
+                        start_found = True
                 if find == False:
                     ERROR(str(GERFIN_t.columns[i]))        
         
@@ -254,6 +266,7 @@ for g in range(start_file,last_file+1):
             db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
             head = 0
+            start_found = False
             last = str(index[0]).replace(' 00:00:00','')
             last2 = last
             for k in range(len(value)):
@@ -269,9 +282,15 @@ for g in range(start_file,last_file+1):
                             db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
                         head = j+1
                         break
-                if k == len(value)-1:
-                    start = str(index[k]).replace(' 00:00:00','')
-                    start2 = start
+                if start_found == False:
+                    if k == len(value)-1:
+                        start = str(index[k]).replace(' 00:00:00','')
+                        start2 = start
+                        start_found = True
+                    elif str(value[k+1]) == 'nan':
+                        start = str(index[k]).replace(' 00:00:00','')
+                        start2 = start
+                        start_found = True 
                 if find == False:
                     ERROR(str(GERFIN_t.columns[i]))        
         
@@ -347,6 +366,7 @@ for g in range(start_file,last_file+1):
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
             head = 0
+            start_found = False
             last = str(index[0]).replace(' 00:00:00','')
             for k in range(len(value)):
                 find = False
@@ -359,8 +379,13 @@ for g in range(start_file,last_file+1):
                             db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
                         head = j+1
                         break
-                if k == len(value)-1:
-                    start = str(index[k]).replace(' 00:00:00','')
+                if start_found == False:
+                    if k == len(value)-1:
+                        start = str(index[k]).replace(' 00:00:00','')
+                        start_found = True
+                    elif str(value[k+1]) == 'nan':
+                        start = str(index[k]).replace(' 00:00:00','')
+                        start_found = True
                 if find == False:
                     ERROR(str(GERFIN_t.columns[i]))        
         
@@ -395,7 +420,7 @@ for i in range(1, len(SORT_DATA_D)):
         repeated_D += 1
         #print(SORT_DATA_D[i][0],' ',SORT_DATA_D[i-1][1],' ',SORT_DATA_D[i][1],' ',SORT_DATA_D[i][2],' ',SORT_DATA_D[i][3])
         for key in KEY_DATA:
-            if key[10] == SORT_DATA_D[i][1]:
+            if key[snl_pos] == SORT_DATA_D[i][1]:
                 #print(key)
                 KEY_DATA.remove(key) 
                 break
@@ -456,27 +481,26 @@ print(df_key)
 #print(DATA_BASE_t)
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
-"""
-if merge_file.empty == False:
-    df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_D, DB_name_D)
+if TO_EXCEL == True:
+    """if merge_file.empty == False:
+        df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_D, DB_name_D)
+        df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
+        with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+            for key in sorted(DATA_BASE.keys()):
+                sys.stdout.write("\rOutputing sheet: "+str(key))
+                sys.stdout.flush()
+                DATA_BASE[key].to_excel(writer, sheet_name = key)
+        sys.stdout.write("\n")"""
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
     with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
-        for key in sorted(DATA_BASE.keys()):
-            sys.stdout.write("\rOutputing sheet: "+str(key))
+        for d in DB_name_D:
+            sys.stdout.write("\rOutputing sheet: "+str(d))
             sys.stdout.flush()
-            DATA_BASE[key].to_excel(writer, sheet_name = key)
+            if DATA_BASE_D[d].empty == False:
+                DATA_BASE_D[d].to_excel(writer, sheet_name = d)
     sys.stdout.write("\n")
-""""""
-df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
-    for d in DB_name_D:
-        sys.stdout.write("\rOutputing sheet: "+str(d))
-        sys.stdout.flush()
-        if DATA_BASE_D[d].empty == False:
-            DATA_BASE_D[d].to_excel(writer, sheet_name = d)
-sys.stdout.write("\n")
 
-print('Time: ', int(time.time() - tStart),'s'+'\n')"""
+    print('Time: ', int(time.time() - tStart),'s'+'\n')
 
 def FREQUENCY(freq):
     if freq == 'D':
@@ -494,8 +518,9 @@ def FREQUENCY(freq):
 
 AREMOS = []
 AREMOS_DATA = []
+print('Outputing AREMOS files:'+'\n')
 for key in range(df_key.shape[0]):
-    sys.stdout.write("\rLoading...("+str(round((i+1)*100/df_key.shape[0], 1))+"%)*")
+    sys.stdout.write("\rLoading...("+str(round((key+1)*100/df_key.shape[0], 1))+"%)*")
     sys.stdout.flush()
     SERIES = 'SERIES<FREQ '+FREQUENCY(frequency)+' >'+df_key.loc[key,'name']+'!'
     SERIES_DATA = 'SERIES<FREQ '+frequency+' PER '+str(date.fromisoformat(df_key.loc[key,'start']).year)+'D'+date.fromisoformat(df_key.loc[key,'start']).strftime('%j')+\
@@ -505,7 +530,8 @@ for key in range(df_key.shape[0]):
     nA = DATA_BASE_D[df_key.loc[key,'db_table']].shape[0]
     found = False
     for ar in reversed(range(nA)):
-        if DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']] != '':
+        if str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) != 'nan' and\
+            str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) != '':
             if found == True:
                 DATA = DATA + ',' 
             DATA = DATA + str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
