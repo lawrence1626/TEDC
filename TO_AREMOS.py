@@ -79,7 +79,7 @@ for key in range(df_key.shape[0]):
     nA = DATA_BASE_t[df_key.loc[key,'db_table']].shape[0]
     
     if part_file == True:
-        if df_key.loc[key,'start'] <= to_year+'-01-01':
+        if df_key.loc[key,'start'] <= to_year+'-01-01' and from_year+'-01-01' <= df_key.loc[key,'last']:
             SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+to_year+'D001'+'>!'
             #SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+'D'+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
             found = False
