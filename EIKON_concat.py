@@ -40,7 +40,7 @@ def CONCATE(df_key, DB_D, DB_name_D, Day_list):
     
     tStart = time.time()
     print('Reading file: '+NAME+'key, Time: ', int(time.time() - tStart),'s'+'\n')
-    KEY_DATA_t = readExcelFile(data_path+NAME+'key.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='EIKON_key')
+    KEY_DATA_t = readExcelFile(data_path+NAME+'key.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_=NAME+'key')
     with open(data_path+'database_num.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
         database_num = int(f.read().replace('\n', ''))
     DATA_BASE_t = {}
