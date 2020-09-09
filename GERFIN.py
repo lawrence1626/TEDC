@@ -530,11 +530,13 @@ for key in range(df_key.shape[0]):
     nA = DATA_BASE_D[df_key.loc[key,'db_table']].shape[0]
     found = False
     for ar in reversed(range(nA)):
-        if str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) != 'nan' and\
-            str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) != '':
+        if DATA_BASE_D[df_key.loc[key,'db_table']].index[ar] >= df_key.loc[key,'start']:
             if found == True:
                 DATA = DATA + ',' 
-            DATA = DATA + str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
+            if str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan':
+                DATA = DATA + 'M'
+            else:
+                DATA = DATA + str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
             found = True
     end = ';'
     DATA = DATA + end
@@ -548,7 +550,7 @@ sys.stdout.write("\n\n")
 
 aremos = pd.DataFrame(AREMOS)
 aremos_data = pd.DataFrame(AREMOS_DATA)
-aremos.to_csv(out_path+NAME+"key.txt", header=False, index=False)
-aremos_data.to_csv(out_path+NAME+"database.txt", header=False, index=False)
+aremos.to_csv(out_path+NAME+"doc.txt", header=False, index=False)
+aremos_data.to_csv(out_path+NAME+"data.txt", header=False, index=False)
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
