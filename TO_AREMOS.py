@@ -9,8 +9,8 @@ ENCODING = 'utf-8-sig'
 data_path = './output/'
 out_path = './output/'
 NAME = 'EIKON_'
-from_year = '2001'
-to_year = '2011'
+from_year = '1957'
+to_year = '1971'
 part_file = True
 make_doc = False
 
