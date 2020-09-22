@@ -9,9 +9,10 @@ ENCODING = 'utf-8-sig'
 data_path = './output/'
 out_path = './output/'
 NAME = 'EIKON_'
-from_year = '1957'
-to_year = '1971'
+from_year = '2015'
+to_year = '2018'
 part_file = True
+latest = True
 make_doc = False
 
 def SPECIAL(special_text):
@@ -80,20 +81,33 @@ for key in range(df_key.shape[0]):
     
     if part_file == True:
         if df_key.loc[key,'start'] <= to_year+'-01-01' and from_year+'-01-01' <= df_key.loc[key,'last']:
-            SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+to_year+'D001'+'>!'
-            #SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+'D'+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
+            if latest == True:
+                SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+'D'+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
+            else:
+                SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+to_year+'D001'+'>!'
             found = False
             for ar in reversed(range(nA)):
-                if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= to_year+'-01-01':
-                #if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= df_key.loc[key,'last']:
-                    if found == True:
-                        DATA = DATA + ',' 
-                    if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
-                        str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
-                        DATA = DATA + 'M'
-                    else:
-                        DATA = DATA + str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
-                    found = True
+                
+                if latest == True:
+                    if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= df_key.loc[key,'last']:
+                        if found == True:
+                            DATA = DATA + ',' 
+                        if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
+                            str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
+                            DATA = DATA + 'M'
+                        else:
+                            DATA = DATA + str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
+                        found = True
+                else:
+                    if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= to_year+'-01-01':
+                        if found == True:
+                            DATA = DATA + ',' 
+                        if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
+                            str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
+                            DATA = DATA + 'M'
+                        else:
+                            DATA = DATA + str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
+                        found = True
         else:
             continue
     else:
