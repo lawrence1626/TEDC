@@ -9,8 +9,9 @@ ENCODING = 'utf-8-sig'
 data_path = './output/'
 out_path = './output/'
 NAME = 'EIKON_'
-from_year = '1957'
-to_year = '1971'
+from_year = '2004'
+latest = False
+to_year = '2006'
 part_file = True
 make_doc = False
 
@@ -74,31 +75,64 @@ print('Outputing AREMOS files, Time: ', int(time.time() - tStart),'s'+'\n')
 for key in range(df_key.shape[0]):
     sys.stdout.write("\rLoading...("+str(round((key+1)*100/df_key.shape[0], 1))+"%)*")
     sys.stdout.flush()
+
+    freq = df_key.loc[key,'freq']
+    freq2 = freq
+    if freq == 'A':
+        freq2 = ''
     
     DATA = df_key.loc[key,'name']+'='
     nA = DATA_BASE_t[df_key.loc[key,'db_table']].shape[0]
     
     if part_file == True:
         if df_key.loc[key,'start'] <= to_year+'-01-01' and from_year+'-01-01' <= df_key.loc[key,'last']:
-            SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+to_year+'D001'+'>!'
-            #SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+from_year+'D001'+' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+'D'+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
+            if latest == True:
+                SERIES_DATA = 'SERIES<FREQ '+freq+' PER '+from_year+freq2+'001'+' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+freq2+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
+            else:
+                SERIES_DATA = 'SERIES<FREQ '+freq+' PER '+from_year+freq2+'001'+' TO '+to_year+freq2+'001'+'>!'
             found = False
             for ar in reversed(range(nA)):
-                if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= to_year+'-01-01':
-                #if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= df_key.loc[key,'last']:
-                    if found == True:
-                        DATA = DATA + ',' 
-                    if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
-                        str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
-                        DATA = DATA + 'M'
-                    else:
-                        DATA = DATA + str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
-                    found = True
+                if latest == True:
+                    if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= df_key.loc[key,'last']:
+                        if found == True:
+                            DATA = DATA + ',' 
+                        if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
+                            str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
+                            DATA = DATA + 'M'
+                        else:
+                            if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]).find('e-') >= 0:
+                                loc1 = str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]).find('e-')
+                                significand = str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])[:loc1]
+                                power = int(str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])[-2:])
+                                number = significand.replace('.','').rjust(len(significand)+power-2,'0')
+                                number = '0.'+number
+                                DATA = DATA + number
+                            else:
+                                DATA = DATA + str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
+                        found = True
+                else:
+                    if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= to_year+'-01-01':
+                        if found == True:
+                            DATA = DATA + ',' 
+                        if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
+                            str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
+                            DATA = DATA + 'M'
+                        else:
+                            if str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]).find('e-') >= 0:
+                                loc1 = str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]).find('e-')
+                                significand = str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])[:loc1]
+                                power = int(str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])[-2:])
+                                number = significand.replace('.','').rjust(len(significand)+power-2,'0')
+                                number = '0.'+number
+                                DATA = DATA + number
+                            else:
+                                DATA = DATA + str(DATA_BASE_t[df_key.loc[key,'db_table']].loc[DATA_BASE_t[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
+                        found = True
         else:
             continue
     else:
-        SERIES_DATA = 'SERIES<FREQ '+df_key.loc[key,'freq']+' PER '+str(date.fromisoformat(df_key.loc[key,'start']).year)+'D'+date.fromisoformat(df_key.loc[key,'start']).strftime('%j')+\
-            ' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+'D'+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
+        SERIES_DATA = 'SERIES<FREQ '+freq+' PER '+str(date.fromisoformat(df_key.loc[key,'start']).year)+freq2+date.fromisoformat(df_key.loc[key,'start']).strftime('%j')+\
+            ' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+freq2+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
         found = False
         for ar in reversed(range(nA)):
             if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= df_key.loc[key,'start'] and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= df_key.loc[key,'last']:
@@ -115,7 +149,7 @@ for key in range(df_key.shape[0]):
     DATA = DATA + end
     #DATA = DATA.replace('"','')
     if make_doc == True:
-        SERIES = 'SERIES<FREQ '+FREQUENCY(df_key.loc[key,'freq'])+' >'+df_key.loc[key,'name']+'!'
+        SERIES = 'SERIES<FREQ '+FREQUENCY(freq)+' >'+df_key.loc[key,'name']+'!'
         DESC = "'"+df_key.loc[key,'desc_e']+"'"+'!'
         AREMOS.append(SERIES)
         AREMOS.append(DESC)

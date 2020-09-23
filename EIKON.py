@@ -20,10 +20,10 @@ merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='
 #frequency_list = ['A','Q']
 frequency = 'D'
 start_file = 1
-last_file = 14
+last_file = 3
 maximum = 10
 #TO_EXCEL = True
-update = '26/8/2020'#datetime.today()
+update = datetime.today()
 for i in range(len(key_list)):
     if key_list[i] == 'snl':
         snl_pos = i
@@ -189,7 +189,7 @@ for g in range(start_file,last_file+1):
             
             dtype = str(EIKON_t[sheet].columns[i][1])[loc1+1:loc2]
             form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
-            desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous', 'per US ').replace('To_us_$', 'per US dollar').replace('?', '$', 1)+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
+            desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous', 'per US ').replace('To_us_$', 'per US dollar').replace('?', '$', 1).replace("'", ' ').replace('US#', 'US pound')+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
             start = str(source_USD['Start Date'][code])
             loc11 = start.find('/')
             loc12 = start.find('/',loc11+1)
@@ -405,8 +405,7 @@ for key in range(df_key.shape[0]):
         if DATA_BASE_D[df_key.loc[key,'db_table']].index[ar] >= df_key.loc[key,'start']:
             if found == True:
                 DATA = DATA + ',' 
-            if str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan' or\
-                str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == '':
+            if str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']]) == 'nan':
                 DATA = DATA + 'M'
             else:
                 DATA = DATA + str(DATA_BASE_D[df_key.loc[key,'db_table']].loc[DATA_BASE_D[df_key.loc[key,'db_table']].index[ar], df_key.loc[key,'db_code']])
@@ -423,7 +422,7 @@ sys.stdout.write("\n\n")
 
 aremos = pd.DataFrame(AREMOS)
 aremos_data = pd.DataFrame(AREMOS_DATA)
-aremos.to_csv(out_path+NAME+"doc.txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
-aremos_data.to_csv(out_path+NAME+"data.txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
+aremos.to_csv(out_path+NAME+"doc.txt", header=False, index=False)
+aremos_data.to_csv(out_path+NAME+"data.txt", header=False, index=False)
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
