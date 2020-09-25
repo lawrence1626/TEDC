@@ -14,7 +14,7 @@ data_path = './data/'
 out_path = "./output/"
 databank = 'QNIA'
 #freq = 'A'
-key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
+key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'QNIA_key.xlsx', header_ = 0, sheet_name_='QNIA_key')
 dataset_list = ['QNA', 'QNA_ARCHIVE']
 frequency_list = ['A','Q']
@@ -74,6 +74,21 @@ form_e_dict = {}
 for form in form_e_file:
     form_e_dict[form] = form_e_file[form].dropna().to_list()
 
+subject_file = readExcelFile(data_path+'QNIA_Subjects.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Subjects')
+measure_file = readExcelFile(data_path+'QNIA_Measures.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Measures')
+
+def SUBJECT_CODE(code):
+    if code in subject_file['code2']:
+        return subject_file['code2'][code]
+    else:
+        ERROR('代碼錯誤: '+code)
+
+def MEASURE_CODE(code):
+    if code in measure_file['code2']:
+        return measure_file['code2'][code]
+    else:
+        ERROR('代碼錯誤: '+code)
+
 this_year = datetime.now().year + 1
 Year_list = [tmp for tmp in range(1947,this_year)]
 Quarter_list = []
@@ -96,6 +111,7 @@ DB_TABLE = 'DB_'
 DB_CODE = 'data'
 
 if merge_file.empty == False:
+    print('Merge Old File\n')
     snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
     for a in range(1,10000):
         if DB_TABLE+'A_'+str(a).rjust(4,'0') not in list(merge_file['db_table']):
@@ -171,8 +187,8 @@ for dataset in dataset_list:
                         code_num_A = 1
                         db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
                     
-                    name = frequency+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(QNIA_t.columns[i][1])+'__'+str(QNIA_t.columns[i][2])+'.a'
-                
+                    name = frequency+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(SUBJECT_CODE(QNIA_t.columns[i][1])).replace('_','')+str(MEASURE_CODE(QNIA_t.columns[i][2]))+'.a'
+                    
                     value = QNIA_t[QNIA_t.columns[i]]
                     db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
                     db_code_A = DB_CODE+str(code_num_A).rjust(3,'0')
@@ -188,6 +204,10 @@ for dataset in dataset_list:
                                         start_found = True
                                 db_table_A_t[db_code_A][db_table_A_t.index[time_index]] = value[k]
                                 time_index += 1
+                            for k in reversed(range(value.shape[0])):
+                                if str(value[k]) != 'nan':
+                                    last = int(value.index[k])
+                                    break
                             break
                     
                     Subject = subjects_list[QNIA_t.columns[i][1]]
@@ -215,7 +235,7 @@ for dataset in dataset_list:
                     else:
                         form_c = QNIA_t.columns[i][5]
                     #flags = QNIA_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+                    key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, last, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
                     sort_tmp_A = [name, snl, db_table_A, db_code_A]
                     SORT_DATA_A.append(sort_tmp_A)
@@ -230,7 +250,7 @@ for dataset in dataset_list:
                         code_num_Q = 1
                         db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
                     
-                    name = str(frequency)+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(QNIA_t.columns[i][1])+'__'+str(QNIA_t.columns[i][2])+'.q'
+                    name = str(frequency)+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(SUBJECT_CODE(QNIA_t.columns[i][1])).replace('_','')+str(MEASURE_CODE(QNIA_t.columns[i][2]))+'.q'
                     
                     value = QNIA_t[QNIA_t.columns[i]]
                     db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
@@ -247,6 +267,10 @@ for dataset in dataset_list:
                                         start_found = True
                                 db_table_Q_t[db_code_Q][db_table_Q_t.index[time_index]] = value[k]
                                 time_index += 1
+                            for k in reversed(range(value.shape[0])):
+                                if str(value[k]) != 'nan':
+                                    last = str(value.index[k])
+                                    break
                             break
                     
                     Subject = subjects_list[QNIA_t.columns[i][1]]
@@ -272,7 +296,7 @@ for dataset in dataset_list:
                     else:
                         form_c = QNIA_t.columns[i][5]
                     #flags = QNIA_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+                    key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, last, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
                     sort_tmp_Q = [name, snl, db_table_Q, db_code_Q]
                     SORT_DATA_Q.append(sort_tmp_Q)
@@ -433,3 +457,6 @@ else:
     sys.stdout.write("\n")
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
+
+#pd.DataFrame.from_dict(subjects_list, orient='index',columns=['name']).to_excel(out_path+NAME+"Subjects.xlsx", sheet_name=NAME+'Subjects')
+#pd.DataFrame.from_dict(measures_list, orient='index',columns=['name']).to_excel(out_path+NAME+"Measures.xlsx", sheet_name=NAME+'Measures')
