@@ -8,7 +8,7 @@ from datetime import datetime, date
 ENCODING = 'utf-8-sig'
 data_path = './output/'
 NAME1 = ''
-NAME2 = '_new2'
+NAME2 = '_2010'
 
 def ERROR(error_text):
     print('\n\n= ! = '+error_text+'\n\n')
@@ -92,6 +92,7 @@ unrepeated = 0
 #unrepeated_index = []
 for i in range(1, len(KEY_DATA_t)):
     if KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i-1] and KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i+1]:
+        #if str(KEY_DATA_t['last'][i]) >= '2010':
         print(list(KEY_DATA_t.iloc[i]),'\n')
         unrepeated += 1
         #repeated_index.append(i)
