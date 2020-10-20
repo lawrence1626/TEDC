@@ -13,11 +13,6 @@ NAME = 'QNIA_'
 data_path = './data/'
 out_path = "./output/"
 databank = 'QNIA'
-<<<<<<< Updated upstream
-#freq = 'A'
-key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
-merge_file = readExcelFile(out_path+'QNIA_key.xlsx', header_ = 0, sheet_name_='QNIA_key')
-=======
 specified_start_year = True
 if specified_start_year == True:
     start_year = datetime.now().year - 10
@@ -27,7 +22,6 @@ else:
 merge_file = pd.DataFrame()
 #merge_file = readExcelFile(out_path+'QNIA_key'+START_YEAR+'.xlsx', header_ = 0, sheet_name_='QNIA_key')
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
->>>>>>> Stashed changes
 dataset_list = ['QNA', 'QNA_ARCHIVE']
 frequency_list = ['A','Q']
 for i in range(len(key_list)):
@@ -101,8 +95,6 @@ def MEASURE_CODE(code):
     else:
         ERROR('代碼錯誤: '+code)
 
-<<<<<<< Updated upstream
-=======
 def START_DATE(freq):
     if specified_start_year == True:
         if freq == 'A':
@@ -114,7 +106,6 @@ def START_DATE(freq):
     else:
         return None
 
->>>>>>> Stashed changes
 this_year = datetime.now().year + 1
 Year_list = [tmp for tmp in range(datetime.now().year - 10,this_year)]
 Quarter_list = []
