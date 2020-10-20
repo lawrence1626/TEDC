@@ -17,10 +17,6 @@ key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq
 merge_file = readExcelFile(out_path+'MEI_key.xlsx', header_ = 0, sheet_name_='MEI_key')
 start_file = 1
 last_file = 2
-for i in range(len(key_list)):
-    if key_list[i] == 'snl':
-        snl_pos = i
-        break
 
 # 回報錯誤、儲存錯誤檔案並結束程式
 def ERROR(error_text):
@@ -488,7 +484,7 @@ for i in range(1, len(SORT_DATA_A)):
         repeated_A += 1
         #print(SORT_DATA_A[i][0],' ',SORT_DATA_A[i-1][1],' ',SORT_DATA_A[i][1],' ',SORT_DATA_A[i][2],' ',SORT_DATA_A[i][3])
         for key in KEY_DATA:
-            if key[snl_pos] == SORT_DATA_A[i][1]:
+            if key[10] == SORT_DATA_A[i][1]:
                 #print(key)
                 KEY_DATA.remove(key) 
                 break
@@ -507,7 +503,7 @@ for i in range(1, len(SORT_DATA_Q)):
         repeated_Q += 1
         #print(SORT_DATA_Q[i][0],' ',SORT_DATA_Q[i-1][1],' ',SORT_DATA_Q[i][1],' ',SORT_DATA_Q[i][2],' ',SORT_DATA_Q[i][3])
         for key in KEY_DATA:
-            if key[snl_pos] == SORT_DATA_Q[i][1]:
+            if key[10] == SORT_DATA_Q[i][1]:
                 #print(key)
                 KEY_DATA.remove(key) 
                 break
@@ -526,7 +522,7 @@ for i in range(1, len(SORT_DATA_M)):
         repeated_M += 1
         #print(SORT_DATA_M[i][0],' ',SORT_DATA_M[i-1][1],' ',SORT_DATA_M[i][1],' ',SORT_DATA_M[i][2],' ',SORT_DATA_M[i][3])
         for key in KEY_DATA:
-            if key[snl_pos] == SORT_DATA_M[i][1]:
+            if key[10] == SORT_DATA_M[i][1]:
                 #print(key)
                 KEY_DATA.remove(key) 
                 break

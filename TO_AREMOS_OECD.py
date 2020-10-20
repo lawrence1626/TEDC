@@ -8,7 +8,11 @@ from datetime import datetime, date
 ENCODING = 'utf-8-sig'
 data_path = './output/'
 out_path = './output/'
+<<<<<<< HEAD
 NAME = 'MEI_'
+=======
+NAME = 'QNIA_'
+>>>>>>> 2eae3794bf0522228e752478fe8bdb163b164151
 specified_start_year = True
 make_doc = True
 part_file = False
@@ -95,6 +99,7 @@ for key in range(df_key.shape[0]):
     nA = DATA_BASE_t[df_key.loc[key,'db_table']].shape[0]
     
     if part_file == True:
+<<<<<<< HEAD
         if from_year+'-01-01' <= df_key.loc[key,'last']:
             if latest == True:
                 if df_key.loc[key,'start'] <= str(date.fromisoformat(df_key.loc[key,'last']).year)+'-01-01':
@@ -106,6 +111,13 @@ for key in range(df_key.shape[0]):
                     SERIES_DATA = 'SERIES<FREQ '+freq+' PER '+from_year+freq2+'001'+' TO '+to_year+freq2+'001'+'>!'
                 else:
                     continue
+=======
+        if df_key.loc[key,'start'] <= to_year+'-01-01' and from_year+'-01-01' <= df_key.loc[key,'last']:
+            if latest == True:
+                SERIES_DATA = 'SERIES<FREQ '+freq+' PER '+from_year+freq2+'001'+' TO '+str(date.fromisoformat(df_key.loc[key,'last']).year)+freq2+date.fromisoformat(df_key.loc[key,'last']).strftime('%j')+'>!'
+            else:
+                SERIES_DATA = 'SERIES<FREQ '+freq+' PER '+from_year+freq2+'001'+' TO '+to_year+freq2+'001'+'>!'
+>>>>>>> 2eae3794bf0522228e752478fe8bdb163b164151
             found = False
             for ar in range(nA):
                 if latest == True:
