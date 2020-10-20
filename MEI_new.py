@@ -13,9 +13,15 @@ NAME = 'MEI_'
 data_path = './data/'
 out_path = "./output/"
 databank = 'MEI'
-#freq = 'A'
-key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
-merge_file = readExcelFile(out_path+'MEI_key.xlsx', header_ = 0, sheet_name_='MEI_key')
+specified_start_year = True
+if specified_start_year == True:
+    start_year = datetime.now().year - 10
+    START_YEAR = '_'+str(start_year)
+else:
+    START_YEAR = ''
+merge_file = pd.DataFrame()
+#merge_file = readExcelFile(out_path+'MEI_key'+START_YEAR+'.xlsx', header_ = 0, sheet_name_='MEI_key')
+key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 dataset_list = ['MEI_CLI', 'MEI_BTS_COS', 'MEI']
 frequency_list = ['A','Q','M']
 for i in range(len(key_list)):
@@ -69,14 +75,44 @@ def COUNTRY_NAME(location):
     else:
         ERROR('找不到國家: '+location)
 
-form_e_file1 = readExcelFile(data_path+'MEI_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='MEI_CLI')
-form_e_file2 = readExcelFile(data_path+'MEI_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='MEI_BTS_COS')
+form_e_file1 = readExcelFile(data_path+'MEI_form_e.xlsx', header_ = 0, sheet_name_='MEI_CLI')
+form_e_file2 = readExcelFile(data_path+'MEI_form_e.xlsx', header_ = 0, sheet_name_='MEI_BTS_COS')
 form_e_dict1 = {}
 form_e_dict2 = {}
 for form in form_e_file1:
     form_e_dict1[form] = form_e_file1[form].dropna().to_list()
 for form in form_e_file2:
     form_e_dict2[form] = form_e_file2[form].dropna().to_list()
+
+subject_file = readExcelFile(data_path+'MEI_Subjects.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='MEI_Subjects')
+measure_file = readExcelFile(data_path+'MEI_Measures.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='MEI_Measures')
+
+def SUBJECT_CODE(code):
+    if code in subject_file['code2']:
+        return subject_file['code2'][code]
+    else:
+        ERROR('代碼錯誤: '+code)
+
+def MEASURE_CODE(code):
+    if code in measure_file['code2']:
+        return measure_file['code2'][code]
+    elif code == '':
+        return ''
+    else:
+        ERROR('代碼錯誤: '+code)
+
+def START_DATE(freq):
+    if specified_start_year == True:
+        if freq == 'A':
+            return start_year
+        elif freq == 'Q':
+            return str(start_year)+'-Q1'
+        elif freq == 'M':
+            return str(start_year)+'-01'
+        else:
+            ERROR('頻率錯誤: '+freq)
+    else:
+        return None
 
 this_year = datetime.now().year + 1
 Year_list = [tmp for tmp in range(1947,this_year)]
@@ -110,6 +146,7 @@ DB_TABLE = 'DB_'
 DB_CODE = 'data'
 
 if merge_file.empty == False:
+    print('Merge Old File\n')
     snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
     for a in range(1,10000):
         if DB_TABLE+'A_'+str(a).rjust(4,'0') not in list(merge_file['db_table']):
@@ -181,7 +218,7 @@ for dataset in dataset_list:
     for coun in c_list:
         for frequency in frequency_list:
             print('Getting data: dataset_name = '+dataset+', country = '+COUNTRY_NAME(coun)+', frequency = '+frequency+' Time: ', int(time.time() - tStart),'s'+'\n')
-            MEI_t, subjects, measures = createDataFrameFromOECD(countries = [coun], dsname = dataset, frequency = frequency)
+            MEI_t, subjects, measures = createDataFrameFromOECD(countries = [coun], dsname = dataset, frequency = frequency, startDate = START_DATE(frequency))
             #MEI_t = readFile(data_path+NAME+str(g)+'.csv', header_ = 0)
             subjects_list = {}
             for s in range(subjects.shape[0]):
@@ -205,7 +242,7 @@ for dataset in dataset_list:
                         code_num_A = 1
                         db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
                     
-                    name = frequency+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(MEI_t.columns[i][1])+'__'+str(MEI_t.columns[i][2])+'.a'
+                    name = frequency+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(SUBJECT_CODE(MEI_t.columns[i][1])).replace('_','')+str(MEASURE_CODE(MEI_t.columns[i][2]))+'.a'
                 
                     value = MEI_t[MEI_t.columns[i]]
                     db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
@@ -222,6 +259,10 @@ for dataset in dataset_list:
                                         start_found = True
                                 db_table_A_t[db_code_A][db_table_A_t.index[time_index]] = value[k]
                                 time_index += 1
+                            for k in reversed(range(value.shape[0])):
+                                if str(value[k]) != 'nan':
+                                    last = int(value.index[k])
+                                    break
                             break
                     
                     Subject = subjects_list[MEI_t.columns[i][1]]
@@ -266,7 +307,7 @@ for dataset in dataset_list:
                     else:
                         form_c = MEI_t.columns[i][5]
                     #flags = MEI_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+                    key_tmp= [databank, name, db_table_A, db_code_A, desc_e, desc_c, freq, start, last, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
                     sort_tmp_A = [name, snl, db_table_A, db_code_A]
                     SORT_DATA_A.append(sort_tmp_A)
@@ -281,7 +322,7 @@ for dataset in dataset_list:
                         code_num_Q = 1
                         db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
                     
-                    name = str(frequency)+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(MEI_t.columns[i][1])+'__'+str(MEI_t.columns[i][2])+'.q'
+                    name = str(frequency)+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(SUBJECT_CODE(MEI_t.columns[i][1])).replace('_','')+str(MEASURE_CODE(MEI_t.columns[i][2]))+'.q'
                     
                     value = MEI_t[MEI_t.columns[i]]
                     db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
@@ -298,6 +339,10 @@ for dataset in dataset_list:
                                         start_found = True
                                 db_table_Q_t[db_code_Q][db_table_Q_t.index[time_index]] = value[k]
                                 time_index += 1
+                            for k in reversed(range(value.shape[0])):
+                                if str(value[k]) != 'nan':
+                                    last = str(value.index[k])
+                                    break
                             break
                     
                     Subject = subjects_list[MEI_t.columns[i][1]]
@@ -342,7 +387,7 @@ for dataset in dataset_list:
                     else:
                         form_c = MEI_t.columns[i][5]
                     #flags = MEI_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+                    key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, last, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
                     sort_tmp_Q = [name, snl, db_table_Q, db_code_Q]
                     SORT_DATA_Q.append(sort_tmp_Q)
@@ -357,7 +402,7 @@ for dataset in dataset_list:
                         code_num_M = 1
                         db_table_M_t = pd.DataFrame(index = Month_list, columns = [])
                     
-                    name = str(frequency)+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(MEI_t.columns[i][1])+'__'+str(MEI_t.columns[i][2])+'.m'
+                    name = str(frequency)+str(COUNTRY_CODE(MEI_t.columns[i][0]))+str(SUBJECT_CODE(MEI_t.columns[i][1])).replace('_','')+str(MEASURE_CODE(MEI_t.columns[i][2]))+'.m'
                     
                     value = MEI_t[MEI_t.columns[i]]
                     db_table_M = DB_TABLE+'M_'+str(table_num_M).rjust(4,'0')
@@ -374,6 +419,10 @@ for dataset in dataset_list:
                                         start_found = True
                                 db_table_M_t[db_code_M][db_table_M_t.index[time_index]] = value[k]
                                 time_index += 1
+                            for k in reversed(range(value.shape[0])):
+                                if str(value[k]) != 'nan':
+                                    last = str(value.index[k])
+                                    break
                             break
                     
                     Subject = subjects_list[MEI_t.columns[i][1]]
@@ -418,7 +467,7 @@ for dataset in dataset_list:
                     else:
                         form_c = MEI_t.columns[i][5]
                     #flags = MEI_t['Flags'][i]
-                    key_tmp= [databank, name, db_table_M, db_code_M, desc_e, desc_c, freq, start, unit, name_ord, snl, book, form_e, form_c]
+                    key_tmp= [databank, name, db_table_M, db_code_M, desc_e, desc_c, freq, start, last, unit, name_ord, snl, book, form_e, form_c]
                     KEY_DATA.append(key_tmp)
                     sort_tmp_M = [name, snl, db_table_M, db_code_M]
                     SORT_DATA_M.append(sort_tmp_M)
@@ -594,8 +643,8 @@ print(df_key)
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 if merge_file.empty == False:
     df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_A, DATA_BASE_Q, DATA_BASE_M, DB_name_A, DB_name_Q, DB_name_M)
-    df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+    df_key.to_excel(out_path+NAME+"key"+START_YEAR+".xlsx", sheet_name=NAME+'key')
+    with pd.ExcelWriter(out_path+NAME+"database"+START_YEAR+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
         endl = True
         for key in sorted(DATA_BASE.keys()):
             if key.find('DB_A') >= 0:
@@ -616,8 +665,8 @@ if merge_file.empty == False:
             DATA_BASE[key].to_excel(writer, sheet_name = key)
     sys.stdout.write("\n")
 else:
-    df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+    df_key.to_excel(out_path+NAME+"key"+START_YEAR+".xlsx", sheet_name=NAME+'key')
+    with pd.ExcelWriter(out_path+NAME+"database"+START_YEAR+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
         for d in DB_name_A:
             sys.stdout.write("\rOutputing sheet: "+str(d))
             sys.stdout.flush()

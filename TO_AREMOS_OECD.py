@@ -8,12 +8,17 @@ from datetime import datetime, date
 ENCODING = 'utf-8-sig'
 data_path = './output/'
 out_path = './output/'
-NAME = 'EIKON_'#GERFIN_ #EIKON_
+NAME = 'MEI_'
+specified_start_year = True
 make_doc = True
-part_file = True
+part_file = False
 from_year = '2019'
 latest = True
-#to_year = '2020'
+to_year = '2020'
+if specified_start_year == True:
+    START_YEAR = '_'+str(datetime.now().year - 10)
+else:
+    START_YEAR = ''
 
 def SPECIAL(special_text):
     print('\n= ! = '+special_text+'\n\n')
@@ -54,11 +59,11 @@ def FREQUENCY(freq):
         return 'Annual'
 
 tStart = time.time()
-print('Reading file: '+NAME+'key, Time: ', int(time.time() - tStart),'s'+'\n')
-df_key = readExcelFile(data_path+NAME+'key.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_=NAME+'key')
+print('Reading file: '+NAME+'key'+START_YEAR+', Time: ', int(time.time() - tStart),'s'+'\n')
+df_key = readExcelFile(data_path+NAME+'key'+START_YEAR+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_=NAME+'key')
 try:
-    print('Reading file: '+NAME+'database, Time: ', int(time.time() - tStart),'s'+'\n')
-    DATA_BASE_t = readExcelFile(data_path+NAME+'database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    print('Reading file: '+NAME+'database'+START_YEAR+', Time: ', int(time.time() - tStart),'s'+'\n')
+    DATA_BASE_t = readExcelFile(data_path+NAME+'database'+START_YEAR+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
 except:
     with open(data_path+'database_num.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
         database_num = int(f.read().replace('\n', ''))
@@ -102,7 +107,7 @@ for key in range(df_key.shape[0]):
                 else:
                     continue
             found = False
-            for ar in reversed(range(nA)):
+            for ar in range(nA):
                 if latest == True:
                     if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= from_year+'-01-01' and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= df_key.loc[key,'last']:
                         if found == True:
@@ -155,7 +160,7 @@ for key in range(df_key.shape[0]):
             SERIES_DATA = 'SERIES<FREQ '+freq+' PER '+str(df_key.loc[key,'start'])[:4]+freq2+\
                 ' TO '+str(df_key.loc[key,'last'])[:4]+freq2+'>!'
         found = False
-        for ar in reversed(range(nA)):
+        for ar in range(nA):
             if DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] >= df_key.loc[key,'start'] and DATA_BASE_t[df_key.loc[key,'db_table']].index[ar] <= df_key.loc[key,'last']:
                 if found == True:
                     DATA = DATA + ',' 
@@ -176,10 +181,10 @@ for key in range(df_key.shape[0]):
     
     end = ';'
     DATA = DATA + end
-    #DATA = DATA.replace('"','')
+    
     if make_doc == True:
         SERIES = 'SERIES<FREQ '+FREQUENCY(freq)+' >'+df_key.loc[key,'name']+'!'
-        DESC = "'"+str(df_key.loc[key,'desc_e']).replace("'",'"')+"'"+'!'
+        DESC = "'"+str(df_key.loc[key,'desc_e']).replace("'",'"')+' - '+str(df_key.loc[key,'book'])+"'"+'!'
         AREMOS.append(SERIES)
         AREMOS.append(DESC)
         AREMOS.append(end)
@@ -189,10 +194,10 @@ sys.stdout.write("\n\n")
 
 if make_doc == True:
     aremos = pd.DataFrame(AREMOS)
-    aremos.to_csv(out_path+NAME+"doc"+from_year[-2:]+".txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
+    aremos.to_csv(out_path+NAME+"doc"+START_YEAR+".txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
 aremos_data = pd.DataFrame(AREMOS_DATA)
-#aremos_data.to_csv(out_path+NAME+"data.txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
-aremos_data.to_csv(out_path+NAME+"data"+from_year[-2:]+".txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
+aremos_data.to_csv(out_path+NAME+"data"+START_YEAR+".txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
+#aremos_data.to_csv(out_path+NAME+"data"+from_year[-2:]+".txt", header=False, index=False, sep='|', quoting=csv.QUOTE_NONE, quotechar='')
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 #to_year = from_year

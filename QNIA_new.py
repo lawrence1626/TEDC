@@ -13,9 +13,15 @@ NAME = 'QNIA_'
 data_path = './data/'
 out_path = "./output/"
 databank = 'QNIA'
-#freq = 'A'
+specified_start_year = True
+if specified_start_year == True:
+    start_year = datetime.now().year - 10
+    START_YEAR = '_'+str(start_year)
+else:
+    START_YEAR = ''
+merge_file = pd.DataFrame()
+#merge_file = readExcelFile(out_path+'QNIA_key'+START_YEAR+'.xlsx', header_ = 0, sheet_name_='QNIA_key')
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
-merge_file = readExcelFile(out_path+'QNIA_key.xlsx', header_ = 0, sheet_name_='QNIA_key')
 dataset_list = ['QNA', 'QNA_ARCHIVE']
 frequency_list = ['A','Q']
 for i in range(len(key_list)):
@@ -89,10 +95,21 @@ def MEASURE_CODE(code):
     else:
         ERROR('代碼錯誤: '+code)
 
+def START_DATE(freq):
+    if specified_start_year == True:
+        if freq == 'A':
+            return start_year
+        elif freq == 'Q':
+            return str(start_year)+'-Q1'
+        else:
+            ERROR('頻率錯誤: '+freq)
+    else:
+        return None
+
 this_year = datetime.now().year + 1
-Year_list = [tmp for tmp in range(1947,this_year)]
+Year_list = [tmp for tmp in range(datetime.now().year - 10,this_year)]
 Quarter_list = []
-for q in range(1947,this_year):
+for q in range(datetime.now().year - 10,this_year):
     for r in range(1,5):
         Quarter_list.append(str(q)+'-Q'+str(r))
 #print(Quarter_list)
@@ -165,7 +182,7 @@ for dataset in dataset_list:
     for coun in c_list:
         for frequency in frequency_list:
             print('Getting data: dataset_name = '+dataset+', country = '+COUNTRY_NAME(coun)+', frequency = '+frequency+' Time: ', int(time.time() - tStart),'s'+'\n')
-            QNIA_t, subjects, measures = createDataFrameFromOECD(countries = [coun], dsname = dataset, frequency = frequency)
+            QNIA_t, subjects, measures = createDataFrameFromOECD(countries = [coun], dsname = dataset, frequency = frequency, startDate = START_DATE(frequency))
             #QNIA_t = readFile(data_path+NAME+str(g)+'.csv', header_ = 0)
             subjects_list = {}
             for s in range(subjects.shape[0]):
@@ -425,8 +442,8 @@ print(df_key)
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 if merge_file.empty == False:
     df_key, DATA_BASE = CONCATE(df_key, DATA_BASE_A, DATA_BASE_Q, DB_name_A, DB_name_Q)
-    df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+    df_key.to_excel(out_path+NAME+"key"+START_YEAR+".xlsx", sheet_name=NAME+'key')
+    with pd.ExcelWriter(out_path+NAME+"database"+START_YEAR+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
         endl = True
         for key in sorted(DATA_BASE.keys()):
             if key.find('DB_A') >= 0:
@@ -441,8 +458,8 @@ if merge_file.empty == False:
             DATA_BASE[key].to_excel(writer, sheet_name = key)
     sys.stdout.write("\n")
 else:
-    df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-    with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+    df_key.to_excel(out_path+NAME+"key"+START_YEAR+".xlsx", sheet_name=NAME+'key')
+    with pd.ExcelWriter(out_path+NAME+"database"+START_YEAR+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
         for d in DB_name_A:
             sys.stdout.write("\rOutputing sheet: "+str(d))
             sys.stdout.flush()

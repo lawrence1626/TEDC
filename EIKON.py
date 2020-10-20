@@ -373,7 +373,7 @@ else:
         f.write(str(database_num))
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
-
+"""
 def FREQUENCY(freq):
     if freq == 'D':
         return 'Daily'
@@ -424,5 +424,5 @@ aremos = pd.DataFrame(AREMOS)
 aremos_data = pd.DataFrame(AREMOS_DATA)
 aremos.to_csv(out_path+NAME+"doc.txt", header=False, index=False)
 aremos_data.to_csv(out_path+NAME+"data.txt", header=False, index=False)
-
+"""
 print('Time: ', int(time.time() - tStart),'s'+'\n')

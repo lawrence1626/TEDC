@@ -8,7 +8,7 @@ from datetime import datetime, date
 ENCODING = 'utf-8-sig'
 data_path = './output/'
 NAME1 = ''
-NAME2 = '_2010'
+NAME2 = '_new'
 
 def ERROR(error_text):
     print('\n\n= ! = '+error_text+'\n\n')
@@ -50,17 +50,17 @@ for y in range(1947,this_year):
         Month_list.append(str(y)+'-'+str(m).rjust(2,'0'))
 
 tStart = time.time()
-print('Reading file: MEI_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
-KEY_DATA_t = readExcelFile(data_path+'MEI_key'+NAME1+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='MEI_key')
-print('Reading file: MEI_key'+NAME2+', Time: ', int(time.time() - tStart),'s'+'\n')
-df_key = readExcelFile(data_path+'MEI_key'+NAME2+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='MEI_key')
-#print('Reading file: MEI_database, Time: ', int(time.time() - tStart),'s'+'\n')
-#DATA_BASE_t = readExcelFile(data_path+'MEI_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+print('Reading file: EIKON_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
+KEY_DATA_t = readExcelFile(data_path+'EIKON_key'+NAME1+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='EIKON_key')
+print('Reading file: EIKON_key'+NAME2+', Time: ', int(time.time() - tStart),'s'+'\n')
+df_key = readExcelFile(data_path+'EIKON_key'+NAME2+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='EIKON_key')
+#print('Reading file: EIKON_database, Time: ', int(time.time() - tStart),'s'+'\n')
+#DATA_BASE_t = readExcelFile(data_path+'EIKON_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
 
-print('Concating file: MEI_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
+print('Concating file: EIKON_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
 KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
 """
-print('Concating file: MEI_database, Time: ', int(time.time() - tStart),'s'+'\n')
+print('Concating file: EIKON_database, Time: ', int(time.time() - tStart),'s'+'\n')
 for d in DB_name_A:
     sys.stdout.write("\rConcating sheet: "+str(d))
     sys.stdout.flush()
