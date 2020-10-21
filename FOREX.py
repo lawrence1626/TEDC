@@ -454,6 +454,127 @@ for g in range(start_file,last_file+1):
                 snl += 1
                 
                 code_num_M += 1
+			if frequency == 'Q':
+                if code_num_Q >= 200:
+                    DATA_BASE_Q[db_table_Q2] = db_table_Q_t
+                    DB_name_Q.append(db_table_Q2)
+                    table_num_Q += 1
+                    code_num_Q = 1
+                    db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
+                
+                if str(FOREX_t.columns[i][0]).find('SP00.A') >= 0:
+                    loc1 = str(FOREX_t.columns[i][0]).find('.EUR')
+                    code = str(FOREX_t.columns[i][0])[loc1-3:loc1]
+                    name = frequency+COUNTRY(code)+'REXEURDECB.'+frequency
+                    name2 = frequency+COUNTRY(code)+'REXEURECB.'+frequency
+                elif str(FOREX_t.columns[i][0]).find('SP00.E') >= 0:
+                    loc1 = str(FOREX_t.columns[i][0]).find('.EUR')
+                    code = str(FOREX_t.columns[i][0])[loc1-3:loc1]
+                    name = frequency+COUNTRY(code)+'REXEUREECB.'+frequency
+                    name2 = frequency+COUNTRY(code)+'REXEURIECB.'+frequency
+
+                AREMOS_key = AREMOS_forex.loc[AREMOS_forex['code'] == name].to_dict('list')
+                AREMOS_key2 = AREMOS_forex.loc[AREMOS_forex['code'] == name2].to_dict('list')
+                if pd.DataFrame(AREMOS_key).empty == True:
+                    continue
+
+                value = list(FOREX_t[FOREX_t.columns[i]])
+                index = FOREX_t[FOREX_t.columns[i]].index
+                db_table_Q = DB_TABLE+frequency+'_'+str(table_num_Q).rjust(4,'0')
+                db_code_Q = DB_CODE+str(code_num_Q).rjust(3,'0')
+                db_table_Q_t[db_code_Q] = ['' for tmp in range(nQ)]
+                code_num_Q += 1
+                if code_num_Q >= 200:
+                    DATA_BASE_Q[db_table_Q] = db_table_Q_t
+                    DB_name_Q.append(db_table_Q)
+                    table_num_Q += 1
+                    code_num_Q = 1
+                    db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
+                db_table_Q2 = DB_TABLE+frequency+'_'+str(table_num_Q).rjust(4,'0')
+                db_code_Q2 = DB_CODE+str(code_num_Q).rjust(3,'0')
+                db_table_Q_t[db_code_Q2] = ['' for tmp in range(nQ)]
+                head = 0
+                start_found = False
+                last_found = False
+                for j in range(nQ):
+                    for k in range(head, len(value)):
+						if str(index[k]).find('03-31') >= 0:
+							quarter_index = str(index[k])[:5]+'Q1'
+						elif str(index[k]).find('06-30') >= 0:
+							quarter_index = str(index[k])[:5]+'Q2'
+						elif str(index[k]).find('09-30') >= 0:
+							quarter_index = str(index[k])[:5]+'Q3'
+						elif str(index[k]).find('12-31') >= 0:
+							quarter_index = str(index[k])[:5]+'Q4'
+						else:
+							quarter_index = 'Nan'
+                        if db_table_Q_t.index[j] == quarter_index:
+                            if value[k] == 'nan':
+                                db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = ''
+                                db_table_Q_t[db_code_M2][db_table_Q_t.index[j]] = ''
+                            else:
+                                db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = float(value[k])
+                                db_table_Q_t[db_code_Q2][db_table_Q_t.index[j]] = round(1/float(value[k]), 4)
+                            if last_found == False:
+                                last = str(db_table_Q_t.index[j])
+                                last2 = last
+                                last_found = True
+                            if last_found == True:
+                                if k == len(value)-1:
+                                    start = str(db_table_Q_t.index[j])
+                                    start2 = start
+                                    start_found = True
+                                elif str(value[k+1]) == 'nan':
+                                    start = str(db_table_Q_t.index[j])
+                                    start2 = start
+                                    start_found = True
+                            head = k+1
+                            break
+                        else:
+                            continue
+                if last_found == False:
+                    ERROR('last not found:'+str(FOREX_t.columns[i]))
+                elif start_found == False:
+                    ERROR('start not found:'+str(FOREX_t.columns[i]))                
+            
+                desc_e = str(AREMOS_key['description'][0])
+                if desc_e.find('FOREIGN EXCHANGE') >= 0:
+                    desc_e = desc_e.replace('FOREIGN EXCHANGE',' FOREIGN EXCHANGE ').title()
+                base = str(AREMOS_key['base currency'][0])
+                if base == 'nan':
+                    base = 'Euro'
+                quote = str(AREMOS_key['quote currency'][0])
+                if quote == 'nan':
+                    quote = CURRENCY(code)
+                desc_c = ''
+                freq = frequency
+                source = 'Official ECB & EUROSTAT Reference'
+                form_e = str(FOREX_t.columns[i][2])
+                form_c = ''
+                desc_e2 = str(AREMOS_key2['description'][0])
+                if desc_e2.find('FOREIGN EXCHANGE') >= 0:
+                    desc_e2 = desc_e2.replace('FOREIGN EXCHANGE',' FOREIGN EXCHANGE ').title()
+                base2 = str(AREMOS_key2['base currency'][0])
+                if base2 == 'nan':
+                    base2 = CURRENCY(code)
+                quote2 = str(AREMOS_key2['quote currency'][0])
+                if quote2 == 'nan':
+                    quote2 = 'Euro'
+                desc_c2 = ''
+                form_c2 = ''
+                
+                key_tmp= [databank, name, db_table_Q, db_code_Q, desc_e, desc_c, freq, start, last, base, quote, snl, source, form_e, form_c]
+                KEY_DATA.append(key_tmp)
+                sort_tmp_Q = [name, snl, db_table_Q, db_code_Q]
+                SORT_DATA_Q.append(sort_tmp_Q)
+                snl += 1
+                key_tmp2= [databank, name2, db_table_Q2, db_code_Q2, desc_e2, desc_c2, freq, start2, last2, base2, quote2, snl, source, form_e, form_c2]
+                KEY_DATA.append(key_tmp2)
+                sort_tmp_Q2 = [name2, snl, db_table_Q2, db_code_Q2]
+                SORT_DATA_Q.append(sort_tmp_Q2)
+                snl += 1
+                
+                code_num_Q += 1
     elif g >= 3 and g <= 6:
         FOREX_t = readFile(data_path+NAME+str(g)+'.csv', header_ = [0,1,2], index_col_=0, skiprows_=[3,4], skipfooter_=1)
         if FOREX_t.index[0] < FOREX_t.index[1]:
