@@ -229,7 +229,7 @@ for g in range(start_file,last_file+1):
             elif str(FOREX_t.columns[i][0]).find('EXR.D') >= 0:
                 frequency = 'W'
             
-            if frequency == 'A':
+            if frequency == 'A':############################################################ Annual Data ##########################################################
                 if code_num_A >= 200:
                     DATA_BASE_A[db_table_A2] = db_table_A_t
                     DB_name_A.append(db_table_A2)
@@ -343,7 +343,7 @@ for g in range(start_file,last_file+1):
                 snl += 1
 
                 code_num_A += 1
-            if frequency == 'M':
+            if frequency == 'M':############################################################ Month Data ##########################################################
                 if code_num_M >= 200:
                     DATA_BASE_M[db_table_M2] = db_table_M_t
                     DB_name_M.append(db_table_M2)
@@ -454,7 +454,7 @@ for g in range(start_file,last_file+1):
                 snl += 1
                 
                 code_num_M += 1
-			if frequency == 'Q':
+		if frequency == 'Q':############################################################ Quarter Data ##########################################################
                 if code_num_Q >= 200:
                     DATA_BASE_Q[db_table_Q2] = db_table_Q_t
                     DB_name_Q.append(db_table_Q2)
