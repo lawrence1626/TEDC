@@ -454,7 +454,7 @@ for g in range(start_file,last_file+1):
                 snl += 1
                 
                 code_num_M += 1
-	    if frequency == 'Q':############################################################ Quarter Data ##########################################################
+            if frequency == 'Q':############################################################ Quarter Data ##########################################################
                 if code_num_Q >= 200:
                     DATA_BASE_Q[db_table_Q2] = db_table_Q_t
                     DB_name_Q.append(db_table_Q2)
@@ -498,16 +498,16 @@ for g in range(start_file,last_file+1):
                 last_found = False
                 for j in range(nQ):
                     for k in range(head, len(value)):
-						if str(index[k]).find('03-31') >= 0:
-							quarter_index = str(index[k])[:5]+'Q1'
-						elif str(index[k]).find('06-30') >= 0:
-							quarter_index = str(index[k])[:5]+'Q2'
-						elif str(index[k]).find('09-30') >= 0:
-							quarter_index = str(index[k])[:5]+'Q3'
-						elif str(index[k]).find('12-31') >= 0:
-							quarter_index = str(index[k])[:5]+'Q4'
-						else:
-							quarter_index = 'Nan'
+                        if str(index[k]).find('03-31') >= 0:
+                            quarter_index = str(index[k])[:5]+'Q1'
+                        elif str(index[k]).find('06-30') >= 0:
+                            quarter_index = str(index[k])[:5]+'Q2'
+                        elif str(index[k]).find('09-30') >= 0:
+                            quarter_index = str(index[k])[:5]+'Q3'
+                        elif str(index[k]).find('12-31') >= 0:
+                            quarter_index = str(index[k])[:5]+'Q4'
+                        else:
+                            quarter_index = 'Nan'
                         if db_table_Q_t.index[j] == quarter_index:
                             if value[k] == 'nan':
                                 db_table_Q_t[db_code_Q][db_table_Q_t.index[j]] = ''
