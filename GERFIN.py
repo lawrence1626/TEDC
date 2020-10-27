@@ -154,19 +154,25 @@ for g in range(start_file,last_file+1):
             
             value = list(GERFIN_t[GERFIN_t.columns[i]])
             index = GERFIN_t[GERFIN_t.columns[i]].index
+            new_table = False
             db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
             code_num_D += 1
             if code_num_D >= 200:
+                new_table = True
                 DATA_BASE_D[db_table_D] = db_table_D_t
                 DB_name_D.append(db_table_D)
                 table_num_D += 1
                 code_num_D = 1
-                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
-            db_table_D2 = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
-            db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
-            db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
+                db_table_D_t2 = pd.DataFrame(index = Day_list, columns = [])
+                db_table_D2 = DB_TABLE+'D'+'_'+str(table_num_D).rjust(4,'0')
+                db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
+                db_table_D_t2[db_code_D2] = ['' for tmp in range(nD)]
+            else:
+                db_table_D2 = DB_TABLE+'D'+'_'+str(table_num_D).rjust(4,'0')
+                db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
+                db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
             head = 0
             start_found = False
             last = str(index[0]).replace(' 00:00:00','')
@@ -178,10 +184,16 @@ for g in range(start_file,last_file+1):
                         find = True
                         if value[k] == '-':
                             db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
-                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
+                            if new_table == True:
+                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = ''
+                            else:
+                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
                         else:
                             db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
-                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                            if new_table == True:
+                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                            else:
+                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
                         head = j+1
                         break
                 if start_found == False:
@@ -194,7 +206,9 @@ for g in range(start_file,last_file+1):
                         start2 = start
                         start_found = True
                 if find == False:
-                    ERROR(str(GERFIN_t.columns[i]))        
+                    ERROR(str(GERFIN_t.columns[i]))
+            if new_table == True:
+                db_table_D_t = db_table_D_t2        
         
             desc_e = str(AREMOS_key['description'][0])
             base = str(AREMOS_key['base currency'][0])
@@ -252,19 +266,25 @@ for g in range(start_file,last_file+1):
             
             value = list(GERFIN_t[GERFIN_t.columns[i]])
             index = GERFIN_t[GERFIN_t.columns[i]].index
+            new_table = False
             db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
             code_num_D += 1
             if code_num_D >= 200:
+                new_table = True
                 DATA_BASE_D[db_table_D] = db_table_D_t
                 DB_name_D.append(db_table_D)
                 table_num_D += 1
                 code_num_D = 1
-                db_table_D_t = pd.DataFrame(index = Day_list, columns = [])
-            db_table_D2 = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
-            db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
-            db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
+                db_table_D_t2 = pd.DataFrame(index = Day_list, columns = [])
+                db_table_D2 = DB_TABLE+'D'+'_'+str(table_num_D).rjust(4,'0')
+                db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
+                db_table_D_t2[db_code_D2] = ['' for tmp in range(nD)]
+            else:
+                db_table_D2 = DB_TABLE+'D'+'_'+str(table_num_D).rjust(4,'0')
+                db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
+                db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
             head = 0
             start_found = False
             last = str(index[0]).replace(' 00:00:00','')
@@ -276,10 +296,16 @@ for g in range(start_file,last_file+1):
                         find = True
                         if value[k] == '.':
                             db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
-                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
+                            if new_table == True:
+                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = ''
+                            else:
+                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
                         else:
                             db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
-                            db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                            if new_table == True:
+                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                            else:
+                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
                         head = j+1
                         break
                 if start_found == False:
@@ -292,7 +318,9 @@ for g in range(start_file,last_file+1):
                         start2 = start
                         start_found = True 
                 if find == False:
-                    ERROR(str(GERFIN_t.columns[i]))        
+                    ERROR(str(GERFIN_t.columns[i])) 
+            if new_table == True:
+                db_table_D_t = db_table_D_t2       
         
             desc_e = str(AREMOS_key['description'][0])
             base = str(AREMOS_key['base currency'][0])
