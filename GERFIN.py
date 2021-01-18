@@ -84,7 +84,7 @@ def CURRENCY(code):
     else:
         ERROR('貨幣代碼錯誤: '+code)
 
-Day_list = pd.date_range(start = '1/1/1970', end = update).strftime('%Y-%m-%d').tolist()
+Day_list = pd.date_range(start = '1970-01-01', end = update).strftime('%Y-%m-%d').tolist()
 Day_list.reverse()
 nD = len(Day_list)
 KEY_DATA = []
@@ -173,40 +173,53 @@ for g in range(start_file,last_file+1):
                 db_table_D2 = DB_TABLE+'D'+'_'+str(table_num_D).rjust(4,'0')
                 db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
                 db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
-            head = 0
+            last_found = False
             start_found = False
-            last = str(index[0]).replace(' 00:00:00','')
-            last2 = last
+            find = False
             for k in range(len(value)):
-                find = False
-                for j in range(head, nD):
-                    if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
-                        find = True
-                        if value[k] == '-':
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
-                            if new_table == True:
-                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = ''
-                            else:
-                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
+                freq_index = index[k].strftime('%Y-%m-%d')
+                if freq_index in db_table_D_t.index:
+                    if str(value[k]) == '-' or str(value[k]) == 'nan':
+                        db_table_D_t[db_code_D][freq_index] = ''
+                        if new_table == True:
+                            db_table_D_t2[db_code_D2][freq_index] = ''
                         else:
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
-                            if new_table == True:
-                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                            db_table_D_t[db_code_D2][freq_index] = ''
+                    else:
+                        find = True
+                        db_table_D_t[db_code_D][freq_index] = float(value[k])
+                        if new_table == True:
+                            db_table_D_t2[db_code_D2][freq_index] = round(1/float(value[k]), 4)
+                        else:
+                            db_table_D_t[db_code_D2][freq_index] = round(1/float(value[k]), 4)
+                        if last_found == False and find == True:
+                            last = index[k].strftime('%Y-%m-%d')
+                            last2 = last
+                            last_found = True
+                        if last_found == True:
+                            if k == len(value)-1:
+                                start = freq_index
+                                start2 = start
+                                start_found = True
                             else:
-                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
-                        head = j+1
-                        break
-                if start_found == False:
-                    if k == len(value)-1:
-                        start = str(index[k]).replace(' 00:00:00','')
-                        start2 = start
-                        start_found = True
-                    elif str(value[k+1]) == 'nan':
-                        start = str(index[k]).replace(' 00:00:00','')
-                        start2 = start
-                        start_found = True
-                if find == False:
-                    ERROR(str(GERFIN_t.columns[i]))
+                                for st in range(k+1, len(value)):
+                                    if str(value[st]) != '-' and str(value[st]) != 'nan':
+                                        start_found = False
+                                    else:
+                                        start_found = True
+                                    if start_found == False:
+                                        break
+                                if start_found == True:
+                                    start = freq_index
+                                    start2 = start
+            if last_found == False:
+                if find == True:
+                    ERROR('last not found: '+str(name))
+            if start_found == False:
+                if find == True:
+                    ERROR('start not found: '+str(name))                
+            if find == False:
+                ERROR(str(GERFIN_t.columns[i]))
             if new_table == True:
                 db_table_D_t = db_table_D_t2        
         
@@ -285,40 +298,53 @@ for g in range(start_file,last_file+1):
                 db_table_D2 = DB_TABLE+'D'+'_'+str(table_num_D).rjust(4,'0')
                 db_code_D2 = DB_CODE+str(code_num_D).rjust(3,'0')
                 db_table_D_t[db_code_D2] = ['' for tmp in range(nD)]
-            head = 0
+            last_found = False
             start_found = False
-            last = str(index[0]).replace(' 00:00:00','')
-            last2 = last
+            find = False
             for k in range(len(value)):
-                find = False
-                for j in range(head, nD):
-                    if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
-                        find = True
-                        if value[k] == '.':
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
-                            if new_table == True:
-                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = ''
-                            else:
-                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = ''
+                freq_index = index[k]
+                if freq_index in db_table_D_t.index:
+                    if str(value[k]) == '.' or str(value[k]) == 'nan':
+                        db_table_D_t[db_code_D][freq_index] = ''
+                        if new_table == True:
+                            db_table_D_t2[db_code_D2][freq_index] = ''
                         else:
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
-                            if new_table == True:
-                                db_table_D_t2[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
+                            db_table_D_t[db_code_D2][freq_index] = ''
+                    else:
+                        find = True
+                        db_table_D_t[db_code_D][freq_index] = float(value[k])
+                        if new_table == True:
+                            db_table_D_t2[db_code_D2][freq_index] = round(1/float(value[k]), 4)
+                        else:
+                            db_table_D_t[db_code_D2][freq_index] = round(1/float(value[k]), 4)
+                        if last_found == False and find == True:
+                            last = index[k]
+                            last2 = last
+                            last_found = True
+                        if last_found == True:
+                            if k == len(value)-1:
+                                start = freq_index
+                                start2 = start
+                                start_found = True
                             else:
-                                db_table_D_t[db_code_D2][db_table_D_t.index[j]] = round(1/float(value[k]), 4)
-                        head = j+1
-                        break
-                if start_found == False:
-                    if k == len(value)-1:
-                        start = str(index[k]).replace(' 00:00:00','')
-                        start2 = start
-                        start_found = True
-                    elif str(value[k+1]) == 'nan':
-                        start = str(index[k]).replace(' 00:00:00','')
-                        start2 = start
-                        start_found = True 
-                if find == False:
-                    ERROR(str(GERFIN_t.columns[i])) 
+                                for st in range(k+1, len(value)):
+                                    if str(value[st]) != '.' and str(value[st]) != 'nan':
+                                        start_found = False
+                                    else:
+                                        start_found = True
+                                    if start_found == False:
+                                        break
+                                if start_found == True:
+                                    start = freq_index
+                                    start2 = start
+            if last_found == False:
+                if find == True:
+                    ERROR('last not found: '+str(name))
+            if start_found == False:
+                if find == True:
+                    ERROR('start not found: '+str(name))  
+            if find == False:
+                ERROR(str(GERFIN_t.columns[i])) 
             if new_table == True:
                 db_table_D_t = db_table_D_t2       
         
@@ -354,7 +380,7 @@ for g in range(start_file,last_file+1):
         README = list(README_t[0])
         if GERFIN_t.index[0] < GERFIN_t.index[1]:
             GERFIN_t = GERFIN_t[::-1]
-    
+
         nG = GERFIN_t.shape[1]
         nR = len(README)
         #print(GERFIN_t)        
@@ -393,29 +419,42 @@ for g in range(start_file,last_file+1):
             db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
-            head = 0
+            last_found = False
             start_found = False
-            last = str(index[0]).replace(' 00:00:00','')
+            find = False
             for k in range(len(value)):
-                find = False
-                for j in range(head, nD):
-                    if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
+                freq_index = index[k].strftime('%Y-%m-%d')
+                if freq_index in db_table_D_t.index:
+                    if value[k] == 0 or str(value[k]) == 'nan':
+                        db_table_D_t[db_code_D][freq_index] = ''
+                    else:
                         find = True
-                        if value[k] == 0:
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = ''
-                        else:
-                            db_table_D_t[db_code_D][db_table_D_t.index[j]] = float(value[k])
-                        head = j+1
-                        break
-                if start_found == False:
-                    if k == len(value)-1:
-                        start = str(index[k]).replace(' 00:00:00','')
-                        start_found = True
-                    elif str(value[k+1]) == 'nan':
-                        start = str(index[k]).replace(' 00:00:00','')
-                        start_found = True
-                if find == False:
-                    ERROR(str(GERFIN_t.columns[i]))        
+                        db_table_D_t[db_code_D][freq_index] = float(value[k])
+                        if last_found == False and find == True:
+                            last = index[k].strftime('%Y-%m-%d')
+                            last_found = True
+                        if last_found == True:
+                            if k == len(value)-1:
+                                start = freq_index
+                                start_found = True
+                            else:
+                                for st in range(k+1, len(value)):
+                                    if value[st] != 0 and str(value[st]) != 'nan':
+                                        start_found = False
+                                    else:
+                                        start_found = True
+                                    if start_found == False:
+                                        break
+                                if start_found == True:
+                                    start = freq_index
+            if last_found == False:
+                if find == True:
+                    ERROR('last not found: '+str(name))
+            if start_found == False:
+                if find == True:
+                    ERROR('start not found: '+str(name))
+            if find == False:
+                ERROR(str(GERFIN_t.columns[i]))        
         
             desc_e = str(AREMOS_key['description'][0])
             base = str(AREMOS_key['base currency'][0])

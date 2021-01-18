@@ -15,9 +15,9 @@ databank = 'FOREX'
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'base', 'quote', 'snl', 'source', 'form_e', 'form_c']
 #merge_file = readExcelFile(out_path+'FOREX_key.xlsx', header_ = 0, sheet_name_='FOREX_key')
 base_year = ['1999','2010','2015']
-start_year = 1999
+start_year = int(input('Dealing data from year: '))
 start_file = 1
-last_file = 10
+last_file = 8
 update = datetime.today()
 for i in range(len(key_list)):
     if key_list[i] == 'snl':
@@ -207,7 +207,7 @@ REPLICATED = []
 
 before1 = ['FOREIGN EXCHANGE',') PER','DATA)',')FROM','SOURCE','NOTE','RATESDR','RATESEMI','RATEEND','RATES','MARKET RATE','OFFICIAL RATE','PRINCIPAL RATE','USING','ONWARDD','WEDOLLAR','ESOFFICIAL','MILLIONS','NSAINTERNATIONAL','aA','aE','ReservesClaims','DollarsUnit','DollarSource','www.imf.org','FUNDCURRENCY','DATAU.S.','ORLUXEMBOURG','EMUEURO','Y DATA',' AS','HOUSEHOLDSCANNOT','NACIONALWHICH','WITH ',"#IES",'#']
 after1 = [' FOREIGN EXCHANGE ',') PER ','DATA): ',') FROM',', SOURCE',', NOTE','RATE SDR','RATE SEMI','RATE END','RATES ','MARKET RATE ','OFFICIAL RATE ','PRINCIPAL RATE ','USING ','ONWARD D','WE DOLLAR','ES OFFICIAL',' MILLIONS','NSA INTERNATIONAL','a A','a E','Reserves, Claims','Dollars; Unit','Dollar; Source','','FUND CURRENCY','DATA U.S.','OR LUXEMBOURG','EMU EURO','Y DATA ',' AS ','HOUSEHOLDS CANNOT','NACIONAL WHICH',' WITH ','IES',' ']
-before2 = ['Ecb','1 Ecu','Sdr','Ifs','Ihs','Imf','Iso','Exchange S ','Rate S ','Am','Pm','Of ',"People S","People'S",'Usd','Us ','#Name?eekly','#Name?','Cfa','Cfp','Fx','Rate,,','Rate,','Nsa','Cofer','And ', 'In ',')Total','Or ','Luf','Emu ','Rexa','Rexeurd','Rexe','Rexeure','Rexi','Rexeuri','Subsidizedby']
+before2 = ['Ecb','1 Ecu','Sdr','Ifs','Ihs','Imf','Iso','Exchange S ','Rate S ','Am','Pm','Of ',"People S","People'S",'Usd','Us ','Name?eekly','Name?','Cfa','Cfp','Fx','Rate,,','Rate,','Nsa','Cofer','And ', 'In ',')Total','Or ','Luf','Emu ','Rexa','Rexeurd','Rexe','Rexeure','Rexi','Rexeuri','Subsidizedby']
 after2 = ['ECB','1 ECU','SDR','IFS','IHS','IMF','ISO','Exchanges ','Rates ','am','pm','of ',"People's","People's",'USD','US ','weekly','','CFA','CFP','Foreign Exchange','Rate,','Rate.','NSA','COFER','and ','in ','): Total','or ','LUF','EMU ','REXA','REXEURD','REXE','REXEURE','REXI','REXEURI','Subsidized by']
 before3 = ['CYPrus','EURo']
 after3 = ['Cyprus','Euro']
@@ -708,9 +708,15 @@ def FOREX_DATA(ind, FOREX_t, AREMOS_forex, code_num, table_num, KEY_DATA, SORT_D
         FOREXcurrency = 'United States Dollar (USD)'
     #if base == 'nan':
     if opp == False:
-        base = FOREXcurrency
+        if code == '1':
+            base = CURRENCY(code)
+        else:
+            base = FOREXcurrency
     else:
-        base = CURRENCY(code)
+        if code == '1':
+            base = FOREXcurrency
+        else:
+            base = CURRENCY(code)
     #quote = str(AREMOS_key['quote currency'][0])
     #if quote == 'nan':
     if opp == False:
@@ -718,9 +724,15 @@ def FOREX_DATA(ind, FOREX_t, AREMOS_forex, code_num, table_num, KEY_DATA, SORT_D
             NonValue = 'Nan'
             quote = ''
         else:
-            quote = CURRENCY(code)
+            if code == '1':
+                quote = FOREXcurrency
+            else:
+                quote = CURRENCY(code)
     else:
-        quote = FOREXcurrency
+        if code == '1':
+            quote = CURRENCY(code)
+        else:
+            quote = FOREXcurrency
     desc_c = ''
     form_c = ''
     if str(desc_e) == 'Nan':
@@ -1059,7 +1071,7 @@ tStart = time.time()
 
 for g in range(start_file,last_file+1):
     print('Reading file: '+NAME+str(g)+' Time: ', int(time.time() - tStart),'s'+'\n')
-    if g == 1 or g == 2 or g == 10:############################################################ ECB ##################################################################
+    if g == 1 or g == 2 or g == 8:############################################################ ECB ##################################################################
         FOREX_t = readFile(data_path+NAME+str(g)+'.csv', header_ = [0,1,2], index_col_=0, skiprows_=[0,4])
         if str(FOREX_t.index[0]).find('/') >= 0:
             new_index = []
@@ -1293,7 +1305,7 @@ for g in range(start_file,last_file+1):
             repl = '-Q'
             code_num_Q, table_num_Q, SORT_DATA_Q, DATA_BASE_Q, db_table_Q, db_table_Q_t, DB_name_Q, snl = FOREX_DATA(i, FOREX_t, AREMOS_forex, code_num_Q, table_num_Q, KEY_DATA, SORT_DATA_Q, DATA_BASE_Q, db_table_Q_t, DB_name_Q, snl, source, Quarter_list, frequency, form_e, FOREXcurrency, opp=False, suffix='.Q', repl=repl)
         
-    elif g >= 8 and g <= 9:
+    elif g >= 9 and g <= 10:
         FOREX_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_ =0, index_col_=1, skiprows_=list(range(6)), skipfooter_=3, sheet_name_=0)
         FOREX_t = FOREX_t.drop(columns=['Unnamed: 0'])
         

@@ -13,12 +13,15 @@ NAME = 'QNIA_'
 data_path = './data/'
 out_path = "./output/"
 databank = 'QNIA'
-specified_start_year = True
+BOOL = {'T':True, 'F':False}
+specified_start_year = BOOL[input("\nSpecified Start Year(T/F): ")]
 if specified_start_year == True:
-    start_year = datetime.now().year - 10
+    start_year = int(input("\nStart from year: "))#datetime.now().year - 10
     START_YEAR = '_'+str(start_year)
 else:
+    start_year = 1947
     START_YEAR = ''
+print('\n')
 merge_file = pd.DataFrame()
 #merge_file = readExcelFile(out_path+'QNIA_key'+START_YEAR+'.xlsx', header_ = 0, sheet_name_='QNIA_key')
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
@@ -83,17 +86,19 @@ for form in form_e_file:
 subject_file = readExcelFile(data_path+'QNIA_Subjects.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Subjects')
 measure_file = readExcelFile(data_path+'QNIA_Measures.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Measures')
 
-def SUBJECT_CODE(code):
+def SUBJECT_CODE(code, slist):
     if code in subject_file['code2']:
         return subject_file['code2'][code]
     else:
-        ERROR('代碼錯誤: '+code)
+        print(slist)
+        ERROR('Subjects代碼錯誤: '+code)
 
-def MEASURE_CODE(code):
+def MEASURE_CODE(code, mlist):
     if code in measure_file['code2']:
         return measure_file['code2'][code]
     else:
-        ERROR('代碼錯誤: '+code)
+        print(mlist)
+        ERROR('Measures代碼錯誤: '+code)
 
 def START_DATE(freq):
     if specified_start_year == True:
@@ -107,9 +112,9 @@ def START_DATE(freq):
         return None
 
 this_year = datetime.now().year + 1
-Year_list = [tmp for tmp in range(datetime.now().year - 10,this_year)]
+Year_list = [tmp for tmp in range(start_year, this_year)]
 Quarter_list = []
-for q in range(datetime.now().year - 10,this_year):
+for q in range(start_year, this_year):
     for r in range(1,5):
         Quarter_list.append(str(q)+'-Q'+str(r))
 #print(Quarter_list)
@@ -204,7 +209,7 @@ for dataset in dataset_list:
                         code_num_A = 1
                         db_table_A_t = pd.DataFrame(index = Year_list, columns = [])
                     
-                    name = frequency+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(SUBJECT_CODE(QNIA_t.columns[i][1])).replace('_','')+str(MEASURE_CODE(QNIA_t.columns[i][2]))+'.a'
+                    name = frequency+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(SUBJECT_CODE(QNIA_t.columns[i][1], subjects_list)).replace('_','')+str(MEASURE_CODE(QNIA_t.columns[i][2], measures_list))+'.a'
                     
                     value = QNIA_t[QNIA_t.columns[i]]
                     db_table_A = DB_TABLE+'A_'+str(table_num_A).rjust(4,'0')
@@ -247,6 +252,7 @@ for dataset in dataset_list:
                     unit = str(PowerCode) + ' of ' + str(Unit)
                     name_ord = QNIA_t.columns[i][0]
                     book = COUNTRY_NAME(QNIA_t.columns[i][0])
+                    desc_e = desc_e + ' - ' + book
                     if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') < 0:
                         form_c = int(QNIA_t.columns[i][5])
                     else:
@@ -267,7 +273,7 @@ for dataset in dataset_list:
                         code_num_Q = 1
                         db_table_Q_t = pd.DataFrame(index = Quarter_list, columns = [])
                     
-                    name = str(frequency)+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(SUBJECT_CODE(QNIA_t.columns[i][1])).replace('_','')+str(MEASURE_CODE(QNIA_t.columns[i][2]))+'.q'
+                    name = str(frequency)+str(COUNTRY_CODE(QNIA_t.columns[i][0]))+str(SUBJECT_CODE(QNIA_t.columns[i][1], subjects_list)).replace('_','')+str(MEASURE_CODE(QNIA_t.columns[i][2], measures_list))+'.q'
                     
                     value = QNIA_t[QNIA_t.columns[i]]
                     db_table_Q = DB_TABLE+'Q_'+str(table_num_Q).rjust(4,'0')
@@ -308,6 +314,7 @@ for dataset in dataset_list:
                     unit = str(PowerCode) + ' of ' + str(Unit)
                     name_ord = QNIA_t.columns[i][0]
                     book = COUNTRY_NAME(QNIA_t.columns[i][0])
+                    desc_e = desc_e + ' - ' + book
                     if QNIA_t.columns[i][5] != '' and QNIA_t.columns[i][5].find('-') < 0:
                         form_c = int(QNIA_t.columns[i][5])
                     else:

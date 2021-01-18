@@ -9,6 +9,7 @@ from EIKON_concat import CONCATE, readExcelFile
 
 ENCODING = 'utf-8-sig'
 
+start_year = 2004
 NAME = 'EIKON_'
 data_path = './data/'
 out_path = "./output/"
@@ -16,6 +17,7 @@ databank = 'EIKON'
 #freq = 'D'
 key_list = ['databank', 'name', 'old_name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'base', 'quote', 'snl', 'source', 'form_e', 'form_c']
 merge_file = readExcelFile(out_path+'EIKON_key.xlsx', header_ = 0, sheet_name_='EIKON_key')
+merge_database = readExcelFile(out_path+'EIKON_database'+'.xlsx', header_ = 0, index_col_=0, sheet_name_=None)
 #dataset_list = ['QNA', 'QNA_DRCHIVE']
 #frequency_list = ['A','Q']
 frequency = 'D'
@@ -87,7 +89,7 @@ def SOURCE(code):
         ERROR('來源代碼錯誤: '+code)
 """
 
-Day_list = pd.date_range(start = '1/1/1947', end = update).strftime('%Y-%m-%d').tolist()
+Day_list = pd.date_range(start = str(start_year)+'-01-01', end = update).strftime('%Y-%m-%d').tolist()
 Day_list.reverse()
 nD = len(Day_list)
 KEY_DATA = []
@@ -102,7 +104,7 @@ try:
     with open(out_path+'database_num.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
         database_num = int(f.read().replace('\n', ''))
 except FileNotFoundError:
-    if merge_file.empty == False:
+    if merge_file.empty == False and merge_database.empty == False:
         ERROR('找不到database_num.txt')
 if merge_file.empty == False:
     print(merge_file)
@@ -174,29 +176,40 @@ for g in range(start_file,last_file+1):
             db_table_D = DB_TABLE+'D_'+str(table_num_D).rjust(4,'0')
             db_code_D = DB_CODE+str(code_num_D).rjust(3,'0')
             db_table_D_t[db_code_D] = ['' for tmp in range(nD)]
-            head = 0
-            last = str(index[0]).replace(' 00:00:00','')
+            last = index[0].strftime('%Y-%m-%d')
+            start_found = False
+            find = False
             for k in range(len(value)):
-                find = False
-                for j in range(head, nD):
-                    if db_table_D_t.index[j] == str(index[k]).replace(' 00:00:00',''):
-                        find = True
-                        db_table_D_t[db_code_D][db_table_D_t.index[j]] = value[k]
-                        head = j+1
-                        break
-                if find == False:
-                    ERROR(str(sheet)+' '+str(EIKON_t[sheet].columns[i]))        
+                freq_index = index[k].strftime('%Y-%m-%d')
+                if freq_index in db_table_D_t.index:
+                    find = True
+                    db_table_D_t[db_code_D][freq_index] = value[k]
+                    if start_found == False and find == True:
+                        if k == len(value)-1:
+                            start = freq_index
+                            start_found = True
+                        elif freq_index == db_table_D_t.index[len(db_table_D_t.index)-1]:
+                            start = freq_index
+                            start_found = True
+                        else:
+                            for st in range(k+1, len(value)):
+                                if index[st].strftime('%Y-%m-%d') in db_table_D_t.index and str(value[st]) != 'nan':
+                                    start_found = False
+                                else:
+                                    start_found = True
+                                if start_found == False or index[st].strftime('%Y-%m-%d') not in db_table_D_t.index:
+                                    break
+                            if start_found == True:
+                                start = freq_index
+            if start_found == False:
+                if find == True:
+                    ERROR('start not found: '+str(name))
+            if find == False:
+                ERROR(str(sheet)+' '+str(EIKON_t[sheet].columns[i]))        
             
             dtype = str(EIKON_t[sheet].columns[i][1])[loc1+1:loc2]
             form_e = str(Datatype['Name'][dtype])+', '+str(Datatype['Type'][dtype])
             desc_e = str(source_USD['Category'][code])+': '+str(source_USD['Full Name'][code]).replace('to', 'per', 1).replace('Tous', 'per US ').replace('To_us_$', 'per US dollar').replace('?', '$', 1).replace("'", ' ').replace('US#', 'US pound')+', '+form_e+', '+'source from '+str(source_USD['Source'][code])
-            start = str(source_USD['Start Date'][code])
-            loc11 = start.find('/')
-            loc12 = start.find('/',loc11+1)
-            start_year = start[:loc11].rjust(4,'0')
-            start_month = start[loc11+1:loc12].rjust(2,'0')
-            start_day = start[loc12+1:].rjust(2,'0')
-            start = start_year+'-'+start_month+'-'+start_day
             if str(source_USD['Full Name'][code]).find('USD /') >= 0 or str(source_USD['Full Name'][code]).find('USD/') >= 0 or str(source_USD['Full Name'][code]).find('US Dollar /') >= 0:
                 if source_USD['From Currency'][code] == 'United States Dollar':
                     base = source_USD['From Currency'][code]
@@ -323,18 +336,29 @@ if merge_file.empty == False:
     DB_keys = sorted(DATA_BASE.keys())
     database_num = int(((len(DB_name_D)-1)/maximum))+1
     for d in range(1, database_num+1):
-        with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
-            print('Outputing file: '+NAME+"database_"+str(d))
-            if maximum*d > len(DB_name_D):
-                for db in range(maximum*(d-1), len(DB_name_D)):
-                    sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
-                    sys.stdout.flush()
-                    if DATA_BASE[DB_name_D[db]].empty == False:
-                        DATA_BASE[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
-                writer.save()
-                sys.stdout.write("\n")
-            else:
-                for db in range(maximum*(d-1), maximum*d):
+        if database_num > 1:
+            with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+                print('Outputing file: '+NAME+"database_"+str(d))
+                if maximum*d > len(DB_name_D):
+                    for db in range(maximum*(d-1), len(DB_name_D)):
+                        sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
+                        sys.stdout.flush()
+                        if DATA_BASE[DB_name_D[db]].empty == False:
+                            DATA_BASE[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
+                    writer.save()
+                    sys.stdout.write("\n")
+                else:
+                    for db in range(maximum*(d-1), maximum*d):
+                        sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
+                        sys.stdout.flush()
+                        if DATA_BASE[DB_name_D[db]].empty == False:
+                            DATA_BASE[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
+                    writer.save()
+                    sys.stdout.write("\n")
+        else:
+            with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+                print('Outputing file: '+NAME+"database")
+                for db in range(len(DB_name_D)):
                     sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
                     sys.stdout.flush()
                     if DATA_BASE[DB_name_D[db]].empty == False:
@@ -343,24 +367,36 @@ if merge_file.empty == False:
                 sys.stdout.write("\n")
     
     print('\ndatabase_num =', database_num)
-    with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(str(database_num))
+    if database_num > 1:
+        with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
+            f.write(str(database_num))
 else:
     df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
     database_num = int(((len(DB_name_D)-1)/maximum))+1
     for d in range(1, database_num+1):
-        with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
-            print('Outputing file: '+NAME+"database_"+str(d))
-            if maximum*d > len(DB_name_D):
-                for db in range(maximum*(d-1), len(DB_name_D)):
-                    sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
-                    sys.stdout.flush()
-                    if DATA_BASE_D[DB_name_D[db]].empty == False:
-                        DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
-                writer.save()
-                sys.stdout.write("\n")
-            else:
-                for db in range(maximum*(d-1), maximum*d):
+        if database_num > 1:
+            with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+                print('Outputing file: '+NAME+"database_"+str(d))
+                if maximum*d > len(DB_name_D):
+                    for db in range(maximum*(d-1), len(DB_name_D)):
+                        sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
+                        sys.stdout.flush()
+                        if DATA_BASE_D[DB_name_D[db]].empty == False:
+                            DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
+                    writer.save()
+                    sys.stdout.write("\n")
+                else:
+                    for db in range(maximum*(d-1), maximum*d):
+                        sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
+                        sys.stdout.flush()
+                        if DATA_BASE_D[DB_name_D[db]].empty == False:
+                            DATA_BASE_D[DB_name_D[db]].to_excel(writer, sheet_name = DB_name_D[db])
+                    writer.save()
+                    sys.stdout.write("\n")
+        else:
+            with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
+                print('Outputing file: '+NAME+"database")
+                for db in range(len(DB_name_D)):
                     sys.stdout.write("\rOutputing sheet: "+str(DB_name_D[db])+'  Time: '+str(int(time.time() - tStart))+'s')
                     sys.stdout.flush()
                     if DATA_BASE_D[DB_name_D[db]].empty == False:
@@ -369,8 +405,9 @@ else:
                 sys.stdout.write("\n")
     
     print('\ndatabase_num =', database_num)
-    with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(str(database_num))
+    if database_num > 1:
+        with open(out_path+'database_num.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
+            f.write(str(database_num))
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 """

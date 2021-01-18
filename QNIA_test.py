@@ -8,7 +8,7 @@ from datetime import datetime, date
 ENCODING = 'utf-8-sig'
 data_path = './output/'
 NAME1 = ''
-NAME2 = '_new2'
+NAME2 = '_new'
 
 def ERROR(error_text):
     print('\n\n= ! = '+error_text+'\n\n')
@@ -34,65 +34,29 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, \
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
 
-#def CONCATE(df_key, DB_A, DB_Q, DB_M, DB_name_A, DB_name_Q, DB_name_M):
-    
-DB_TABLE = 'DB_'
-DB_CODE = 'data'
-this_year = datetime.now().year + 1
-Year_list = [tmp for tmp in range(1947,this_year)]
-Quarter_list = []
-for q in range(1947,this_year):
-    for r in range(1,5):
-        Quarter_list.append(str(q)+'-Q'+str(r))
-Month_list = []
-for y in range(1947,this_year):
-    for m in range(1,13):
-        Month_list.append(str(y)+'-'+str(m).rjust(2,'0'))
-
 tStart = time.time()
 print('Reading file: QNIA_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
-KEY_DATA_t = readExcelFile(data_path+'QNIA_key'+NAME1+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='QNIA_key')
+df_key1 = readExcelFile(data_path+'QNIA_key'+NAME1+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='QNIA_key')
+df_key1.insert(loc=0, column='Label', value=['QNIA_key'+NAME1 for i in range(df_key1.shape[0])])
 print('Reading file: QNIA_key'+NAME2+', Time: ', int(time.time() - tStart),'s'+'\n')
-df_key = readExcelFile(data_path+'QNIA_key'+NAME2+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='QNIA_key')
+df_key2 = readExcelFile(data_path+'QNIA_key'+NAME2+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='QNIA_key')
+df_key2.insert(loc=0, column='Label', value=['QNIA_key'+NAME2 for i in range(df_key2.shape[0])])
 #print('Reading file: MEI_database, Time: ', int(time.time() - tStart),'s'+'\n')
 #DATA_BASE_t = readExcelFile(data_path+'MEI_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
 
 print('Concating file: QNIA_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
-KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
-"""
-print('Concating file: MEI_database, Time: ', int(time.time() - tStart),'s'+'\n')
-for d in DB_name_A:
-    sys.stdout.write("\rConcating sheet: "+str(d))
-    sys.stdout.flush()
-    if d in DATA_BASE_t.keys():
-        DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_A[d])
-    else:
-        DATA_BASE_t[d] = DB_A[d]
-sys.stdout.write("\n")
-for d in DB_name_Q:
-    sys.stdout.write("\rConcating sheet: "+str(d))
-    sys.stdout.flush()
-    if d in DATA_BASE_t.keys():
-        DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_Q[d])
-    else:
-        DATA_BASE_t[d] = DB_Q[d]
-sys.stdout.write("\n")
-for d in DB_name_M:
-    sys.stdout.write("\rConcating sheet: "+str(d))
-    sys.stdout.flush()
-    if d in DATA_BASE_t.keys():
-        DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_M[d])
-    else:
-        DATA_BASE_t[d] = DB_M[d]
-sys.stdout.write("\n")
-"""
+KEY_DATA_t = pd.concat([df_key1, df_key2], ignore_index=True)
+
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 KEY_DATA_t = KEY_DATA_t.sort_values(by=['name', 'db_table'], ignore_index=True)
 unrepeated = 0
+earliest = str(date.today().year)
 #unrepeated_index = []
 for i in range(1, len(KEY_DATA_t)):
     if KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i-1] and KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i+1]:
         print(list(KEY_DATA_t.iloc[i]),'\n')
+        if str(KEY_DATA_t.iloc[i]['start']) < earliest:
+            earliest = str(KEY_DATA_t.iloc[i]['start'])[:4]
         unrepeated += 1
         #repeated_index.append(i)
         #print(KEY_DATA_t['name'][i],' ',KEY_DATA_t['name'][i-1])
@@ -104,18 +68,9 @@ for i in range(1, len(KEY_DATA_t)):
     #sys.stdout.flush()
 #sys.stdout.write("\n")
 print('unrepeated: ', unrepeated)
+print('earliest year: ', earliest)
 #for i in unrepeated_index:
     #sys.stdout.write("\rDropping repeated data key(s): "+str(i))
     #sys.stdout.flush()
     #KEY_DATA_t = KEY_DATA_t.drop([i])
 #sys.stdout.write("\n")
-"""
-KEY_DATA_t.reset_index(drop=True, inplace=True)
-if KEY_DATA_t.iloc[0]['snl'] != 1:
-    KEY_DATA_t.loc[0, 'snl'] = 1
-for s in range(1,KEY_DATA_t.shape[0]):
-    sys.stdout.write("\rSetting new snls: "+str(s))
-    sys.stdout.flush()
-    KEY_DATA_t.loc[s, 'snl'] = KEY_DATA_t.loc[0, 'snl'] + s
-sys.stdout.write("\n")
-"""
