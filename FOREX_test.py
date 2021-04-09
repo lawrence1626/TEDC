@@ -5,8 +5,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
-import MEI_concat as CCT
-from MEI_concat import ERROR, readExcelFile
+import FOREX_extention as CCT
+from FOREX_extention import ERROR, readExcelFile
 
 ENCODING = 'utf-8-sig'
 data_path = "./output/"
@@ -20,7 +20,7 @@ else:
     local = True #bool(int(input('Check from local data (1/0): ')))
     checkDESC = bool(int(input('Check data description (1/0): ')))
 
-def MEI_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True, checkOnly='', checkIgnore=[]):
+def FOREX_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True, checkOnly='', checkIgnore=[]):
     
     tStart = time.time()
 
@@ -37,7 +37,7 @@ def MEI_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True,
     notsame = 0
     updated = 0
     update_list = []
-    CHECK = ['desc_e', 'desc_c', 'freq', 'unit', 'name_ord', 'book', 'form_e', 'form_c']
+    CHECK = ['desc_e', 'desc_c', 'freq', 'base', 'quote', 'source', 'form_e', 'form_c']
     UPDATE = ['last']
     for ind in df_key.index:
         sys.stdout.write("\rChecking Index: "+ind+" ")
@@ -72,7 +72,7 @@ def MEI_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True,
                         continue
                     elif str(DF_KEY.loc[ind, check]).strip() == 'nan' and str(df_key.loc[ind, check]).strip() == '':
                         continue
-                    elif checkDESC == False and (check == 'desc_e' or check == 'desc_c' or check == 'form_e' or check == 'form_c' or check == 'unit'):
+                    elif checkDESC == False and (check == 'desc_e' or check == 'desc_c' or check == 'form_e' or check == 'form_c'):
                         continue
                     print(check+' error')
                     if check == 'desc_e' and str(df_key.loc[ind, check]).replace(str(DF_KEY.loc[ind, check]), '') != str(df_key.loc[ind, check]):
@@ -123,9 +123,9 @@ def MEI_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True,
 
 if local == True:
     main_suf = input('Main data suffix: ')
-    print('Reading file: MEI_key'+main_suf+'\n')
-    df_key = readExcelFile(data_path+'MEI_key'+main_suf+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='MEI_key')
-    print('Reading TOT file: MEI_key'+DF_suffix+'\n')
-    DF_KEY = readExcelFile(data_path+'MEI_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='MEI_key')
+    print('Reading file: FOREX_key'+main_suf+'\n')
+    df_key = readExcelFile(data_path+'FOREX_key'+main_suf+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='FOREX_key')
+    print('Reading TOT file: FOREX_key'+DF_suffix+'\n')
+    DF_KEY = readExcelFile(data_path+'FOREX_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='FOREX_key')
     DF_KEY = DF_KEY.set_index('name') 
-    unknown_list, toolong_list, update_list, unfound_list = MEI_identity(data_path, df_key, DF_KEY, checkDESC=checkDESC)
+    unknown_list, toolong_list, update_list, unfound_list = FOREX_identity(data_path, df_key, DF_KEY, checkDESC=checkDESC)

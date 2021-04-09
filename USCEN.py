@@ -1,32 +1,71 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import math, re, sys, calendar, os, copy, time
+# pylint: disable=E1101
+import math, sys, calendar, os, copy, time
+import regex as re
 import pandas as pd
 import numpy as np
+import quandl as qd
+import requests as rq
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+import webdriver_manager
+from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
-from US_extention import ERROR, readFile, readExcelFile, US_NOTE, US_HISTORYDATA, DATA_SETS, takeFirst, US_IHS, US_BLS, MERGE, NEW_KEYS, CONCATE, US_POPP, US_FAMI, EXCHANGE, NEW_LABEL, US_STL
+import US_extention as EXT
+from US_extention import ERROR, readFile, readExcelFile, US_NOTE, US_HISTORYDATA, DATA_SETS, takeFirst, US_IHS, US_BLS, MERGE, NEW_KEYS, CONCATE, UPDATE,\
+ US_POPP, US_FAMI, EXCHANGE, NEW_LABEL, US_STL, US_DOT, US_TICS, US_BTSDOL, US_ISM, US_RCM, US_CBS, US_DOA, US_AISI, US_EIAIRS, US_SEMI
+import US_test as test
+from US_test import US_identity
 
-ENCODING = 'utf-8-sig'
-
-start_year = 1900
-start_yearQ = 1940
-start_yearM = 1910
-start_yearS = 1980
-HIES_old = True # ./HIES/
-make_discontinued = True # ./wd/
-bls_start = None
+find_unknown = False
 main_suf = '?'
 merge_suf = '?'
-keyword = 'STL'
-ignore = '?'
+dealing_start_year = 1900
+start_year = 1900
+start_yearQ = 1940
+start_yearM = 1909
+start_yearS = 1980
+merging = bool(int(input('Merging data file (1/0): ')))
+updating = bool(int(input('Updating TOT file (1/0): ')))
+if merging and updating:
+    ERROR('Cannot do merging and updating at the same time.')
+elif merging or updating:
+    merge_suf = input('Merging data suffix: ')
+    main_suf = input('Main data suffix: ')
+else:
+    find_unknown = bool(int(input('Check if new items exist (1/0): ')))
+    if find_unknown == False:
+        dealing_start_year = int(input("Dealing with data from year: "))
+        start_year = dealing_start_year-10
+        start_yearQ = dealing_start_year-10
+        start_yearM = dealing_start_year-10
+        start_yearS = dealing_start_year-10
+bls_start = dealing_start_year
+TICS_start = str(dealing_start_year)+'-01'
+DF_suffix = test.DF_suffix
+Historical = False
+make_discontinued = False
+ENCODING = 'utf-8-sig'
+excel_suffix = EXT.excel_suffix
+if main_suf == '?':
+    keyword = input('keyword: ')
+    keyword = re.split(r'/', keyword)
+    if len(keyword) < 2:
+        keyword.append('')
+else:
+    keyword = ['','']
+if keyword[0] == 'BLS':
+    ignore = re.split(r',', input('ignore: ')) 
+else:
+    ignore = []
 NAME = 'US_'
 data_path = './data/'
 out_path = "./output/"
 databank = 'US'
-key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'type', 'snl', 'source', 'form_e', 'form_c']
-SOURCE = ['Bureau of Economic Analysis','Federal Reserve Board','Federal Reserve Bank Of St. Louis','Bureau Of Census','National Association of Home Builders','National Association of Realtors','Bureau Of Labor Statistics']#
-#FREQM = ['T206','T207','T208','M','S','U90100']
+key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'type', 'snl', 'source', 'form_e', 'form_c', 'table_id']
 main_file = readExcelFile(out_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
 merge_file = readExcelFile(out_path+NAME+'key'+merge_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
 this_year = datetime.now().year + 1
@@ -37,68 +76,6 @@ for i in range(len(key_list)):
         break
 tStart = time.time()
 
-def FILE_ADDRESS(source):
-    address = []
-    for t in range(TABLES.shape[0]):
-        if TABLES.iloc[t]['Source'] == source and TABLES.iloc[t]['Address'] not in address:
-            address.append(TABLES.iloc[t]['Address'])
-    return address
-def FILE_NAME(address):
-    file_name = []
-    for t in range(TABLES.shape[0]):
-        if TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] not in file_name:
-            file_name.append(TABLES.iloc[t]['File'])
-    return file_name  
-def SHEET_NAME(address, fname, TABLE=None, loc=0):
-    sheet_name = []
-    for t in range(TABLES.shape[0]):
-        if TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] == fname:
-            if type(TABLES.iloc[t]['Sheet']) == int:
-                sheet_name.append(TABLES.iloc[t]['Sheet'])
-            else:
-                sheet_name.extend(re.split(r', ', str(TABLES.iloc[t]['Sheet'])))
-            #break
-    return sheet_name
-def FREQUENCY(address, fname, sname):
-    freq_list = []
-    if address.find('BEA') >= 0:
-        try:
-            freq = re.split(r'\-', sname)[1]
-            freq_list.append(freq)
-        except IndexError:
-            freq_list = []
-        return freq_list
-    for t in range(TABLES.shape[0]):
-        if TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] == fname:
-            if (address.find('HOUS') >= 0 or address.find('NAR') >= 0 or address.find('POP') >= 0) and str(sname) not in re.split(r', ', str(TABLES.iloc[t]['Sheet'])):
-                continue
-            freq_list.extend(re.split(r', ', str(TABLES.iloc[t]['Frequency'])))
-    return freq_list
-def SCALE(code, address, SERIES=None):
-    if address.find('BEA') >= 0:
-        if SERIES.loc[code, 'DefaultScale'] == -9:
-            return('Billions of ')
-        elif SERIES.loc[code, 'DefaultScale'] == -6:
-            return('Millions of ')
-        elif SERIES.loc[code, 'DefaultScale'] == -3:
-            return('Thousands of ')
-        elif SERIES.loc[code, 'DefaultScale'] == 0:
-            return('')
-        else:
-            ERROR('Scale error: '+code)
-    elif address.find('FRB') >= 0:
-        if str(SERIES.loc[code, 'Multiplier:']).isnumeric():
-            SERIES.loc[code, 'Multiplier:'] = int(SERIES.loc[code, 'Multiplier:'])
-        if SERIES.loc[code, 'Multiplier:'] == 1000000:
-            return(', Millions of')
-        elif SERIES.loc[code, 'Multiplier:'] == 1000000000 or SERIES.loc[code, 'Multiplier:'] == '1e+09':
-            return(', Billions of')
-        elif SERIES.loc[code, 'Multiplier:'] == 1 and SERIES.loc[code, 'Unit:'].find('Currency') >= 0:
-            return(',')
-        elif SERIES.loc[code, 'Multiplier:'] == 1:
-            return('')
-        else:
-            ERROR('Scale error: '+code)
 FREQNAME = {'A':'annual','M':'month','Q':'quarter','S':'semiannual','W':'week'}
 FREQLIST = {}
 FREQLIST['A'] = [tmp for tmp in range(start_year,this_year+50)]
@@ -108,7 +85,7 @@ for y in range(start_yearS,this_year):
         FREQLIST['S'].append(str(y)+'-S'+str(s))
 #print(FREQLIST['S'])
 FREQLIST['Q'] = []
-for q in range(start_yearQ,this_year):
+for q in range(start_yearQ,this_year+20):
     for r in range(1,5):
         FREQLIST['Q'].append(str(q)+'-Q'+str(r))
 #print(FREQLIST['Q'])
@@ -118,8 +95,8 @@ for y in range(start_yearM,this_year):
         FREQLIST['M'].append(str(y)+'-'+str(m).rjust(2,'0'))
 #print(FREQLIST['M'])
 calendar.setfirstweekday(calendar.SATURDAY)
-FREQLIST['W'] = pd.date_range(start = str(start_year)+'-01-01',end=update,freq='W-SAT')
-FREQLIST['W_s'] = pd.date_range(start = str(start_year)+'-01-01',end=update,freq='W-SAT').strftime('%Y-%m-%d')
+FREQLIST['W'] = pd.date_range(start = str(start_year)+'-01-01',end=update,freq='W-SAT').strftime('%Y-%m-%d')
+#FREQLIST['W_s'] = pd.date_range(start = str(start_year)+'-01-01',end=update,freq='W-SAT').strftime('%Y-%m-%d')
 
 KEY_DATA = []
 DATA_BASE_dict = {}
@@ -134,7 +111,11 @@ DB_CODE = 'data'
 
 table_num_dict = {}
 code_num_dict = {}
-if merge_file.empty == False:
+snl = 1
+for f in FREQNAME:
+    table_num_dict[f] = 1
+    code_num_dict[f] = 1
+if merge_file.empty == False and merging == True and updating == False:
     print('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time:', int(time.time() - tStart),'s'+'\n')
     snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
     for f in FREQNAME:
@@ -167,20 +148,102 @@ else:
     for f in FREQNAME:
         table_num_dict[f] = 1
         code_num_dict[f] = 1
-
 print('Reading table: TABLES, Time: ', int(time.time() - tStart),'s'+'\n')
 TABLES = readExcelFile(data_path+'tables.xlsx', header_ = 0, sheet_name_=0)
-TABLES = TABLES.set_index(['Sheet'], drop=False) 
-CONTINUE = []
+if updating == False and DF_suffix != merge_suf:
+    print('Reading file: US_key'+DF_suffix+', Time: ', int(time.time() - tStart),'s'+'\n')
+    DF_KEY = readExcelFile(out_path+'US_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
+    DF_KEY = DF_KEY.set_index('name')
+elif updating == False and DF_suffix == merge_suf:
+    DF_KEY = merge_file
+    DF_KEY = DF_KEY.set_index('name')
 
+CONTINUE = []
+def SOURCE(TABLES):
+    source = []
+    for t in range(TABLES.shape[0]):
+        if TABLES.iloc[t]['Source'] not in source:
+            source.append(TABLES.iloc[t]['Source'])
+    return source
+def FILE_ADDRESS(source):
+    address = []
+    for t in range(TABLES.shape[0]):
+        if TABLES.iloc[t]['Source'] == source and TABLES.iloc[t]['Subset']+TABLES.iloc[t]['Address'] not in address:
+            address.append(TABLES.iloc[t]['Subset']+TABLES.iloc[t]['Address'])
+    return address
+def FILE_NAME(source, address):
+    file_name = []
+    for t in range(TABLES.shape[0]):
+        if TABLES.iloc[t]['Source'] == source and TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] not in file_name:
+            file_name.append(TABLES.iloc[t]['File'])
+    return file_name  
+def SHEET_NAME(address, fname, TABLE=None, loc=0):
+    sheet_name = []
+    for t in range(TABLES.shape[0]):
+        if TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] == fname:
+            if type(TABLES.iloc[t]['Sheet']) == int:
+                sheet_name.append(TABLES.iloc[t]['Sheet'])
+            else:
+                sheet_name.extend(re.split(r', ', str(TABLES.iloc[t]['Sheet'])))
+            #break
+    return sheet_name
+def FREQUENCY(address, fname, sname, distinguish_sheet=False):
+    freq_list = []
+    if address.find('NIPA') >= 0 or address.find('FAAT') >= 0:
+        try:
+            freq = re.split(r'\-', sname)[1]
+            freq_list.append(freq)
+        except IndexError:
+            freq_list = []
+        return freq_list
+    for t in range(TABLES.shape[0]):
+        if TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] == fname:
+            if distinguish_sheet == True and str(sname) not in re.split(r', ', str(TABLES.iloc[t]['Sheet'])):
+                continue
+            freq_list.extend(re.split(r', ', str(TABLES.iloc[t]['Frequency'])))
+    return freq_list
+def SCALE(code, address, SERIES=None):
+    if address.find('BEA') >= 0:
+        if SERIES.loc[code, 'DefaultScale'] == -9:
+            return('Billions of ')
+        elif SERIES.loc[code, 'DefaultScale'] == -6:
+            return('Millions of ')
+        elif SERIES.loc[code, 'DefaultScale'] == -3:
+            return('Thousands of ')
+        elif SERIES.loc[code, 'DefaultScale'] == 0:
+            return('')
+        else:
+            ERROR('Scale error: '+code)
+    elif address.find('FRB') >= 0:
+        if str(SERIES.loc[code, 'Multiplier:']).isnumeric():
+            SERIES.loc[code, 'Multiplier:'] = int(SERIES.loc[code, 'Multiplier:'])
+        if SERIES.loc[code, 'Multiplier:'] == 1000000:
+            return(', Millions of')
+        elif SERIES.loc[code, 'Multiplier:'] == 1000000000 or SERIES.loc[code, 'Multiplier:'] == '1e+09':
+            return(', Billions of')
+        elif SERIES.loc[code, 'Multiplier:'] == 1 and SERIES.loc[code, 'Unit:'].find('Currency') >= 0:
+            return(',')
+        elif SERIES.loc[code, 'Multiplier:'] == 1:
+            return('')
+        else:
+            ERROR('Scale error: '+code)
 def US_KEY(address, counting=False, key=None):
     Titles = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='titles').to_dict()
     if address.find('BOC') >= 0:
         print('Reading file: BOC_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
-        BOC_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='BOCdatasets').to_dict()
+        if key.find('FTD') >= 0:
+            BOC_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='FTDdatasets').to_dict()
+        else:
+            BOC_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=[0,1,2], sheet_name_='BOCdatasets').to_dict()
         print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
         Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
         return Series, BOC_datasets, Titles
+    elif address.find('BTS') >= 0 or address.find('DOL') >= 0:
+        print('Reading file: '+address[:3]+'_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
+        Datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_=address[:3]+'datasets').to_dict()
+        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
+        return Series, Datasets, Titles
     elif address.find('NIPA') >= 0 or address.find('FAAT') >= 0:
         address = re.sub(r'NIPA/.*', "NIPA/", address)
         BEA_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='BEAdatasets')
@@ -191,6 +254,31 @@ def US_KEY(address, counting=False, key=None):
         if counting == True:
             return BEA_series
         return BEA_series, BEA_table, Titles
+    elif address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0 or address.find('FDSA') >= 0 or address.find('DOA') >= 0:
+        Table = None
+        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
+        if address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0:
+            Table = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=[0,1,2], sheet_name_='BEAdatasets')
+        elif address.find('DOA') >= 0:
+            Table = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='DOAdatasets')
+        return Series, Table, Titles
+    elif address.find('EIA') >= 0 or address.find('SEMI') >= 0:
+        Series = None
+        if address.find('PETR') >= 0:
+            print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+            Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
+        Datasets = None
+        if address.find('EIA') >= 0:
+            print('Reading file: '+address[:3]+'_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
+            Datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_=address[:3]+'datasets').to_dict()
+        return Series, Datasets, Titles
+    elif address.find('ISM') >= 0:
+        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
+        with open(data_path+address+'api_key.txt','r',encoding='ANSI') as f:
+            API = f.read()
+        return Series, API, Titles
     elif address.find('FRB') >= 0:
         print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
         if key == 'FRB_G17':
@@ -220,10 +308,34 @@ def US_KEY(address, counting=False, key=None):
         STL_series = readExcelFile(data_path+address+key+'.xls', sheet_name_=0)
         STL_series = list(STL_series[0])
         return STL_series, None, Titles
+    elif address.find('IRS') >= 0:
+        print('Reading file: IRS_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        if address.find('UIIT') >= 0:
+            Series = readExcelFile(data_path+address+key+'.xls', sheet_name_=0)
+            Series = list(Series[0])
+        else:
+            Series = readExcelFile(data_path+address+'IRS_series.xlsx', header_ = 0, index_col_=0)
+        print('Reading file: '+address[:3]+'_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
+        Datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_=address[:3]+'datasets').to_dict()
+        return Series, Datasets, Titles
     elif address.find('NAR') >= 0:
         print('Reading file: NAR_series, Time: ', int(time.time() - tStart),'s'+'\n')
         NAR_series = readExcelFile(data_path+address+'NAR_series.xlsx', header_ = 0, sheet_name_=0)
         return NAR_series, None, Titles
+    elif address.find('CBS') >= 0:
+        print('Reading file: CBS_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        CBS_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='CBSdatasets')
+        return CBS_datasets, None, Titles
+    elif address.find('DOT') >= 0:
+        DOT_table = None
+        DOTdatasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='DOTdatasets')
+        print('Reading file: DOT_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        if address.find('MTST') >= 0:
+            DOT_series = DOTdatasets
+        elif address.find('TICS') >= 0:
+            DOT_series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
+            DOT_table = DOTdatasets
+        return DOT_series, DOT_table, Titles
     elif address.find('bls') >= 0:
         print('Reading file: BLS_series, Time: ', int(time.time() - tStart),'s'+'\n')
         BLS_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='BLSdatasets')
@@ -285,14 +397,20 @@ def US_KEY(address, counting=False, key=None):
                 BLS_series['CATEGORIES']['industry'] = EXCHANGE(address, BLS_series['CATEGORIES']['industry'], 'industry_name', Display=Display, Sort=Sort)
                 BLS_series['CATEGORIES']['industry'] = BLS_series['CATEGORIES']['industry'].sort_values(by='sort_sequence')
         if str(BLS_datasets.loc[address, 'DATA TYPE']).find('.') >= 0:
-            BLS_series['DATA TYPE'] = readFile(address+BLS_datasets.loc[address, 'DATA TYPE'], header_=0, index_col_=0, acceptNoFile=False, sep_='\\t')
+            if address.find('ml/') >= 0:
+                BLS_series['DATA TYPE'] = readFile(address+BLS_datasets.loc[address, 'DATA TYPE'], index_col_=0, acceptNoFile=False, sep_='\\t', names_=['dataelement_code','dataelement_text'])
+            else:
+                BLS_series['DATA TYPE'] = readFile(address+BLS_datasets.loc[address, 'DATA TYPE'], header_=0, index_col_=0, acceptNoFile=False, sep_='\\t')
             if address.find('bd/') >= 0:
                 Sort = {'Establishment Births':['Gross Job Gains', 0.5]}
                 BLS_series['DATA TYPE'] = EXCHANGE(address, BLS_series['DATA TYPE'], 'dataclass_name', Sort=Sort)
             if str(BLS_datasets.loc[address, 'SORT_D']) == 'T':
                 BLS_series['DATA TYPE'] = BLS_series['DATA TYPE'].sort_values(by='sort_sequence')
         if str(BLS_datasets.loc[address, 'BASE']) != 'nan':
-            BLS_series['BASE'] = readFile(address+BLS_datasets.loc[address, 'BASE'], header_=0, index_col_=0, acceptNoFile=False, sep_='\\t')
+            if address.find('ml/') >= 0:
+                BLS_series['BASE'] = readFile(address+BLS_datasets.loc[address, 'BASE'], index_col_=0, acceptNoFile=False, sep_='\\t', names_=['srd_code','srd_text'])
+            else:
+                BLS_series['BASE'] = readFile(address+BLS_datasets.loc[address, 'BASE'], header_=0, index_col_=0, acceptNoFile=False, sep_='\\t')
         else:
             BLS_series['BASE'] = pd.DataFrame()
         if str(BLS_datasets.loc[address, 'UNIT']) != 'nan':
@@ -304,7 +422,7 @@ def US_KEY(address, counting=False, key=None):
     elif address.find('DSCO') >= 0:
         BLS_series = {}
         BLS_series['BASE'] = pd.DataFrame()
-        return BLS_series, pd.DataFrame()
+        return BLS_series, pd.DataFrame(), Titles
     else:
         ERROR('Series Error: '+address)
 def US_LEVEL(LABEL, source, Series=None, loc1=None, loc2=None, name=None, indent=None):
@@ -313,7 +431,9 @@ def US_LEVEL(LABEL, source, Series=None, loc1=None, loc2=None, name=None, indent
         if source == 'Bureau of Economic Analysis':
             if str(LABEL.iloc[l]) != 'nan':
                 label_level.append(re.search(r'\S',str(LABEL.iloc[l])).start())
-        elif source == 'Bureau Of Census' or source == 'National Association of Home Builders':
+            else:
+                label_level.append(10000)
+        elif source == 'Bureau Of Census' or source == 'National Association of Home Builders' or source == 'Department Of The Treasury':
             if str(LABEL.index[l]) != 'nan':
                 if str(LABEL.index[l])[loc1:loc2].isnumeric():
                     label_level.append(Series[name].loc[int(re.sub(r'0+$', "", str(LABEL.index[l])[loc1:loc2])), indent])
@@ -323,15 +443,15 @@ def US_LEVEL(LABEL, source, Series=None, loc1=None, loc2=None, name=None, indent
                 label_level.append(10000)
     return label_level
 
-def US_ADDLABEL(begin, sheet_name, LABEL, label_level, UNIT, unit, Calculation_type, attribute, suffix=False, form=None):
+def US_ADDLABEL(begin, address, sheet_name, LABEL, label_level, UNIT, unit, Calculation_type, attribute, suffix=False, form=None):
     level = label_level[begin]
     if UNIT == 'nan':
         UNIT = unit+' '+Calculation_type
     for att in list(reversed(range(begin))):
-        if LABEL.iloc[att].find('[') >= 0 and label_level[att] == 0:
+        if str(LABEL.iloc[att]).find('[') >= 0 and label_level[att] == 0:
             UNIT = LABEL.iloc[att].replace('[','').replace(']','')
             break
-        if UNIT == 'nan' and LABEL.iloc[att].find(':') >= 0 and label_level[att] == 0:
+        if UNIT == 'nan' and str(LABEL.iloc[att]).find(':') >= 0 and label_level[att] == 0:
             UNIT = LABEL.iloc[att].replace(':','')
             if UNIT == 'Addenda':
                 UNIT = unit+' '+Calculation_type
@@ -341,29 +461,42 @@ def US_ADDLABEL(begin, sheet_name, LABEL, label_level, UNIT, unit, Calculation_t
         elif UNIT == 'nan':
             UNIT = unit+' '+Calculation_type
         if label_level[att] < level:
-            if LABEL.iloc[att].find(':') >= 0 and LABEL.iloc[att][-1:] == ':':
+            if str(LABEL.iloc[att]).find(':') >= 0 and str(LABEL.iloc[att])[-1:] == ':':
                 attribute.insert(0, LABEL.iloc[att].replace(', ', ',').strip()+' ')
-            elif LABEL.iloc[att].find(':') >= 0:
+            elif str(LABEL.iloc[att]).find(':') >= 0:
                 attribute.insert(0, LABEL.iloc[att][LABEL.iloc[att].find(':')+1:].replace(', ', ',').strip()+', ')
             else:
-                if source == 'Bureau Of Census':
+                if address.find('BOC') >= 0:
                     attribute.insert(0, LABEL.iloc[att].replace('/',' and ').replace('inc.','including').replace(', ', ',').strip()+', ')
-                elif bool(re.search(r'\(*S[0-9]+\)', LABEL.iloc[att])):
+                elif address.find('ml/') >= 0:
+                    lab = LABEL.iloc[att]
+                    if bool(re.search(r'[Aa]ll [Ii]ndustries', lab)):
+                        level = label_level[att]
+                        continue
+                    if bool(re.search(r'\(\s*seasonally\s*adjusted\s*\)', lab)):
+                        lab = re.sub(r'\(\s*seasonally\s*adjusted\s*\)', "", lab)
+                    if bool(re.search(r'Total', lab)):
+                        lab = re.sub(r'Total[\s,]*(.+)$', r"\1", lab)
+                    attribute.insert(0, lab.replace(', ', ',').strip().capitalize()+', ')
+                elif bool(re.search(r'\(*S[0-9]+\)', str(LABEL.iloc[att]))):
                     attribute.insert(0, re.sub(r'\(*S[0-9]+\)', "", LABEL.iloc[att]).replace(', ', ',').strip()+', ')
                 else:
                     if suffix == True:
-                        attribute[-1] = attribute[-1].replace(form, form.replace(', ', ',')+', '+LABEL.iloc[att].replace(', ', ',').strip())
+                        attribute[-1] = attribute[-1].replace(form, form.replace(', ', ',')+', '+str(LABEL.iloc[att]).replace(', ', ',').strip())
                     else:
-                        attribute.insert(0, LABEL.iloc[att].replace(', ', ',').strip()+', ')
+                        attribute.insert(0, str(LABEL.iloc[att]).replace(', ', ',').strip()+', ')
             level = label_level[att]
     return UNIT, attribute
 
-def US_ADDNOTE(attri, NOTE, note, note_num, note_part, specific=False):
+def US_ADDNOTE(attri, NOTE, note, note_num, note_part, specific=False, alphabet=False):
     note_suffix = ''
     if specific == True:
-        dex_list = [attri]
+        dex_list = attri
     else:
-        dex_list = re.findall(r'[0-9]+',attri)
+        if alphabet == True:
+            dex_list = re.findall(r'[a-z]+',attri)
+        else:
+            dex_list = re.findall(r'[0-9]+',attri)
     for dex in dex_list:
         already = False
         found = False
@@ -385,44 +518,18 @@ def US_ADDNOTE(attri, NOTE, note, note_num, note_part, specific=False):
             note_num += 1
         elif found == True:
             note_suffix = note_suffix+'*('+str(num)+')'
-    
+
     return note, note_num, note_part, note_suffix
 
-def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, KEY_DATA, DATA_BASE, db_table_t, DB_name, snl, source, freqlist, frequency, UNIT='nan', LABEL=pd.DataFrame(), label_level=[], NOTE=[], FOOTNOTE=[], series=None, table=None, titles=None, repl=None, repl2=None, formnote={}, suffix=''):
+def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_num, table_num, KEY_DATA, DATA_BASE, db_table_t, DB_name, snl, source, freqlist, frequency, UNIT='nan', LABEL=pd.DataFrame(), label_level=[], NOTE=[], FOOTNOTE=[], series=None, table=None, titles=None, repl=None, repl2=None, formnote={}, YEAR=None, QUAR=None, RAUQ=None):
     freqlen = len(freqlist)
     unit = ''
     Calculation_type = ''
     form_e = ''
     form_c = ''
-    if source == 'Bureau Of Census':
-        if address.find('CONS') >= 0:
-            NonValue = '0'
-        elif address.find('HOUS') >= 0:
-            if sname == 'AuthNotSA':
-                NonValue = '(S)'
-            else:
-                NonValue = '(NA)'
-        elif address.find('MRTS') >= 0:
-            NonValue = '(S)'
-        elif address.find('FAMI') >= 0:
-            NonValue = 'N'
-        elif address.find('HSHD') >= 0:
-            NonValue = '(NA)'
-        elif address.find('SCEN') >= 0:
-            NonValue = 'NA'
-        else:
-            NonValue = 'nan'
-    elif source == 'Federal Reserve Board':
-        if address.find('G19') >= 0 or address.find('H15') >= 0:
-            NonValue = 'ND'
-        else:
-            NonValue = 'None'
-    elif source == 'Bureau of Economic Analysis':
-        NonValue = '.....'
-    elif source == 'Bureau Of Labor Statistics':
-        NonValue = '-'
-    else:
-        NonValue = 'nan'
+    NonValue = ['nan', '.....', 'ND', 'None', '0', '(S)', '(NA)', 'N', 'NA', '-', '', '(-)', 'n.a.', '(*)', '(D)', 'U', '.', '*', '--', 'Not Available', 'Not Applicable']
+    if source == 'Department Of The Treasury' or source == 'Federal Reserve Bank of Richmond' or source == 'Bureau of Economic Analysis' or source == 'Bureau Of Labor Statistics':
+        NonValue.remove('0')
     if source == 'Bureau Of Labor Statistics' and address.find('DSCO') < 0:
         seasonal = re.sub(r'[a-z]+\.', "", str(series['datasets'].loc[address, 'ISADJUSTED']))
         group = re.sub(r'[a-z]+\.', "", series['datasets'].loc[address, 'DATA TYPE'])
@@ -447,22 +554,13 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
             p_text = 'name'
     if code_num >= 200:
         db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
-        if frequency == 'W':
-            db_table_t = db_table_t.reindex(FREQLIST['W_s'])
+        #if frequency == 'W':
+        #    db_table_t = db_table_t.reindex(FREQLIST['W_s'])
         DATA_BASE[db_table] = db_table_t
         DB_name.append(db_table)
         table_num += 1
         code_num = 1
         db_table_t = pd.DataFrame(index = freqlist, columns = [])
-    
-    if address.find('ln/') >= 0 and frequency == 'Q':
-        name = frequency+'111'+US_t.iloc[ind]['Index'].replace('-','').strip()[:-1]+suffix
-    elif address.find('bd/') >= 0:
-        name = frequency+'111'+US_t.iloc[ind]['Index'].strip()[:3]+US_t.iloc[ind]['Index'].strip()[13]+US_t.iloc[ind]['Index'].strip()[16:19]+US_t.iloc[ind]['Index'].strip()[20:26]+suffix
-    elif address.find('jt/') >= 0:
-        name = frequency+'111'+US_t.iloc[ind]['Index'].strip()[:6]+US_t.iloc[ind]['Index'].strip()[7:11]+US_t.iloc[ind]['Index'].strip()[17:21]+suffix
-    else:
-        name = frequency+'111'+US_t.iloc[ind]['Index'].replace('-','').strip()+suffix
     
     db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
     db_code = DB_CODE+str(code_num).rjust(3,'0')
@@ -471,12 +569,114 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
     note = ''
     note_num = 1
     note_part = []
-    if source == 'Bureau of Economic Analysis':
+    if source == 'Bureau of Economic Analysis' and (address.find('NIPA') >= 0 or address.find('FAAT') >= 0):
         unit = SCALE(US_t.iloc[ind]['Index'], address, series)+series.loc[US_t.iloc[ind]['Index'], 'MetricName']
         Calculation_type = series.loc[US_t.iloc[ind]['Index'], 'CalculationType']
         tabletitle = table.loc[sheet_name, 'TableTitle']
         form_e = re.split(r'Table\s[0-9A-Z\.]+\.\s', tabletitle)[1]
         form_c = re.findall(r'Table\s[0-9A-Z\.]+\.', tabletitle)[0]
+    elif source == 'Bureau of Economic Analysis' and (address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0):
+        unit = re.sub(r'\s+NOTE:.+', "", UNIT.replace('[','').replace(']',''))
+        if address.find('ITAS') >= 0:
+            Calculation_type = series['GEO LEVELS'].loc[file_name, 'geo_desc']
+        elif address.find('NIIP') >= 0:
+            Calculation_type = 'All countries'
+        elif address.find('DIRI') >= 0:
+            Calculation_type = series['DATA TYPES'].loc[file_name, 'dt_desc']
+        form_e = repl2
+        form_c = Series['ISADJUSTED'].loc[sheet_name, 'adj_desc']
+    elif source == 'Institute for Supply Management':
+        unit = US_t.iloc[ind]['unit']
+        Calculation_type = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:repl2], 'dt_desc']
+        form_e = series['INDUSTRY'].loc[str(US_t.iloc[ind]['Index'])[1:repl], 'ind_desc']
+        form_c = series['ISADJUSTED'].loc[file_name, 'adj_desc']
+        UNIT = unit
+    elif source == 'Federal Reserve Economic Data' or file_name == 'UIWC' or file_name == 'UIIT' or file_name == 'BEOL':
+        unit = US_t.iloc[ind]['unit']
+        Calculation_type = ''
+        form_e = US_t.iloc[ind]['form_e']
+        form_c = US_t.iloc[ind]['is_adj']
+        UNIT = unit
+    elif source == 'Semiconductor Equipment and Materials International':
+        unit = US_t.iloc[ind]['unit']
+        Calculation_type = US_t.iloc[ind]['Label']
+        if frequency == 'M':
+            form_e = 'Semiconductor Equipment'
+        elif frequency == 'Q':
+            form_e = 'Shipments of Silicon Materials'
+        form_c = 'Not Seasonally Adjusted'
+        UNIT = unit
+    elif source == 'American Iron and Steel Institute' or source == 'Energy Information Administration' or source == 'U.S. Geological Survey' or source == 'Internal Revenue Service':
+        unit = US_t.iloc[ind]['unit']
+        if address.find('PETR') >= 0:
+            Calculation_type = series['DATA TYPES'].loc[repl, 'dt_desc']
+        else:
+            Calculation_type = US_t.iloc[ind]['Label']
+        form_e = table['Form'][file_name]
+        form_c = 'Not Seasonally Adjusted'
+        UNIT = unit
+        dt_key = repl
+    elif source == 'U.S. Department of Agriculture':
+        unit = US_t.iloc[ind]['unit']
+        Calculation_type = series['CATEGORIES'].loc[str(US_t.iloc[ind]['Index'])[repl:repl2], 'cat_desc']
+        form_e = US_t.iloc[ind]['form']
+        form_c = 'Not Seasonally Adjusted'
+        UNIT = unit
+    elif source == 'Federal Reserve Bank of Richmond':
+        unit = US_t.iloc[ind]['unit']
+        Calculation_type = series['PERIOD'].loc[str(US_t.iloc[ind]['Index'])[-1:], 'pd_desc']
+        form_e = series['INDUSTRY'].loc[str(US_t.iloc[ind]['Index'])[1:repl], 'ind_desc']
+        form_c = series['ISADJUSTED'].loc[str(US_t.iloc[ind]['Index'])[:1], 'adj_desc']
+        UNIT = unit
+    elif source == 'National Federation of Independent Business' or source == 'Organization for Economic Cooperation and Development':
+        unit = US_t.iloc[ind]['unit']
+        if file_name.find('http') >= 0:
+            Calculation_type = sheet_name
+        else:
+            Calculation_type = file_name
+        if address.find('OECD') >= 0:
+            form_e = 'Main Economic Indicators'
+            form_c = 'Amplitude adjusted'
+        else:
+            form_e = 'Small Business Economic Trends'
+            form_c = 'Seasonally Adjusted'
+        UNIT = unit
+    elif source == 'Bureau Of Transportation Statistics' or source == 'Department Of Labor':
+        if file_name == 'TRPT' or source == 'Department Of Labor':
+            unit = US_t.iloc[ind]['unit']
+            UNIT = unit
+            if str(US_t.iloc[ind]['Index'])[repl:].find('SAT') >= 0:
+                repl2 = 8
+        else:
+            unit = UNIT
+        cat_key = str(US_t.iloc[ind]['Index'])[1:repl]
+        if str(US_t.iloc[ind]['Index'])[repl:].find('VMT') >= 0 or str(US_t.iloc[ind]['Index'])[repl:].find('SAT') >= 0:
+            Calculation_type = series['GEO LEVELS'].loc[str(US_t.iloc[ind]['Index'])[repl2:], 'geo_desc']
+            form_e = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:repl2], 'dt_desc']
+        else:
+            Calculation_type = series['CATEGORIES'].loc[cat_key, 'cat_desc']
+            form_e = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:], 'dt_desc']
+        if source == 'Department Of Labor':
+            form_c = 'Not Seasonally Adjusted'
+        else:
+            form_c = series['ISADJUSTED'].loc[str(US_t.iloc[ind]['Index'])[:1], 'adj_desc']
+    elif source == 'Department Of The Treasury, Bureau Of The Fiscal Service':
+        unit = 'Millions of United States Dollars'
+        Calculation_type = US_t.iloc[ind]['type']
+        form_e = series.loc[repl, 'Name']
+        form_c = 'Not Seasonally Adjusted'
+        UNIT = unit
+    elif source == 'Department Of The Treasury':
+        if file_name == 's1_globl':
+            unit = 'Millions of United States Dollars'
+            form_e = 'U.S. Transactions with Foreigners in Long-term Domestic and Foreign Securities'
+        elif file_name == 'mfhhis01':
+            unit = 'Billions of United States Dollars'
+            form_e = 'Portfolio Holdings of U.S. and Foreign Securities'
+        Calculation_type = series['DATA TYPES'].loc[US_t.iloc[ind]['Index'][:1], 'dt_desc']
+        form_c = 'Not Seasonally Adjusted'
+        cat_key = str(US_t.iloc[ind]['Index'])[1:repl]
+        UNIT = unit
     elif source == 'Federal Reserve Board':
         DOLLAR = {'USD':'United States Dollar', '':'United States Dollar'}
         ADJUST = {False:'Seasonally Adjusted', True:'Not Seasonally Adjusted'}
@@ -496,7 +696,7 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
         elif address.find('H6') >= 0:
             form_c = ADJUST[bool(re.search(r'_N$', US_t.iloc[ind]['Index']))]
             M3IMF = 'M3 Institutional Money Funds'
-            NON = ['Total Non-', 'Savings Deposits', 'Small-Denomination', 'Retail Money Funds', 'Institutional Money Funds']
+            NON = ['Total Non-', 'Savings Deposits', 'Small-Denomination', 'Retail Money', 'Institutional Money']
             FNAME = {'FRB_H6': 'M1 M2', 'FRB_H6_discontinued': 'M2 M3'}
             before = ['H6','_','DISCONTINUED','M1','M2','MBASE','MEMO','M3']
             after = ['','','','Components of M1','Components of M2','Monetary Base','Memorandum Items','Components of M3']
@@ -526,7 +726,25 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
         UNIT = unit
     elif source == 'Bureau Of Census' or source == 'National Association of Home Builders':
         try:
-            if address.find('HOUS') < 0:  
+            if address.find('HOUS') >= 0:
+                categ = str(US_t.iloc[ind]['Index'])[1:5]
+                unit = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:], 'dt_unit']
+                Calculation_type = series['GEO LEVELS'].loc[str(US_t.iloc[ind]['Index'])[5:repl], 'geo_desc']
+                form_e = series['CATEGORIES'].loc[categ, 'cat_desc']
+                form_c = series['ISADJUSTED'].loc[str(US_t.iloc[ind]['Index'])[:1], 'adj_desc']  
+            elif address.find('FTD') >= 0:
+                categ = str(US_t.iloc[ind]['Index'])[1:repl]
+                if categ.isnumeric():
+                    categ = int(categ)
+                unit = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:repl2], 'dt_unit']
+                if str(US_t.iloc[ind]['Index'])[repl2:] == 'CSBR':
+                    unit = 'Millions of Chained Dollars'
+                Calculation_type = series['GEO LEVELS'].loc[str(US_t.iloc[ind]['Index'])[repl2:], 'geo_desc']
+                form_e = table['Form'][file_name]
+                if form_e == 'U.S. Imports of Energy-Related Petroleum Products':
+                    unit = series['CATEGORIES'].loc[categ, 'unit']
+                form_c = series['ISADJUSTED'].loc[str(US_t.iloc[ind]['Index'])[:1], 'adj_desc']
+            else:
                 if address.find('APEP') >= 0:
                     categ = str(US_t.iloc[ind]['Index'])[2:repl]
                     form_c = series['ISADJUSTED'].loc[str(US_t.iloc[ind]['Index'])[:2], 'adj_desc']
@@ -544,12 +762,6 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
                     form_e = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:], 'dt_desc']
                     Calculation_type = series['CATEGORIES'].loc[categ, 'cat_desc'].title().replace('/',' and ').replace('And','and').replace('Gafo','GAFO')
                     unit = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:], 'dt_unit']
-            else:
-                categ = str(US_t.iloc[ind]['Index'])[1:5]
-                unit = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:], 'dt_unit']
-                Calculation_type = series['GEO LEVELS'].loc[str(US_t.iloc[ind]['Index'])[5:repl], 'geo_desc']
-                form_e = series['CATEGORIES'].loc[categ, 'cat_desc']
-                form_c = series['ISADJUSTED'].loc[str(US_t.iloc[ind]['Index'])[:1], 'adj_desc']
         except KeyError:
             CONTINUE.append(name)
         if address.find('MSIO') >= 0:        
@@ -565,6 +777,7 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
         form_c = str(US_t.iloc[ind]['form_c'])
         UNIT = unit
     elif source == 'Bureau Of Labor Statistics' and address.find('DSCO') < 0:
+        #form_e
         if address.find('ce/') >= 0:
             form_e = re.sub(r',\s*[A-Z\s0-9\-=]+$|, SEASONALLY ADJUSTED', "", series['DATA TYPE'].loc[Table['data_type_code'][US_t.iloc[ind]['Index']], 'data_type_text']).title().replace('And','and').replace("Of","of")
             not_private = [1, 10, 25, 26]
@@ -577,8 +790,11 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
                 form_e = form_e + ' on Private Nonfarm Payrolls by Industry Sector and Selected Industry Detail'
         elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
             form_e = series['DATA TYPE'].loc[Table[group+'_code'][US_t.iloc[ind]['Index']], p_group+'_'+p_text]
+        elif address.find('ml/') >= 0:
+            form_e = 'Mass Layoff, '+series['DATA TYPE'].loc[Table[group+'_code'][US_t.iloc[ind]['Index']], group+'_'+text]
         else:
             form_e = series['DATA TYPE'].loc[Table[group+'_code'][US_t.iloc[ind]['Index']], group+'_'+text]
+        #unit
         if address.find('ln/') >= 0:
             if int(US_t.iloc[ind]['unit']) == 0:
                 unit = 'Thousands of people'
@@ -611,6 +827,34 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
             elif unit_t.find('hourly') >= 0:
                 suffix = ' per hour'
             unit = prefix+suffix+remark
+        elif address.find('in/') >= 0:
+            unit_t = series['CATEGORIES'].loc[US_t.iloc[ind]['unit'], item+'_'+text].capitalize()
+            if bool(re.search(r'[Rr]atio|[Rr]ates|[Ss]hare|[Pp]ercent', unit_t)):
+                unit = 'Percentage'
+            elif bool(re.search(r'[0-9]+=100', unit_t)):
+                unit = 'Index base: '+re.sub(r'.+\s([0-9]+=100).+', r'\1', unit_t)
+            elif unit_t.find('consumer prices') >= 0:
+                unit = 'Index base: 1982-84=100'
+            elif unit_t.find('Exchange rate index') >= 0:
+                unit = 'Index base: 2002=100'
+            elif unit_t.find('Exchange rate') >= 0:
+                unit = 'National Currency per United States Dollar'
+            elif unit_t.find('U.S.=100') >= 0:
+                unit = 'Index base: U.S. Dollar=100'
+            elif US_t.iloc[ind]['unit'] == 5004:
+                unit = 'Millions of United States Dollar'
+            elif unit_t.find('dollars') >= 0:
+                unit = 'United States Dollar'
+            elif (unit_t.find('Manufacturing') >= 0 and unit_t.find('index') >= 0) or unit_t.find('basis') >= 0 or unit_t.find('Output') >= 0:
+                unit = 'Index base: 2002=100'
+            elif unit_t.find('hours') >= 0:
+                unit = 'Hours'
+            elif unit_t.find('Purchasing power parities') >= 0 or unit_t.find('currency') >= 0:
+                unit = 'National Currency'
+            elif US_t.iloc[ind]['unit'] == 5005 or US_t.iloc[ind]['unit'] == 5006:
+                unit = 'Millions of people'
+            else:
+                unit = 'Thousands of people'
         elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
             if str(Table['base_year'][US_t.iloc[ind]['Index']]).isnumeric():
                 unit = str(US_t.iloc[ind]['unit'])
@@ -630,15 +874,23 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
                 unit = 'Percentange'
             else:
                 unit = unit_t 
+        elif address.find('ml/') >= 0:
+            unit = 'Number'
         else:
             unit = str(US_t.iloc[ind]['unit'])
-        if series['ISADJUSTED'].empty == True:
+        #form_c
+        if address.find('ml/') >= 0:
+            ISADJUSTED = {'S':'Seasonally Adjusted', 'U':'Not Seasonally Adjusted'}
+            form_c = ISADJUSTED[US_t.iloc[ind]['Index'].strip()[2]]
+        elif series['ISADJUSTED'].empty == True:
             form_c = 'Not Seasonally Adjusted'
         elif address.find('mp/') >= 0:
             form_c = series['ISADJUSTED'].loc[US_t.iloc[ind]['Index'].strip()[2], seasonal+'_text']
         else:
             form_c = series['ISADJUSTED'].loc[Table['seasonal'][US_t.iloc[ind]['Index']], seasonal+'_text']
-        if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ce/') >= 0 or address.find('pr/') >= 0 or address.find('mp/') >= 0 or address.find('ec/') >= 0 or address.find('jt/') >= 0:
+        #Calculation_type
+        if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ce/') >= 0\
+             or address.find('pr/') >= 0 or address.find('mp/') >= 0 or address.find('ec/') >= 0 or address.find('jt/') >= 0 or address.find('in/') >= 0 or address.find('ml/') >= 0:
             Calculation_type = series['CATEGORIES'].loc[Table[item+'_code'][US_t.iloc[ind]['Index']], p_item+'_'+text].title().replace('And','and').replace("'S","'s")
         else:
             if address.find('ei/') >= 0:
@@ -665,8 +917,16 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
     else:
         title = titles['Titles'][address]+', '
     #desc_e = str(AREMOS_key['description'][0])
-    if source != 'Bureau Of Labor Statistics' and address.find('MADI') < 0:
+    if source != 'Bureau Of Labor Statistics' and address.find('MADI') < 0 and address.find('CHCG') < 0:
         content = content+form_e+', '
+        if address.find('ISM') >= 0:
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[1:repl]], NOTE, note, note_num, note_part, specific=True)
+            content = re.sub(r',\s$', note_suffix+', ', content)
+        if source == 'Department Of The Treasury' or source == 'Institute for Supply Management' or source == 'Federal Reserve Bank of Richmond':
+            content = content+Calculation_type+', '
+            if address.find('ISM') >= 0:
+                note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[repl:repl2]], NOTE, note, note_num, note_part, specific=True)
+                content = re.sub(r',\s$', note_suffix+', ', content)
     if not not formnote:
         if series['CATEGORIES'].loc[categ, 'key_desc'] in formnote:
             cont = content[re.search(r'[0-9]+,\s',content).start():]
@@ -676,48 +936,94 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
     if LABEL.empty == True:
         label = Calculation_type+', '
         attribute.append(label)
-    elif LABEL[US_t.index[ind]].find(':') >= 0 and source != 'Bureau Of Labor Statistics':
+    elif LABEL[US_t.index[ind]].find(':') >= 0 and source != 'Bureau Of Labor Statistics' and source != 'Federal Reserve Economic Data':
         attribute.append(LABEL[US_t.index[ind]][LABEL[US_t.index[ind]].find(':')+1:].replace(', ', ',').strip()+', ')
     else:
         if source == 'Bureau Of Labor Statistics' or address.find('APEP') >= 0:
             attribute.append(LABEL[US_t.index[ind]].strip()+', ')
             if address.find('bd/') >= 0:
                 content = content+series['CATEGORIES']['dataelement'].loc[Table['dataelement_code'][US_t.iloc[ind]['Index']], 'dataelement_'+text].strip()+', '
-            if address.find('ce/') >= 0 or address.find('pr/') >= 0 or address.find('ec/') >= 0  or address.find('jt/') >= 0:
-                if address.find('ec/') >= 0:
+            if address.find('ce/') >= 0 or address.find('pr/') >= 0 or address.find('ec/') >= 0 or address.find('jt/') >= 0 or address.find('ml/') >= 0:
+                if address.find('ec/') >= 0 or address.find('ml/') >= 0:
                     form_e = form_e.title()
                 content = content+form_e+', '
             if address.find('ei/') >= 0:
                 for no in NOTE:
                     if attribute[0].find(', '+no[0]) >= 0:
                         subword = no[0]
-                        note, note_num, note_part, note_suffix = US_ADDNOTE(subword, NOTE, note, note_num, note_part, specific=True)
+                        note, note_num, note_part, note_suffix = US_ADDNOTE([subword], NOTE, note, note_num, note_part, specific=True)
                         attribute[0] = attribute[0].replace(subword, subword+note_suffix)
+        elif source == 'Department Of The Treasury, Bureau Of The Fiscal Service':
+            attribute.append(LABEL[US_t.index[ind]].replace(', ', ',').strip()+', '+Calculation_type+', ')
         else:
             attribute.append(LABEL[US_t.index[ind]].replace(', ', ',').strip()+', ')
+        if address.find('FTD') >= 0:
+            attri = ''
+            for note_item in NOTE:
+                if attribute[0].find(str(note_item[0])) >= 0:
+                    attri = str(note_item[0])
+            note, note_num, note_part, note_suffix = US_ADDNOTE([attri], NOTE, note, note_num, note_part, specific=True)
+            attribute[0] = attribute[0].replace(attri, attri+note_suffix)
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[1:repl]], NOTE, note, note_num, note_part, specific=True)
+            cat_key = str(US_t.iloc[ind]['Index'])[1:repl]
+            if cat_key.isnumeric():
+                cat_key = int(cat_key)
+            attribute[0] = attribute[0].replace(series['CATEGORIES'].loc[cat_key, 'cat_desc'], series['CATEGORIES'].loc[cat_key, 'cat_desc']+note_suffix)
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[repl2:]], NOTE, note, note_num, note_part, specific=True)
+            attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0])
         if address.find('HOUS') >= 0:
-            note, note_num, note_part, note_suffix = US_ADDNOTE(str(US_t.iloc[ind]['Index'])[repl:], NOTE, note, note_num, note_part, specific=True)
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[repl:]], NOTE, note, note_num, note_part, specific=True)
             attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0]) + Calculation_type + ', '
-        if address.find('MRTS') >= 0:
-            note, note_num, note_part, note_suffix = US_ADDNOTE(str(US_t.iloc[ind]['Index'])[1:repl], NOTE, note, note_num, note_part, specific=True)
+        if address.find('MRTS') >= 0 or (address.find('UIWC') >= 0 and frequency == 'M') or sheet_name == 'Summary Table of Cargo Revenue Ton-Miles':
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[1:repl]], NOTE, note, note_num, note_part, specific=True)
+            attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0])
+        if address.find('CBS') >= 0:
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[2:repl]], NOTE, note, note_num, note_part, specific=True)
             attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0])
         if address.find('MWTS') >= 0 or address.find('MRTS') >= 0:
-            note, note_num, note_part, note_suffix = US_ADDNOTE(str(US_t.iloc[ind]['Index'])[:1], NOTE, note, note_num, note_part, specific=True)
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[:1]], NOTE, note, note_num, note_part, specific=True)
             attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0])
-    if source == 'Bureau of Economic Analysis' or source == 'Bureau Of Census' or source == 'National Association of Home Builders':
-        begin = list(LABEL.index).index(US_t.index[ind])
-        UNIT, attribute = US_ADDLABEL(begin, sheet_name, LABEL, label_level, UNIT, unit, Calculation_type, attribute)
+    if address.find('STL') >= 0 or file_name == 'TRPT' or file_name == 'UIWC' or file_name == 'UIIT':
+        attri = []
+        for note_item in NOTE:
+            if note_item[0].find(str(US_t.iloc[ind]['Index'])+'.') >= 0:
+                attri.append(note_item[0])
+        note, note_num, note_part, note_suffix = US_ADDNOTE(attri, NOTE, note, note_num, note_part, specific=True)
+    elif address.find('BTS') >= 0 and sheet_name != 'Summary Table of Cargo Revenue Ton-Miles':
+        note, note_num, note_part, note_suffix = US_ADDNOTE(str(US_t.iloc[ind]['Label_note']), NOTE, note, note_num, note_part, alphabet=True)
+        attribute[0] = re.sub(r', ', note_suffix+', ', attribute[0])
+    if source == 'Bureau of Economic Analysis' or source == 'Bureau Of Census' or source == 'National Association of Home Builders'\
+         or source.find('Department Of The Treasury') >= 0 or source == 'Bureau Of Transportation Statistics' or source == 'Energy Information Administration':
+        if address.find('FTD') >= 0 or address.find('TICS') >= 0 or address.find('TRPT') >= 0:
+            begin = list(series['CATEGORIES']['cat_desc'].index).index(cat_key)
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['CATEGORIES']['cat_desc'], list(series['CATEGORIES']['cat_indent']), UNIT, unit, Calculation_type, attribute)
+        elif address.find('PETR') >= 0:
+            begin = list(series['DATA TYPES']['dt_desc'].index).index(dt_key)
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['DATA TYPES']['dt_desc'], list(series['DATA TYPES']['dt_indent']), UNIT, unit, Calculation_type, attribute)
+        else:
+            begin = list(LABEL.index).index(US_t.index[ind])
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, LABEL, label_level, UNIT, unit, Calculation_type, attribute)
         for a in range(len(attribute)):
+            if address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0:
+                attribute[a] = re.sub(r'\s*\([^\(]*?line[^\)]+?\)', "", attribute[a])
             if attribute[a].find('\\1\\0') > 0:
                 attribute[a] = attribute[a].replace('\\1\\0', '\\10\\')
             if bool(re.search(r'\\[0-9,\\]+\\',attribute[a])):
                 attri = attribute[a][attribute[a].find('\\'):]
                 note, note_num, note_part, note_suffix = US_ADDNOTE(attri, NOTE, note, note_num, note_part)
                 attribute[a] = re.sub(r'\\[0-9,\\]+\\', note_suffix, attribute[a])
+            elif bool(re.search(r'/[0-9,/]+/',attribute[a])):
+                attri = attribute[a][attribute[a].find('/'):]
+                note, note_num, note_part, note_suffix = US_ADDNOTE(attri, NOTE, note, note_num, note_part)
+                attribute[a] = re.sub(r'\s*/[0-9,/]+/', note_suffix, attribute[a])
             elif bool(re.search(r'[0-9]+,\s',attribute[a])) and source == 'Bureau Of Census':
                 attri = attribute[a][re.search(r'[0-9]+,\s',attribute[a]).start():]
                 note, note_num, note_part, note_suffix = US_ADDNOTE(attri, NOTE, note, note_num, note_part)
                 attribute[a] = re.sub(r'[0-9]+,\s', note_suffix+', ', attribute[a])
+            elif bool(re.search(r'[0-9]+/,\s',attribute[a])) and source == 'Department Of The Treasury':
+                attri = attribute[a][re.search(r'[0-9]+/,\s',attribute[a]).start():attribute[a].find('/')]
+                note, note_num, note_part, note_suffix = US_ADDNOTE(attri, NOTE, note, note_num, note_part)
+                attribute[a] = re.sub(r'[0-9]+/,\s', note_suffix+', ', attribute[a])
         for note_item in NOTE:
             if note_item[0] == 'Note':
                 note = note+'('+str(note_num)+')'+note_item[1]
@@ -725,38 +1031,45 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
     elif source == 'Bureau Of Labor Statistics':
         if address.find('cu/') >= 0 or address.find('cw/') >= 0:
             begin = list(series['CATEGORIES'][item+'_'+text].index).index(Table[item+'_code'][US_t.iloc[ind]['Index']])
-            UNIT, attribute = US_ADDLABEL(begin, sheet_name, series['CATEGORIES'][item+'_'+text], list(series['CATEGORIES']['display_level']), UNIT, unit, Calculation_type, attribute)
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['CATEGORIES'][item+'_'+text], list(series['CATEGORIES']['display_level']), UNIT, unit, Calculation_type, attribute)
             begin = list(series['DATA TYPE'][group+'_'+text].index).index(Table[group+'_code'][US_t.iloc[ind]['Index']])
-            UNIT, attribute = US_ADDLABEL(begin, sheet_name, series['DATA TYPE'][group+'_'+text], list(series['DATA TYPE']['display_level']), UNIT, unit, Calculation_type, attribute, suffix=True, form=form_e)
-        elif address.find('ce/') >= 0:
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['DATA TYPE'][group+'_'+text], list(series['DATA TYPE']['display_level']), UNIT, unit, Calculation_type, attribute, suffix=True, form=form_e)
+        elif address.find('ce/') >= 0 or address.find('ml/') >= 0:
             begin = list(series['CATEGORIES'][item+'_'+text].index).index(Table[item+'_code'][US_t.iloc[ind]['Index']])
-            UNIT, attribute = US_ADDLABEL(begin, sheet_name, series['CATEGORIES'][item+'_'+text], list(series['CATEGORIES']['display_level']), UNIT, unit, Calculation_type, attribute)
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['CATEGORIES'][item+'_'+text], list(series['CATEGORIES']['display_level']), UNIT, unit, Calculation_type, attribute)
         elif address.find('bd/') >= 0:
             begin = list(series['CATEGORIES']['industry']['industry_'+text].index).index(Table['industry_code'][US_t.iloc[ind]['Index']])
-            UNIT, attribute = US_ADDLABEL(begin, sheet_name, series['CATEGORIES']['industry']['industry_'+text], list(series['CATEGORIES']['industry']['display_level']), UNIT, unit, Calculation_type, attribute)
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['CATEGORIES']['industry']['industry_'+text], list(series['CATEGORIES']['industry']['display_level']), UNIT, unit, Calculation_type, attribute)
             attribute.insert(0, form_e+', ')
             begin = list(series['DATA TYPE'][group+'_'+text].index).index(Table[group+'_code'][US_t.iloc[ind]['Index']])
-            UNIT, attribute = US_ADDLABEL(begin, sheet_name, series['DATA TYPE'][group+'_'+text], list(series['DATA TYPE']['display_level']), UNIT, unit, Calculation_type, attribute)
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['DATA TYPE'][group+'_'+text], list(series['DATA TYPE']['display_level']), UNIT, unit, Calculation_type, attribute)
             attribute.append('for firms with '+series['CATEGORIES']['sizeclass'].loc[Table['sizeclass_code'][US_t.iloc[ind]['Index']], 'sizeclass_'+text].strip()+', ')
             attribute.append(series['BASE'].loc[Table[base+'_code'][US_t.iloc[ind]['Index']], base+'_'+p_text].strip()+', ')
         elif address.find('jt/') >= 0:
             begin = list(series['CATEGORIES'][item+'_'+text].index).index(Table[item+'_code'][US_t.iloc[ind]['Index']])
-            UNIT, attribute = US_ADDLABEL(begin, sheet_name, series['CATEGORIES'][item+'_'+text], list(series['CATEGORIES']['display_level']), UNIT, unit, Calculation_type, attribute)
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['CATEGORIES'][item+'_'+text], list(series['CATEGORIES']['display_level']), UNIT, unit, Calculation_type, attribute)
             attribute.append(series['BASE'].loc[Table[base+'_code'][US_t.iloc[ind]['Index']], base+'_'+p_text].strip()+', ')
+        elif address.find('in/') >= 0:
+            attribute.insert(0, form_e.replace(', ', ',')+', ')
+            begin = list(series['DATA TYPE'][group+'_'+text].index).index(Table[group+'_code'][US_t.iloc[ind]['Index']])
+            UNIT, attribute = US_ADDLABEL(begin, address, sheet_name, series['DATA TYPE'][group+'_'+text], list(series['DATA TYPE']['display_level']), UNIT, unit, Calculation_type, attribute)
+            attribute.append(series['BASE'].loc[Table[base+'_code'][US_t.iloc[ind]['Index']], base+'_'+text].title().strip().replace(' Of', ' of')+', ')
         for note_item in NOTE:
             if type(Table['footnote_codes'][US_t.iloc[ind]['Index']]) == float and Table['footnote_codes'][US_t.iloc[ind]['Index']].is_integer():
                 Table['footnote_codes'][US_t.iloc[ind]['Index']] = int(Table['footnote_codes'][US_t.iloc[ind]['Index']])
-            if note_item[0] == str(Table['footnote_codes'][US_t.iloc[ind]['Index']]) and address.find('ei/') < 0:
+            if note_item[0] in re.split(r',', str(Table['footnote_codes'][US_t.iloc[ind]['Index']])) and address.find('ei/') < 0:
                 note = note+'('+str(note_num)+')'+note_item[1]
                 note_num += 1
     for attri in attribute:
         content = content+attri
+    if address.find('ITAS') >= 0 and file_name != 'Ita_T1.2':
+        content = content+Calculation_type+', '
     if source != 'National Association of Realtors' and source != 'Bureau Of Labor Statistics' and address.find('APEP') < 0 and address.find('H6') < 0 and address.find('G19') < 0:
         content = content+form_c+', '
     elif address.find('MADI') >= 0:
         content = content+Calculation_type+', '
     elif source == 'Bureau Of Labor Statistics':
-        if address.find('DSCO') >= 0 or address.find('ce/') >= 0 or address.find('pr/') >= 0 or address.find('mp/') >= 0 or address.find('ec/') >= 0 or address.find('bd/') >= 0 or address.find('jt/') >= 0:
+        if address.find('DSCO') >= 0 or address.find('ce/') >= 0 or address.find('pr/') >= 0 or address.find('mp/') >= 0 or address.find('ec/') >= 0 or address.find('bd/') >= 0 or address.find('jt/') >= 0 or address.find('in/') >= 0 or address.find('ml/') >= 0:
             content = content+form_c+', '
         SEAS = {'S':'Seas','U':'Unadj'}
         if address.find('ln/') >= 0 and bool(re.match(r'\(', content)) == False:
@@ -778,6 +1091,7 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
                 content.replace('Pvt W/S', 'Private Wage and salary').replace('EMPL. LEVEL', 'Employed,').replace(' rat', ' Rat').replace('Percent distribution', 'Percent Distribution')))))))))
         content = re.sub(r'\s+', " ", re.sub(r'\.*(\s\.)+([^0-9])', r"\2", re.sub(r"([0-9]+)'([^s])", r"\1 ft. \2", re.sub(r'([0-9]+)("|\'{2})', r"\1 in. ", re.sub(r'x(\s*[0-9])', r" times \1", \
             re.sub(r'([^0-9a-z])\.([0-9]+)', r"\1 0.\2", re.sub(r'([0-9]+)\s([0-9]+/[0-9]+)', r"\1 and \2", content))))))).replace('"', '').replace("'s", 's').replace("s'", 's').replace("'", '').replace(' ,', ',')
+    note = note.strip()
     if note != '':
         desc_e = title + content + 'Unit: ' + UNIT.replace('[','').replace('] ',', ').replace(']','') + ', Source: ' + source + ', Note: ' + note
     else:
@@ -785,14 +1099,25 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
     for footnote_item in FOOTNOTE:
         if desc_e.find(footnote_item[0]) >= 0:
             desc_e = desc_e.replace(footnote_item[0],footnote_item[1])
-    if source == 'Bureau of Economic Analysis' or UNIT != unit:
+    desc_e = desc_e.replace('"', '').replace("'", '').replace('#', ' ')
+    if address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0:
+        desc_c = re.sub(r'\*\(.+\)', "", attribute[0].replace(', ',''))
+    elif source == 'Bureau of Economic Analysis' or UNIT != unit:
         desc_c = UNIT.replace('[','').replace('] ',', ').replace(']','')
     elif source == 'Bureau Of Labor Statistics' and series['BASE'].empty == False:
-        desc_c = series['BASE'].loc[Table[base+'_code'][US_t.iloc[ind]['Index']], base+'_'+p_text]
+        if address.find('pr/') >= 0:
+            desc_c = series['BASE'].loc[Table[base+'_code'][US_t.iloc[ind]['Index']], base+'_'+text].title()
+        else:
+            desc_c = series['BASE'].loc[Table[base+'_code'][US_t.iloc[ind]['Index']], base+'_'+p_text].title()
         if address.find('cu/') >= 0 or address.find('cw/') >= 0:
             desc_c = desc_c+' Reference Base'
+    elif address.find('FTD') >= 0:
+        desc_c = series['DATA TYPES'].loc[str(US_t.iloc[ind]['Index'])[repl:repl2], 'dt_desc']
+    elif address.find('TICS') >= 0:
+        desc_c = series['GEO LEVELS'].loc[int(US_t.iloc[ind]['Index'][repl:]), 'geo_desc']
     else:
         desc_c = ''
+    table_id = address+','+file_name+','+str(sheet_name)
     
     start_found = False
     last_found = False
@@ -808,12 +1133,15 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
                 freq_index = int(index[k])
             except:
                 freq_index = str(index[k])
-        if freq_index in db_table_t.index:
-            if str(value[k]).strip() == NonValue or str(value[k]) == 'nan':
+        if freq_index in db_table_t.index and ((find_unknown == False and int(str(freq_index)[:4]) >= dealing_start_year) or find_unknown == True):
+            if str(value[k]).strip() in NonValue or bool(re.search(r'/[0-9]+/', str(value[k]))):
                 db_table_t[db_code][freq_index] = ''
             else:
                 found = True
-                db_table_t[db_code][freq_index] = float(value[k])
+                try:
+                    db_table_t[db_code][freq_index] = float(value[k])
+                except ValueError:
+                    ERROR('Nontype Value detected: '+str(value[k]))
                 if start_found == False and found == True:
                     if frequency == 'A':
                         start = int(freq_index)
@@ -829,7 +1157,7 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
                         last_found = True
                     else:
                         for st in range(k+1, len(value)):
-                            if ((frequency != 'A' and str(index[st]).find(frequency) >= 0) or str(index[st]).isnumeric() or source == 'Federal Reserve Board') and str(value[st]).strip() != NonValue and str(value[st]) != 'nan':
+                            if ((frequency != 'A' and str(index[st]).find(frequency) >= 0) or str(index[st]).isnumeric() or source == 'Federal Reserve Board') and str(value[st]).strip() not in NonValue:
                                 last_found = False
                             else:
                                 last_found = True
@@ -853,36 +1181,27 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
         start = 'Nan'
         last = 'Nan'
     
-    YEAR = {'main':'-M13','ln/':'-M13','pr/':'-Q05','mp/':'-A01','ec/':'-Q05'}
-    QUAR = {'M03':'Q1','M06':'Q2','M09':'Q3','M12':'Q4','Q01':'Q1','Q02':'Q2','Q03':'Q3','Q04':'Q4'}
-    RAUQ = {}
-    RAUQ['main'] = {'Q1':'M03','Q2':'M06','Q3':'M09','Q4':'M12'}
-    RAUQ['ln/'] = {'Q1':'Q01','Q2':'Q02','Q3':'Q03','Q4':'Q04'}
-    RAUQ['pr/'] = RAUQ['ln/']
-    RAUQ['mp/'] = RAUQ['main']
-    RAUQ['ec/'] = RAUQ['ln/']
-    RAUQ['bd/'] = RAUQ['ln/']
-    if bls_start == None:
-        if source == 'Bureau Of Labor Statistics' and frequency == 'M' and start.replace('-', '-M') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('-M13') < 0:
+    if bls_start == None or (bls_start != None and find_unknown == True):
+        if source == 'Bureau Of Labor Statistics' and frequency == 'M' and start.replace('-', '-M') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('-M','-')]).strip() not in NonValue:
             ERROR('start error: '+str(name))
-        elif source == 'Bureau Of Labor Statistics' and frequency == 'A' and str(start)+YEAR[repl] != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find(YEAR[repl]) >= 0:
+        elif source == 'Bureau Of Labor Statistics' and frequency == 'A' and str(start)+YEAR[repl] != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['start'].replace(YEAR[repl],''))]).strip() not in NonValue:
             ERROR('start error: '+str(name))
-        elif source == 'Bureau Of Labor Statistics' and frequency == 'S' and start.replace('S', 'S0') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('S03') < 0:
+        elif source == 'Bureau Of Labor Statistics' and frequency == 'S' and start.replace('S', 'S0') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('S0','S')]).strip() not in NonValue:
             ERROR('start error: '+str(name))
-        elif source == 'Bureau Of Labor Statistics' and frequency == 'Q' and US_t.iloc[ind]['start'][-3:] in QUAR:
-            if start.replace(start[-2:], RAUQ[repl][start[-2:]]) != US_t.iloc[ind]['start']:
+        elif source == 'Bureau Of Labor Statistics' and frequency == 'Q' and US_t.iloc[ind]['start'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace(US_t.iloc[ind]['start'][-3:],QUAR[US_t.iloc[ind]['start'][-3:]])]).strip() not in NonValue:
+            if start.replace(start[-2:], RAUQ[repl2][start[-2:]]) != US_t.iloc[ind]['start']:
                 ERROR('start error: '+str(name))
-    if source == 'Bureau Of Labor Statistics' and frequency == 'M' and last.replace('-', '-M') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('-M','-')]).strip() != NonValue:
+    if source == 'Bureau Of Labor Statistics' and frequency == 'M' and last.replace('-', '-M') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('-M','-')]).strip() not in NonValue:
         ERROR('last error: '+str(name))
-    elif source == 'Bureau Of Labor Statistics' and frequency == 'A' and str(last)+YEAR[repl] != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['last'].replace(YEAR[repl],''))]).strip() != NonValue:
+    elif source == 'Bureau Of Labor Statistics' and frequency == 'A' and str(last)+YEAR[repl] != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['last'].replace(YEAR[repl],''))]).strip() not in NonValue:
         ERROR('last error: '+str(name))
-    elif source == 'Bureau Of Labor Statistics' and frequency == 'S' and last.replace('S', 'S0') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('S0','S')]).strip() != NonValue:
+    elif source == 'Bureau Of Labor Statistics' and frequency == 'S' and last.replace('S', 'S0') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('S0','S')]).strip() not in NonValue:
         ERROR('last error: '+str(name))
-    elif source == 'Bureau Of Labor Statistics' and frequency == 'Q' and US_t.iloc[ind]['last'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace(US_t.iloc[ind]['last'][-3:],QUAR[US_t.iloc[ind]['last'][-3:]])]).strip() != NonValue:
-        if last.replace(last[-2:], RAUQ[repl][last[-2:]]) != US_t.iloc[ind]['last']:
+    elif source == 'Bureau Of Labor Statistics' and frequency == 'Q' and US_t.iloc[ind]['last'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace(US_t.iloc[ind]['last'][-3:],QUAR[US_t.iloc[ind]['last'][-3:]])]).strip() not in NonValue:
+        if last.replace(last[-2:], RAUQ[repl2][last[-2:]]) != US_t.iloc[ind]['last']:
             ERROR('last error: '+str(name))
 
-    key_tmp= [databank, name, db_table, db_code, desc_e, desc_c, frequency, start, last, unit, Calculation_type, snl, source, form_e, form_c]
+    key_tmp= [databank, name, db_table, db_code, desc_e, desc_c, frequency, start, last, unit, Calculation_type, snl, source, form_e, form_c, table_id]
     KEY_DATA.append(key_tmp)
     snl += 1
     
@@ -893,39 +1212,105 @@ def US_DATA(ind, US_t, address, sheet_name, value, index, code_num, table_num, K
 ###########################################################################  Main Function  ###########################################################################
 MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 TABLE_NAME = {'ISADJUSTED':'adj','CATEGORIES':'cat','DATA TYPES':'dt','GEO LEVELS':'geo'}
+NEW_TABLES = TABLES.copy()
+NEW_TABLES = NEW_TABLES.set_index(['Address','File','Sheet']).sort_index()
+chrome = None
+new_item_counts = 0
 
-for source in SOURCE:
+for source in SOURCE(TABLES):
     if main_file.empty == False:
         break
     for address in FILE_ADDRESS(source):
-        if (HIES_old == False and address.find('HIES') >= 0) or (make_discontinued == False and (address.find('wd/') >= 0 or address.find('DSCO') >= 0)):
+        if make_discontinued == False and (address.find('DSCO') >= 0 or address.find('in/') >= 0 or address.find('ml/') >= 0):
             continue
-        if address.find(keyword) < 0 or address.find(ignore) >= 0:
+        if str(address).find(keyword[0]) < 0:
             continue
-        Series, Table, Titles = US_KEY(address, key=re.sub(r'FED|BOC|HOUS|APEP|STL', "", address).replace('/',''))
-        for fname in FILE_NAME(address):
+        to_be_ignore =False
+        for ig in ignore:
+            if str(address).find(ig) >= 0:
+                to_be_ignore = True
+                break
+        if to_be_ignore == True:
+            continue            
+        address = address[4:]
+        #TABLES = TABLES.set_index(['Sheet'], drop=False)
+        Series, Table, Titles = US_KEY(address, key=re.sub(r'BEA|FED|BOC|HOUS|APEP|STL|FTD/|DOT|BTS|DOL|RCM|EIA|IRS', "", address).replace('/',''))
+        if source == 'Institute for Supply Management':
+            qd.ApiConfig.api_key = Table
+        for fname in FILE_NAME(source, address):
             if make_discontinued == False and fname.find('discontinued') >= 0:
                 continue
-            if source == 'Bureau of Economic Analysis': #and address.find('NIPA') >= 0:
+            if str(fname).find(keyword[1]) < 0:
+                continue
+            if chrome == None and fname.find('http') >= 0 and address.find('AISI') < 0 and address.find('FRB') < 0:
+                options = Options()
+                options.add_argument("--disable-notifications")
+                options.add_experimental_option("prefs", {"profile.default_content_setting_values.cookies": 2})
+                chrome = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+            if source == 'Bureau of Economic Analysis' and (address.find('NIPA') >= 0 or address.find('FAAT') >= 0):
                 print('Reading source file, Time: ', int(time.time() - tStart),'s'+'\n')
-                US_t_dict = readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, skiprows_=list(range(7)))
+                US_t_dict = readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, skiprows_=list(range(7)), acceptNoFile=False)
                 sheet_list = list(US_t_dict)
             else:
                 sheet_list = SHEET_NAME(address, fname)
             for sname in sheet_list:
+                if sname == 'None':
+                    sname = None
+                if Historical == False and str(NEW_TABLES.loc[(address,fname,sname), 'keyword']).find('historical') >= 0:
+                    continue
                 bls_read = False
-                if source == 'Bureau of Economic Analysis':
+                if source == 'Bureau of Economic Analysis' and (address.find('NIPA') >= 0 or address.find('FAAT') >= 0):
                     US_t = US_t_dict[sname]
-                for freq in FREQUENCY(address, fname, sname):
+                distinguish_sheet = False
+                if address.find('HOUS') >= 0 or address.find('NAR') >= 0 or address.find('POP') >= 0 or address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0 or address.find('PETR') >= 0:
+                    distinguish_sheet = True
+                for freq in FREQUENCY(address, fname, sname, distinguish_sheet):
                     print('Reading file: '+fname+', sheet: '+str(sname)+', frequency: '+freq+', Time: ', int(time.time() - tStart),'s'+'\n')
                     unit = 'nan'
                     repl2 = None
                     formnote = {}
+                    YEAR2 = None
+                    QUAR2 = None
+                    RAUQ = None
                     if source == 'Bureau of Economic Analysis':
-                        #US_t = readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, skiprows_=list(range(7)), sheet_name_=sname+'-'+freq)
-                        sname = re.split(r'\-', sname)[0]
+                        if address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0:
+                            HEAD = {'A':1,'Q':2}
+                            US_t = readExcelFile(data_path+address+fname+'.xls', index_col_=0, skiprows_=list(range(int(Table.loc[(address,fname,sname), 'skip'].item()))), sheet_name_=sname)
+                            US_t.columns = [US_t.iloc[i].fillna(method='pad').str.strip() for i in range(HEAD[freq])]
+                            BEA_cols = []
+                            for j in range(len(US_t.columns)):
+                                if str(US_t.columns[j][0]).isnumeric() == False:
+                                    BEA_cols.append('Label')
+                                else:
+                                    if freq == 'A':
+                                        BEA_cols.append(int(US_t.columns[j][0]))
+                                    elif freq == 'Q':
+                                        BEA_cols.append(str(US_t.columns[j][0])+str(US_t.columns[j][1]))
+                            US_t.columns = BEA_cols
+                            US_t = US_t[US_t.index.notnull()].drop(index=['Line'], errors='ignore')
+                            BEA_inds = []
+                            for i in range(len(US_t.index)):
+                                if bool(re.match(r'[0-9]+[a-z]*$', str(US_t.index[i]))):
+                                    if address.find('ITAS') >= 0:
+                                        BEA_inds.append(Series['ISADJUSTED'].loc[sname, 'adj_code']+str(US_t.index[i]).rjust(4,'0')+'ITA'+Series['GEO LEVELS'].loc[fname, 'geo_code'])
+                                    elif address.find('NIIP') >= 0:
+                                        BEA_inds.append(Series['ISADJUSTED'].loc[sname, 'adj_code']+str(US_t.index[i]).rjust(4,'0')+'IIP')
+                                    elif address.find('DIRI') >= 0:
+                                        BEA_inds.append(Series['ISADJUSTED'].loc[sname, 'adj_code']+str(US_t.index[i]).rjust(4,'0')+Series['DATA TYPES'].loc[fname, 'dt_code'])
+                                else:
+                                    BEA_inds.append('nan')
+                            US_t.insert(loc=0, column='Index', value=BEA_inds)
+                            excel = ''
+                            if address.find('DIRI') >= 0:
+                                repl2 = re.sub(r'.+(U\.S\..+)', r"\1", str(readExcelFile(data_path+address+fname+'.xls', usecols_=[0], sheet_name_=sname).iloc[0][0]).strip())
+                            else:
+                                repl2 = re.sub(r'.+,\s+(.+)', r"\1", str(readExcelFile(data_path+address+fname+'.xls', usecols_=[0], sheet_name_=sname).iloc[0][0]).strip())
+                        else:
+                            excel = 'x'
                         if US_t.empty == False:
-                            unit = str(readExcelFile(data_path+address+fname+'.xlsx', usecols_=[0], sheet_name_=sname).iloc[1][0]).strip()
+                            unit = re.sub(r'\s+NOTE:.+', "", str(readExcelFile(data_path+address+fname+'.xls'+excel, usecols_=[0], sheet_name_=sname).iloc[1][0]).strip())
+                            if address.find('NIPA') >= 0 or address.find('FAAT') >= 0:
+                                sname = re.split(r'\-', sname)[0]
                             US_t = US_t.rename(columns={'Unnamed: 1':'Label','Unnamed: 2':'Index'})
                             label = US_t['Label']
                             new_label = pd.Series(dtype='object')
@@ -941,7 +1326,16 @@ for source in SOURCE:
                             if new_label.empty == False:
                                 label = new_label
                             label_level = US_LEVEL(label, source)
-                            note, footnote = US_NOTE(US_t.index, sname, label)
+                            for item in range(len(label)):
+                                if str(label.iloc[item]).strip() == 'nan':
+                                    continue
+                                if address.find('ITAS') >= 0 and (str(label.iloc[item]).find('account') >= 0 or str(label.iloc[item]).find('Statistical discrepancy') >= 0):
+                                    label_level[item] = -1
+                                elif address.find('NIIP') >= 0 and str(label.iloc[item]).find('U.S.') >= 0:
+                                    label_level[item] = 0
+                                elif address.find('DIRI') >= 0 and str(Series['CATEGORIES'].loc[Series['CATEGORIES']['cat_desc'] == re.sub(r'\s*\(.*line.+\)|\s*/[0-9]+/',"",str(label.iloc[item]).strip())].index[0]) == '\xa0':
+                                    label_level[item] = -1
+                            note, footnote = US_NOTE(US_t.index, sname, label, address)
                     elif source == 'Federal Reserve Board':
                         if address.find('G17') >= 0:
                             US_temp = readFile(fname, header_=None, names_=['code','year']+MONTH, acceptNoFile=False, sep_='\\s+')
@@ -965,61 +1359,270 @@ for source in SOURCE:
                                 Series['Descriptions:'][ind]
                             except KeyError:
                                 CONTINUE.append(ind)
-                    elif source == 'Federal Reserve Bank Of St. Louis':
+                    elif source == 'Federal Reserve Economic Data' or fname == 'UIWC' or fname == 'UIIT' or fname == 'BEOL':
+                        Series_t = Series
+                        if fname == 'UIWC' or sname == 'UIWC':
+                            Series = list(readExcelFile(data_path+address+fname+'.xls', sheet_name_=0)[0])
                         US_temp = readExcelFile(data_path+address+fname+'.xls', header_ =0, index_col_=0, sheet_name_=sname).T
                         US_t, label, note, footnote = US_STL(US_temp, address, Series)
                         label_level = None
                         repl = None
-                    elif source == 'Bureau Of Census' and address.find('MSIO') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=fname, DIY_series=Series, MONTH=MONTH, password='MPC')
-                        for table in Series:
-                            Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
+                        Series = Series_t
+                    elif source == 'Federal Reserve Bank of Richmond':
+                        US_temp = readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, sheet_name_=sname).T
+                        US_t, label, note, footnote = US_RCM(US_temp, fname, Series)
+                        label_level = None
                         repl = 4
-                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
-                    elif source == 'Bureau Of Census' and address.find('CONS') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=Table['DataSets'][address], fname=fname, sname=sname, DIY_series=Series, index_col=0, skiprows=[0,1,2])
-                        repl = 5
-                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
-                    elif source == 'Bureau Of Census' and address.find('RESC') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=Table['DataSets'][address], fname=fname, sname=sname, DIY_series=Series, header=[0,1], index_col=list(range(int(TABLES.loc[sname,'index_col'].item())+1)), skiprows=list(range(int(TABLES.loc[sname,'skiprows'].item()))))
-                        repl = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=10, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('SALE') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=fname, DIY_series=Series, MONTH=MONTH, password='ASLD')
+                    elif source == 'U.S. Department of Agriculture':
+                        if fname.find('http') >= 0:
+                            US_temp = pd.DataFrame()
+                        else:
+                            US_temp = readFile(data_path+address+fname+'.csv', header_ =0, usecols_=[1,2,16,19])
+                        US_t, label, note, footnote = US_DOA(US_temp, Series, Table, address, fname, sname, chrome)
+                        label_level = None
+                        repl = 3
+                        repl2 = 6
+                    elif source == 'Institute for Supply Management':
+                        US_temp = qd.get(address+fname).T
+                        US_t, label, note, footnote = US_ISM(US_temp, fname, Series)
                         other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
                         note = note + US_NOTE(other_notes, sname, address=address, other=True)
-                        for table in Series:
-                            Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
-                        repl = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=10, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('PRIC') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, header=[0,1], index_col=0, skiprows=list(range(5)), freq=freq)
-                        unit = str(readExcelFile(data_path+address+fname+'.xls', usecols_=[0], sheet_name_=sname).iloc[1][0]).strip()
-                        repl = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=10, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('HIHV') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=fname, DIY_series=Series)
-                        for table in Series:
-                            Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
-                            Series[table] = Series[table][~Series[table].index.duplicated()]
-                        repl = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=10, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('HIES') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=Table['DataSets'][address], fname=fname, sname=sname, DIY_series=Series, freq=freq, HIES=True)
-                        repl = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=10, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('SHIP') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=Table['DataSets'][address], fname=fname, sname=sname, DIY_series=Series, MONTH=MONTH, header=[0], index_col=0, skiprows=list(range(3)), freq=freq, x='x')
-                        repl = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=10, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'National Association of Home Builders' and address.find('NAHB') >= 0:
-                        if fname == 'table3-nahb-wells-fargo-national-hmi-components-history':
-                            skip = 33
+                        label_level = None
+                        repl = 4
+                        repl2 = 7
+                    elif source == 'National Federation of Independent Business' or source == 'Organization for Economic Cooperation and Development':
+                        if fname == 'Consumer Confidence Index':
+                            US_temp = readFile(data_path+address+fname+'.csv', header_ =0, index_col_=0, usecols_=[5,6]).T
                         else:
-                            skip = 2
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, MONTH=MONTH, header=[0], index_col=0, skiprows=list(range(skip)), freq=freq)
-                        repl = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=10, name='DATA TYPES', indent='dt_indent')
+                            US_temp = pd.DataFrame()#readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, sheet_name_=sname).T
+                        US_t, label, note, footnote = US_CBS(address, fname, sname, Series, US_temp, chrome)
+                        other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
+                        note = note + US_NOTE(other_notes, sname, address=address, other=True)
+                        label_level = None
+                        repl = 5
+                    elif source == 'Department Of The Treasury, Bureau Of The Fiscal Service':
+                        US_temp = readFile(data_path+address+fname+'.csv', header_ =0)
+                        US_temp = US_temp.sort_values(by=['Line Code Number','Calendar Year','Calendar Month Number'], ignore_index=True)
+                        US_t, label, note, footnote, label_level = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Key'])
+                        repl = fname
+                    elif source == 'Department Of The Treasury':
+                        idx = 0
+                        if fname == 's1_globl':
+                            idx = [0,1,2]
+                            KEYS = {3:['Marketable'],4:["Gov't"],5:['corporate','bonds'],0:['corporate','stocks'],1:['Foreign securities','Bonds'],2:['Stocks']}
+                            US_temp = readFile(data_path+address+fname+'.csv')
+                            for col in range(3, US_temp.shape[1]):
+                                for key in KEYS[col%6]:
+                                    if key not in list(US_temp[col]):
+                                        ERROR('Items not found in column '+chr(ord('@')+col+1)+' of '+fname+'.csv: '+key)
+                        US_temp = readFile(data_path+address+fname+'.csv', header_ =0, index_col_ =idx, skiprows_=list(range(int(Table.loc[fname, 'skip'].item()))))
+                        US_t, label, note, footnote = US_TICS(US_temp, Series, data_path, address, fname, TICS_start, find_unknown=find_unknown)
+                        repl = 4
+                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
+                    elif source == 'Bureau Of Transportation Statistics' or source == 'Department Of Labor':
+                        fname_temp = fname
+                        if address.find('BTS') >= 0 and fname.find('http') >= 0:
+                            fname = sname
+                        TRPT_series = Series
+                        if fname == 'TRPT':
+                            Series = list(readExcelFile(data_path+address+fname+'.xls', sheet_name_=0)[0])
+                        skip = None
+                        if str(Table['skip'][fname]) != 'nan':
+                            skip = list(range(int(Table['skip'][fname])))
+                        excel = ''
+                        if str(Table['excel'][fname]) != 'nan':
+                            excel = Table['excel'][fname]
+                        head = None
+                        if str(Table['head'][fname]) != 'nan':
+                            head = list(range(int(Table['head'][fname])))
+                        index = 0
+                        if str(Table['index'][fname]) != 'nan':
+                            index = list(range(int(Table['index'][fname])))
+                        use = None
+                        if str(Table['usecols'][fname]) != 'nan':
+                            use = [int(item) for item in re.split(r', ', str(Table['usecols'][fname]))]
+                        trans = Table['transpose'][fname]
+                        suffix = Table['suffix'][fname]
+                        nm = None
+                        if str(Table['names'][fname]) != 'nan':
+                            nm = [item for item in re.split(r', ', str(Table['names'][fname]))]
+                        if fname_temp != fname:
+                            fname = fname_temp
+                        US_t, label, note, footnote, unit = US_BTSDOL(data_path, address, fname, sname, Series, header=head, index_col=index, skiprows=skip, freq=freq, x=excel, usecols=use, transpose=trans, suffix=suffix, names=nm, TRPT=TRPT_series, chrome=chrome)
+                        repl = 4
+                        repl2 = 7
+                        if suffix.find('SAT') >= 0:
+                            repl2 = 8
+                        if fname == 'TRPT':
+                            Series = TRPT_series
+                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
+                        if (address.find('UIWC') >= 0 and freq == 'M') or sname == 'Summary Table of Cargo Revenue Ton-Miles':
+                            other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
+                            note = note + US_NOTE(other_notes, sname, address=address, other=True)
+                    elif source == 'Semiconductor Equipment and Materials International':
+                        US_t, label, note, footnote = US_SEMI(data_path, address, fname, freq, chrome)
+                        label_level = None
+                        repl = None
+                    elif source == 'American Iron and Steel Institute':
+                        US_t, label, note, footnote = US_AISI(data_path, address, fname)
+                        label_level = None
+                        repl = None
+                    elif source == 'Energy Information Administration' or address.find('PETR') >= 0 or source == 'Internal Revenue Service':
+                        nrows = None
+                        skip = None
+                        if str(Table['skip'][fname]) != 'nan':
+                            skip = list(range(int(Table['skip'][fname])))
+                        excel = ''
+                        if str(Table['excel'][fname]) != 'nan':
+                            excel = Table['excel'][fname]
+                        head = None
+                        if str(Table['head'][fname]) != 'nan':
+                            head = list(range(int(Table['head'][fname])))
+                        use = None
+                        if str(Table['usecols'][fname]) != 'nan':
+                            use = lambda x: re.sub(r'[0-9]+$', "", str(x).strip()) in re.split(r', ', str(Table['usecols'][fname]))
+                        trans = Table['transpose'][fname]
+                        prefix = None
+                        if str(Table['prefix'][fname]) != 'nan':
+                            prefix = Table['prefix'][fname]
+                        if fname.find('crushed') >= 0:
+                            lines = readExcelFile(data_path+address+fname+'.xlsx', sheet_name_=sname)[0]
+                            data_head = -1
+                            l = 0
+                            while l < len(lines):
+                                if bool(re.match(r'Salient Statistics', str(lines[l]).replace('\n',''))):
+                                    data_head = l
+                                    skip = list(range(data_head))
+                                if data_head >= 0 and bool(re.match(r'Production', str(lines[l]).replace('\n',''))):
+                                    data_tail = l
+                                    nrows = data_tail-data_head
+                                    break
+                                l+=1
+                        US_t, label, note, footnote = US_EIAIRS(Series, data_path, address, fname, sname, freq, x=excel, header=head, index_col=0, skiprows=skip, transpose=trans, usecols=use, prefix=prefix, nrows=nrows, chrome=chrome)
+                        repl = prefix
+                        label_level = None
+                    elif (source == 'Bureau Of Census' or source == 'National Association of Home Builders') and address.find('FTD') < 0:
+                        subword = str(Table['subword'][(address,fname,sname)])
+                        prefix = str(Table['prefix'][(address,fname,sname)])
+                        middle = str(Table['middle'][(address,fname,sname)])
+                        suffix = str(Table['suffix'][(address,fname,sname)])
+                        file_name = None
+                        if str(Table['file_name'][(address,fname,sname)]) != 'nan':
+                            file_name = fname
+                        sheet_name = None
+                        if str(Table['sheet_name'][(address,fname,sname)]) != 'nan':
+                            sheet_name = sname
+                        datasets = None
+                        if str(Table['DataSets'][(address,fname,sname)]) != 'nan':
+                            datasets = Table['DataSets'][(address,fname,sname)]
+                        skip = None
+                        if str(Table['skip'][(address,fname,sname)]) != 'nan':
+                            skip = list(range(int(Table['skip'][(address,fname,sname)])))
+                        excel = ''
+                        if str(Table['excel'][(address,fname,sname)]) != 'nan':
+                            excel = Table['excel'][(address,fname,sname)]
+                        head = None
+                        if str(Table['head'][(address,fname,sname)]) != 'nan':
+                            head = list(range(int(Table['head'][(address,fname,sname)])))
+                        dex = None
+                        if str(Table['index_col'][(address,fname,sname)]) != 'nan':
+                            if Table['index_col'][(address,fname,sname)] == 0:
+                                dex = 0
+                            else:
+                                dex = list(range(int(Table['index_col'][(address,fname,sname)])+1))
+                        use = None
+                        if str(Table['usecols'][(address,fname,sname)]) != 'nan':
+                            use = [int(item) for item in re.split(r', ', str(Table['usecols'][(address,fname,sname)]))]
+                        trans = True
+                        if str(Table['transpose'][(address,fname,sname)]) != 'nan':
+                            trans = False
+                        HIES = False
+                        if address.find('HIES') >= 0:
+                            HIES = True
+                        password = ''
+                        if str(Table['pass'][(address,fname,sname)]) != 'nan':
+                            password = Table['pass'][(address,fname,sname)]
+                        key_text = ''
+                        if str(Table['key_text'][(address,fname,sname)]) != 'nan':
+                            key_text = Table['key_text'][(address,fname,sname)]
+                        if (address.find('MRTS') >= 0 and freq == 'Q') or (address.find('SHIP') >= 0 and freq == 'A'):
+                            for table in Series:
+                                Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
+                        if address.find('POPP') >= 0:
+                            US_temp = readFile(data_path+address+fname+'.csv', header_=0)
+                            US_t, label, note, footnote = US_POPP(US_temp, data_path, address, datasets=datasets, DIY_series=Series)
+                        elif address.find('FAMI') >= 0 or address.find('MADI') >= 0 or address.find('SCEN') >= 0:
+                            US_t, label, note, footnote, formnote = US_FAMI(prefix, middle, data_path, address, fname, sname, Series, x=excel)
+                        else:
+                            US_t, label, note, footnote = DATA_SETS(data_path, address, fname=file_name, sname=sheet_name, datasets=datasets, DIY_series=Series, MONTH=MONTH, password=password,\
+                                header=head, index_col=dex, skiprows=skip, freq=freq, x=excel, usecols=use, transpose=trans, HIES=HIES, subword=subword, prefix=prefix, middle=middle, suffix=suffix, chrome=chrome, key_text=key_text)
+                        if datasets == fname:
+                            for table in Series:
+                                if address.find('POPP') >= 0:
+                                    if table in TABLE_NAME:
+                                        Series[table] = Series[table].reset_index().set_index('aremos_key')
+                                else:
+                                    Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
+                                if address.find('HIHV') >= 0:
+                                    Series[table] = Series[table][~Series[table].index.duplicated()]
+                        if bool(Table['other_notes'][(address,fname,sname)]):
+                            other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
+                            note = note + US_NOTE(other_notes, sname, address=address, other=True)
+                        repl = int(Table['repl'][(address,fname,sname)])
+                        if str(Table['repl2'][(address,fname,sname)]) != 'nan':
+                            repl2 = int(Table['repl2'][(address,fname,sname)])
+                        location = [0,0]
+                        for l in [1,2]:
+                            if Table['loc'+str(l)][(address,fname,sname)] == 'repl':
+                                location[l-1] = repl
+                            elif Table['loc'+str(l)][(address,fname,sname)] == 'repl2':
+                                location[l-1] = repl2
+                            else:
+                                location[l-1] = int(Table['loc'+str(l)][(address,fname,sname)])
+                        if Table['level'][(address,fname,sname)] == 'C':
+                            level_name = 'CATEGORIES'
+                            level_indent = 'cat_indent'
+                        elif Table['level'][(address,fname,sname)] == 'D':
+                            level_name = 'DATA TYPES'
+                            level_indent = 'dt_indent'
+                        label_level = US_LEVEL(label, source, Series, loc1=location[0], loc2=location[1], name=level_name, indent=level_indent)
+                        if address.find('PRIC') >= 0:
+                            unit = str(readExcelFile(data_path+address+fname+'.xls', usecols_=[0], sheet_name_=sname).iloc[1][0]).strip()
+                    elif source == 'Bureau Of Census' and address.find('FTD') >= 0:
+                        prefix = str(Table['prefix'][fname])
+                        middle = str(Table['middle'][fname])
+                        suffix = str(Table['suffix'][fname])
+                        skip = None
+                        if str(Table['skip'][fname]) != 'nan':
+                            skip = list(range(int(Table['skip'][fname])))
+                        excel = ''
+                        if str(Table['excel'][fname]) != 'nan':
+                            excel = Table['excel'][fname]
+                        head = None
+                        multi = None
+                        if str(Table['head'][fname]) != 'nan' and fname != 'exh12':
+                            head = list(range(int(Table['head'][fname])))
+                        elif str(Table['head'][fname]) != 'nan' and fname == 'exh12':
+                            multi = int(Table['head'][fname])
+                        use = None
+                        if str(Table['usecols'][fname]) != 'nan':
+                            use = [int(item) for item in re.split(r', ', str(Table['usecols'][fname]))]
+                        elif str(Table['not_use'][fname]) != 'nan':
+                            use = lambda x: str(x) not in re.split(r', ', str(Table['not_use'][fname]))
+                        trans = Table['transpose'][fname]
+                        nm = None
+                        if str(Table['names'][fname]) != 'nan':
+                            ns = []
+                            for m in range(len(re.split(r'; ', str(Table['names'][fname])))):
+                                ns.append(re.split(r', ', re.split(r'; ', str(Table['names'][fname]))[m]))
+                            nm = pd.MultiIndex.from_product(ns)
+                        US_t, label, note, footnote = DATA_SETS(data_path, address, fname=fname, sname=sname, DIY_series=Series, header=head, index_col=0, skiprows=skip, freq=freq,\
+                             x=excel, usecols=use, names=nm, transpose=trans, multi=multi, prefix=prefix, middle=middle, suffix=suffix)
+                        other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
+                        note = note + US_NOTE(other_notes, sname, address=address, other=True)
+                        repl = 4
+                        repl2 = 6
+                        label_level = None
                     elif source == 'National Association of Realtors':
                         US_t = readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_='Mnemonic', skiprows_=list(range(2)), sheet_name_=sname, skipfooter_=10)
                         if US_t.empty == True:
@@ -1027,140 +1630,71 @@ for source in SOURCE:
                         US_t, label, note, footnote = US_IHS(US_t, Series, freq)
                         repl = None
                         label_level = None
-                    elif source == 'Bureau Of Census' and address.find('MTIS') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=fname, DIY_series=Series, MONTH=MONTH, password='MPC')
-                        for table in Series:
-                            Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
-                        repl = 5
-                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
-                    elif source == 'Bureau Of Census' and address.find('MWTS') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=fname, DIY_series=Series, MONTH=MONTH, password='MPC')
-                        other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
-                        note = note + US_NOTE(other_notes, sname, address=address, other=True)
-                        for table in Series:
-                            Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
-                        repl = 6
-                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
-                    elif source == 'Bureau Of Census' and address.find('MRTS') >= 0:
-                        if freq == 'M':
-                            US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=fname, DIY_series=Series, MONTH=MONTH, password='MPC')
-                            for table in Series:
-                                Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
-                        elif freq == 'Q':
-                            for table in Series:
-                                Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
-                            US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, header=[0], index_col=0, skiprows=list(range(7)), freq=freq, usecols=list(range(1,4)))
-                        other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
-                        note = note + US_NOTE(other_notes, sname, address=address, other=True)
-                        repl = 8
-                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
-                    elif source == 'Bureau Of Census' and address.find('POPT') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, header=[0], index_col=0, skiprows=list(range(2)), freq=freq, x='x')
-                        repl = 4
-                        repl2 = 6
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=repl2, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('POPP') >= 0:
-                        US_temp = readFile(data_path+address+fname+'.csv', header_=0)
-                        US_t, label, note, footnote = US_POPP(US_temp, data_path, address, datasets=fname, DIY_series=Series, password='')
-                        for table in Series:
-                            if table in TABLE_NAME:
-                                Series[table] = Series[table].reset_index().set_index('aremos_key')
-                        repl = 4
-                        repl2 = 6
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=repl2, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('CBRT') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, header=[0], freq=freq, x='x')
-                        repl = 4
-                        repl2 = 6
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=repl2, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('FAMI') >= 0:
-                        US_t, label, note, footnote, formnote = US_FAMI(TABLES, data_path, address, fname, sname, Series, x='x')
-                        repl = 6
-                        repl2 = 9
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=repl2, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('HSHD') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, header=(0,1), index_col=0, skiprows=list(range(7)), freq=freq)
-                        repl = 6
-                        repl2 = 12
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=repl2, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('URIN') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, index_col=0, freq=freq, x='x')
-                        repl = 7
-                        repl2 = 9
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=repl2, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('MADI') >= 0:
-                        US_t, label, note, footnote, formnote = US_FAMI(TABLES, data_path, address, fname, sname, Series)
-                        repl = 5
-                        repl2 = 7
-                        label_level = US_LEVEL(label, source, Series, loc1=2, loc2=repl, name='CATEGORIES', indent='cat_indent')
-                    elif source == 'Bureau Of Census' and address.find('SCEN') >= 0:
-                        US_t, label, note, footnote, formnote = US_FAMI(TABLES, data_path, address, fname, sname, Series, x='x')
-                        repl = 6
-                        repl2 = 12
-                        label_level = US_LEVEL(label, source, Series, loc1=repl, loc2=repl2, name='DATA TYPES', indent='dt_indent')
-                    elif source == 'Bureau Of Census' and address.find('QFRS') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, datasets=fname, DIY_series=Series)
-                        for table in Series:
-                            Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
-                        repl = 4
-                        label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
                     elif source == 'Bureau Of Labor Statistics' and address.find('DSCO') >= 0:
-                        US_t, label, note, footnote = DATA_SETS(TABLES, data_path, address, fname=fname, sname=sname, DIY_series=Series, header=0, index_col=(0,1), skiprows=list(range(18)), freq=freq, x='x')
+                        US_t, label, note, footnote = DATA_SETS(data_path, address, fname=fname, sname=sname, DIY_series=Series, header=0, index_col=(0,1), skiprows=list(range(18)), freq=freq, x='x')
                         repl = ''
                         label_level = None
                     elif source == 'Bureau Of Labor Statistics':
-                        if address.find('li/') >= 0 or address.find('ce/') >= 0 or address.find('pr/') >= 0 or address.find('ec/') >= 0 or address.find('mp/') >= 0 or address.find('bd/') >= 0 or address.find('jt/') >= 0:
-                            new_label = True
+                        YEAR = {'main':['M13'],'qua':['Q05'],'ann':['A01']}
+                        YEAR2 = {'main':'-M13','qua':'-Q05','ann':'-A01'}
+                        QUAR = {'main':{'M03':'Q1','M06':'Q2','M09':'Q3','M12':'Q4'}, 'other':{'Q01':'Q1','Q02':'Q2','Q03':'Q3','Q04':'Q4'}}
+                        QUAR2 = {'M03':'Q1','M06':'Q2','M09':'Q3','M12':'Q4','Q01':'Q1','Q02':'Q2','Q03':'Q3','Q04':'Q4'}
+                        RAUQ = {'main':{'Q1':'M03','Q2':'M06','Q3':'M09','Q4':'M12'}, 'other':{'Q1':'Q01','Q2':'Q02','Q3':'Q03','Q4':'Q04'}}
+                        new_label = bool(Series['datasets'].loc[address, 'NEW_LAB'])
+                        bls_key = str(Series['datasets'].loc[address, 'Y_KEY'])
+                        bls_key2 = str(Series['datasets'].loc[address, 'Q_KEY'])
+                        if bls_read == False:
+                            US_temp = readFile(address+fname, header_=0, names_=['series_id','year','period','value','footnote_codes'], acceptNoFile=True, sep_='\\t')
+                            bls_read = True
+                            if address.find('in/') >= 0 and freq == 'A':
+                                for code in Table['begin_year']:
+                                    sys.stdout.write("\rCorrection...("+str(round((list(Table['begin_year']).index(code)+1)*100/len(Table['begin_year']), 1))+"%)*")
+                                    sys.stdout.flush()
+                                    if not not list(US_temp.loc[US_temp['series_id'] == code]['year']) and Table['begin_year'][code] not in list(US_temp.loc[US_temp['series_id'] == code]['year']):
+                                        Table['begin_year'][code] = list(US_temp.loc[US_temp['series_id'] == code]['year'])[0]
+                                sys.stdout.write("\n\n")
+                            elif address.find('ml/') >= 0:
+                                delete = []
+                                for i in range(US_temp.shape[0]):
+                                    sys.stdout.write("\rDropping redundant indexes...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
+                                    sys.stdout.flush()
+                                    if Table['srd_code'][US_temp.iloc[i]['series_id']] != 'S00' or Table['dataseries_code'][US_temp.iloc[i]['series_id']] == 'Q' or Table['industryb_code'][US_temp.iloc[i]['series_id']] == 'S':
+                                        delete.append(i)
+                                sys.stdout.write("\n")
+                                US_temp = US_temp.drop(delete)
+                        if US_temp.empty == False:
+                            print('Time: ', int(time.time() - tStart),'s'+'\n') 
+                            cat_idx = str(Series['datasets'].loc[address, 'CATEGORIES'])[3:]
+                            item = str(Series['datasets'].loc[address, 'CONTENT']).lower()
+                            idb = str(Series['datasets'].loc[address, 'UNIT'])[3:]+'_code'
+                            labb = 'series_title'
+                            if str(Series['datasets'].loc[address, 'LAB_BASE']) != 'nan':
+                                labb = str(Series['datasets'].loc[address, 'LAB_BASE'])+'_code'
+                            if address.find('bd/') >= 0:
+                                cat_idx = 'industry'
+                            if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ei/') >= 0:
+                                idb = 'base_period'
+                            elif address.find('ce/') >= 0:
+                                idb = 'data_type_code'
+                            elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
+                                idb = 'base_year'
+                            elif address.find('in/') >= 0:
+                                idb = 'economicseries_code'
+                            elif address.find('ml/') >= 0:
+                                idb = 'irc_code'
+                            elif str(Series['datasets'].loc[address, 'UNIT']) == 'nan':
+                                idb = 'base_date'
+                            US_t, label, note, footnote = US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base=idb, address=address, start=bls_start, key=bls_key, key2=bls_key2, lab_base=labb, find_unknown=find_unknown)
                         else:
-                            new_label = False
-                        if address.find('ln/') >= 0 or address.find('pr/') >= 0 or address.find('mp/') >= 0 or address.find('ec/') >= 0 or address.find('bd/') >= 0:
-                            bls_key = address[-3:]
-                        else:
-                            bls_key = 'main'
-                        if (address.find('ln/') >= 0 or address.find('bd/') >= 0) and bls_start == None:#
-                            US_t = readExcelFile(data_path+'BLS/US_t_'+address[-3:-1]+'_'+freq+'.xlsx', header_ =0, index_col_=0, sheet_name_=0)
-                            footnote = []
-                            label = US_t['Label']
-                            cat_idx = 'industry'
-                            item = 'name'
-                        else:
-                            if bls_read == False:
-                                US_temp = readFile(address+fname, header_=0, names_=['series_id','year','period','value','footnote_codes'], acceptNoFile=True, sep_='\\t')
-                                bls_read = True
-                            if US_temp.empty == False:
-                                if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ei/') >= 0:
-                                    idb = 'base_period'
-                                    cat_idx = 'item'
-                                    item = 'name'
-                                elif address.find('ln/') >= 0:
-                                    idb = 'tdat_code'
-                                elif address.find('ce/') >= 0:
-                                    idb = 'data_type_code'
-                                    cat_idx = 'industry'
-                                    item = 'name'
-                                elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
-                                    idb = 'base_year'
-                                    cat_idx = 'measure'
-                                    item = 'text'
-                                elif address.find('ec/') >= 0:
-                                    idb = 'periodicity_code'
-                                    cat_idx = 'group'
-                                    item = 'text'
-                                elif address.find('bd/') >= 0 or address.find('jt/') >= 0:
-                                    idb = 'ratelevel_code'
-                                    cat_idx = 'industry'
-                                    item = 'name'
-                                    if address.find('jt/') >= 0:
-                                        item = 'text'
-                                else:
-                                    idb = 'base_date'
-                                US_t, label, note, footnote = US_BLS(US_temp, Table, freq, index_base=idb, address=address, start=bls_start, key=bls_key)
+                            continue
                         if US_t.empty == False:
-                            if address.find('ei/') >= 0 or address.find('ln/') >= 0 or address.find('ce/') >= 0 or address.find('mp/') >= 0 or address.find('bd/') >= 0:
+                            US_t.to_excel(data_path+'BLS/US_t_'+address[-3:-1]+'_'+freq+'.xlsx', sheet_name=address[-3:-1]+'_'+freq)
+                            if str(Series['datasets'].loc[address, 'NOTE']) != 'nan':
                                 note = US_NOTE(Series['NOTE'], sname, LABEL=Table, address=address, other=True)
                             if new_label == True:
                                 label = NEW_LABEL(address[-3:], label.copy(), Series, Table, cat_idx, item)
-                        repl = bls_key#fname
+                        repl = bls_key
+                        repl2 = bls_key2
                         label_level = None
                     #print(US_t)
                     #ERROR('')
@@ -1183,6 +1717,8 @@ for source in SOURCE:
                                 index.append(pd.Period(freq=freq,year=dex.year,month=dex.month,day=dex.day).strftime('%Y-Q%q'))
                                 if address.find('STL') >= 0:
                                     rename = True
+                            elif freq == 'W':
+                                index.append(dex.strftime('%Y-%m-%d'))
                         elif (address.find('CONS') >= 0 or address.find('SHIP') >= 0) and freq == 'M':
                             month = [datetime.strptime(m,'%b').strftime('%B') for m in MONTH]
                             for m in month:
@@ -1221,20 +1757,58 @@ for source in SOURCE:
                         if address.find('SHIP') >= 0:
                             US_t = US_t.sort_index(axis=1)
                             index = list(US_t.columns)
-                    print(US_t)
-                    ERROR('')
+                    
                     nG = US_t.shape[0]
-                    print('Total Columns:',nG,'Time: ', int(time.time() - tStart),'s'+'\n')        
+                    if find_unknown == True:
+                        print('Items:',nG,', Total New Items Found:', new_item_counts, 'Time: ', int(time.time() - tStart),'s'+'\n')
+                    else:
+                        print('Total Items:',nG,'Time: ', int(time.time() - tStart),'s'+'\n')        
                     for i in range(nG):
                         sys.stdout.write("\rProducing Database...("+str(round((i+1)*100/nG, 1))+"%)*")
                         sys.stdout.flush()
-
+                        
                         if str(US_t.iloc[i]['Index']) == 'ZZZZZZ' or str(US_t.iloc[i]['Index']) == 'nan' or str(US_t.iloc[i]['Index']) in CONTINUE:
                             continue
                         if address.find('bd/') >= 0:
                             if Table['state_code'][US_t.iloc[i]['Index']] != 0:
                                 continue
                         
+                        suffix = '.'+freq
+                        if source == 'Bureau Of Labor Statistics' and address.find('DSCO') < 0:
+                            group = re.sub(r'[a-z]+\.', "", Series['datasets'].loc[address, 'DATA TYPE'])
+                        if address.find('ln/') >= 0 and freq == 'Q':
+                            name = US_t.iloc[i]['Index'].replace('-','').strip()[:-1]+suffix
+                        elif address.find('cu/') >= 0 or address.find('cw/') >= 0:
+                            if bool(re.match(r'0', str(Table[group+'_code'][US_t.iloc[i]['Index']]))):
+                                name = re.sub(r'0', "", US_t.iloc[i]['Index'], 1).replace('-','').strip()+suffix
+                            else:
+                                name = US_t.iloc[i]['Index'].replace('-','').strip()+suffix
+                        elif address.find('pc/') >= 0:
+                            name = US_t.iloc[i]['Index'].replace(str(Table[group+'_code'][US_t.iloc[i]['Index']]), '', 1).replace('-','').strip()+suffix
+                        elif address.find('bd/') >= 0:
+                            name = US_t.iloc[i]['Index'].strip()[:3]+US_t.iloc[i]['Index'].strip()[13]+US_t.iloc[i]['Index'].strip()[16:19]+US_t.iloc[i]['Index'].strip()[20:26]+suffix
+                        elif address.find('jt/') >= 0:
+                            name = US_t.iloc[i]['Index'].strip()[:6]+US_t.iloc[i]['Index'].strip()[7:11]+US_t.iloc[i]['Index'].strip()[17:21]+suffix
+                        elif address.find('in/') >= 0:
+                            name = US_t.iloc[i]['Index'].strip()[:-2]+suffix
+                        elif address.find('ml/') >= 0:
+                            name = US_t.iloc[i]['Index'].strip()[:3]+US_t.iloc[i]['Index'].strip()[8]+US_t.iloc[i]['Index'].strip()[10:]+suffix
+                        elif address.find('ESMS') >= 0:
+                            name = re.sub(r'[0-9]+[A-Z]+$', "", US_t.iloc[i]['Index'].replace('-','').strip())+suffix
+                        elif address.find('MCPI') >= 0:
+                            name = re.sub(r'[A-Z]+$', "", US_t.iloc[i]['Index'].replace('-','').strip())+suffix
+                        elif address.find('FRB') >= 0:
+                            name = US_t.iloc[i]['Index'].replace('DF_BA_N','').replace('1111A4T8','11A4T8').replace('.','').replace('-','').strip()+suffix
+                            if len(name) > 17:
+                                name = name.replace('_','')
+                        else:
+                            name = US_t.iloc[i]['Index'].replace('-','').strip()+suffix
+                        
+                        if (name in DF_KEY.index and find_unknown == True) or (name not in DF_KEY.index and find_unknown == False):
+                            continue
+                        elif name not in DF_KEY.index and find_unknown == True:
+                            new_item_counts+=1
+
                         value = list(US_t.iloc[i])
                         if sname == 'FAAt210':
                             sname = 'faaT210'
@@ -1245,16 +1819,21 @@ for source in SOURCE:
                         elif freq == 'Q' and source == 'Bureau of Economic Analysis':
                             repl = '-Q'
                         code_num_dict[freq], table_num_dict[freq], DATA_BASE_dict[freq], db_table_t_dict[freq], DB_name_dict[freq], snl = \
-                            US_DATA(i, US_t, address, sname, value, index, code_num_dict[freq], table_num_dict[freq], KEY_DATA, DATA_BASE_dict[freq], db_table_t_dict[freq], DB_name_dict[freq], snl, source, FREQLIST[freq], freq, unit, label, label_level, note, footnote, series=Series, table=Table, titles=Titles, repl=repl, repl2=repl2, formnote=formnote, suffix='.'+freq)
+                            US_DATA(i, name, US_t, address, fname, sname, value, index, code_num_dict[freq], table_num_dict[freq], KEY_DATA, DATA_BASE_dict[freq],\
+                                 db_table_t_dict[freq], DB_name_dict[freq], snl, source, FREQLIST[freq], freq, unit, label, label_level, note, footnote, series=Series, \
+                                     table=Table, titles=Titles, repl=repl, repl2=repl2, formnote=formnote, YEAR=YEAR2, QUAR=QUAR2, RAUQ=RAUQ)
                     sys.stdout.write("\n\n")
+if chrome != None:
+    chrome.quit()
+    chrome = None
 
 for f in FREQNAME:
     if main_file.empty == False:
         break
     if db_table_t_dict[f].empty == False:
-        if f == 'W':
-            db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
-            FREQLIST['W'] = FREQLIST['W_s']
+        #if f == 'W':
+        #    db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
+        #    #FREQLIST['W'] = FREQLIST['W_s']
         DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
         DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))       
 
@@ -1264,49 +1843,75 @@ if main_file.empty == True:
 else:
     if merge_file.empty == True:
         ERROR('Missing Merge File')
-if df_key.empty:
-    ERROR('Empty dataframe')
-df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, DATA_BASE_dict, DB_name_dict)
+if updating == True:
+    df_key, DATA_BASE_dict = UPDATE(merge_file, main_file, key_list.remove('table_id'), NAME, out_path, merge_suf, main_suf)
+else:
+    if df_key.empty and find_unknown == False:
+        ERROR('Empty dataframe')
+    elif df_key.empty and find_unknown == True:
+        ERROR('No new items were found.')
+    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict)
+
+if main_file.empty == True and find_unknown == True:
+    NEW_TABLES['new_counts'] = [0 for i in range(NEW_TABLES.shape[0])]
+    NEW_TABLES['Total_counts'] = [NEW_TABLES.iloc[i]['counts'] for i in range(NEW_TABLES.shape[0])]
+    new_tables = pd.DataFrame()
+    for ind in range(df_key.shape[0]):
+        sys.stdout.write("\rCounting: "+str(ind+1)+" ")
+        sys.stdout.flush()
+        count = 0
+        counted = False
+        addr = re.split(r',', df_key.iloc[ind]['table_id'])[0]
+        fnm = re.split(r',', df_key.iloc[ind]['table_id'])[1]
+        snm = re.split(r',', df_key.iloc[ind]['table_id'])[2]
+        snm_l = snm.lower()
+        for i in range(NEW_TABLES.loc[(addr,fnm)].shape[0]):
+            if NEW_TABLES.loc[(addr,fnm)].iloc[i]['Source'] == 'Bureau of Economic Analysis' and (snm_l.find(str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower()) >= 0 or str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower().find(snm_l) >= 0):
+                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
+                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'Total_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['Total_counts'] + 1
+                counted = True
+                break
+            elif snm == str(NEW_TABLES.loc[(addr,fnm)].index[i]):
+                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
+                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'Total_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['Total_counts'] + 1
+                counted = True
+                break
+        if counted == False:
+            ERROR('Item not counted: name = '+df_key.iloc[ind]['name']+', table_id = '+df_key.iloc[ind]['table_id'])
+    for ind in range(NEW_TABLES.shape[0]):
+        if NEW_TABLES.iloc[ind]['new_counts'] != 0: #and NEW_TABLES.iloc[ind]['counts'] != NEW_TABLES.iloc[ind]['new_counts']:
+            new_tables = new_tables.append(NEW_TABLES.iloc[ind])
+    sys.stdout.write("\n\n")
+    df_key = df_key.drop(columns=['table_id'])
+elif main_file.empty == True:
+    df_key = df_key.drop(columns=['table_id'])
 
 print(df_key)
 #print(DATA_BASE_t)
 
 print('Time: ', int(time.time() - tStart),'s'+'\n')
-df_key.to_excel(out_path+NAME+"key.xlsx", sheet_name=NAME+'key')
-with pd.ExcelWriter(out_path+NAME+"database.xlsx") as writer: # pylint: disable=abstract-class-instantiated
-    for f in FREQNAME:
-        for d in DATA_BASE_dict[f]:
-            sys.stdout.write("\rOutputing sheet: "+str(d))
-            sys.stdout.flush()
-            if DATA_BASE_dict[f][d].empty == False:
-                DATA_BASE_dict[f][d].to_excel(writer, sheet_name = d)
-        sys.stdout.write("\n")
+df_key.to_excel(out_path+NAME+"key"+excel_suffix+".xlsx", sheet_name=NAME+'key')
+if updating == False:
+    with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+        for f in FREQNAME:
+            for d in DATA_BASE_dict[f]:
+                sys.stdout.write("\rOutputing sheet: "+str(d))
+                sys.stdout.flush()
+                if DATA_BASE_dict[f][d].empty == False:
+                    DATA_BASE_dict[f][d].to_excel(writer, sheet_name = d)
+            sys.stdout.write("\n")
 
+if main_file.empty == True and find_unknown == True: 
+    if new_tables.empty == False:
+        print('New items were found')
 print('Time: ', int(time.time() - tStart),'s'+'\n')
 
-LEFT = {}
-if keyword == 'NIPA':
-    LEFT_NIPA = []
-    LEFT['NIPA'] = {'address':'BEA/NIPA/', 'left':[]}
-elif keyword == 'FAAT':
-    LEFT_FAAT = []
-    LEFT['FAAT'] = {'address':'BEA/FAAT/', 'left':[]}
-elif keyword == 'FRB':
-    LEFT_FRB = []
-    LEFT['FRB'] = {'address':'FRB/FED_G17/', 'left':[]}
-DF_NAME = []
-for df_name in list(df_key['name']):
-    DF_NAME.append(df_name[4:-2])
-for l in LEFT:
-    series = US_KEY(LEFT[l]['address'], counting=True, key=re.sub(r'FED|BOC|HOUS|APEP', "", LEFT[l]['address']).replace('/',''))
-    for i in range(series.shape[0]):
-        if str(series.index[i]) not in DF_NAME:
-            LEFT[l]['left'].append(series.index[i])
-if keyword == 'NIPA':
-    print('Items of BEA/NIPA not found: ', len(LEFT['NIPA']['left']), '\n')
-elif keyword == 'FAAT':
-    print('Items of BEA/FAAT not found: ', len(LEFT['FAAT']['left']), '\n')
-elif keyword == 'FRB':
-    print('Items of FRB not found: ', len(LEFT['FRB']['left']), '\n')
-    print('Labels of FRB not found: ', len(CONTINUE), '\n')
-print('Time: ', int(time.time() - tStart),'s'+'\n')
+if updating == False:
+    if keyword[0].isupper():
+        checkNotFound=True
+        checkDESC=True
+    else:
+        checkNotFound=False
+        checkDESC=False
+
+    unknown_list, toolong_list, update_list, unfound_list = US_identity(out_path, df_key, DF_KEY, keyword=keyword, checkNotFound=checkNotFound, checkDESC=checkDESC)

@@ -1,13 +1,30 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import math, re, sys, calendar, os, copy, time
+import math, re, sys, calendar, os, copy, time, shutil
 import pandas as pd
 import numpy as np
+import requests as rq
 from datetime import datetime, date
 from urllib.error import HTTPError
+from pathlib import Path
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver import ActionChains
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import Select
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import NoSuchElementException
+import webdriver_manager
+from webdriver_manager.chrome import ChromeDriverManager
 
 ENCODING = 'utf-8-sig'
-data_path = './output/'
+data_path = "./data2/"
+out_path = "./output/"
+NAME = input('Bank: ')
 START_YEAR = input('Output file suffix (If test identity press 0): ')
 
 def ERROR(error_text, waiting=False):
@@ -70,6 +87,37 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
 
+def GERFIN_WEBDRIVER(chrome, suffix, header=None, index_col=None, skiprows=None, usecols=None, names=None, csv=True):
+
+    chrome.execute_script("window.open()")
+    chrome.switch_to.window(chrome.window_handles[-1])
+    chrome.get('chrome://downloads')
+    time.sleep(5)
+    excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
+    new_file_name = 'GERFIN'+str(suffix)+re.sub(r'.+?(\..+)$', r"\1", excel_file)
+    chrome.close()
+    chrome.switch_to.window(chrome.window_handles[0])
+    while True:
+        try:            
+            if csv == True:
+                GERFIN_t = readFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+            else:
+                GERFIN_t = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+        except:
+            time.sleep(1)
+        else:
+            if os.path.isfile((Path.home() / "Downloads" / new_file_name)) and excel_file != new_file_name:
+                os.remove((Path.home() / "Downloads" / new_file_name))
+            os.rename((Path.home() / "Downloads" / excel_file), (Path.home() / "Downloads" / new_file_name))
+            if os.path.isfile(data_path+new_file_name):
+                if os.path.isfile(data_path+'old/'+new_file_name):
+                    os.remove(data_path+'old/'+new_file_name)
+                shutil.move(data_path+new_file_name, data_path+'old/'+new_file_name)
+            shutil.move((Path.home() / "Downloads" / new_file_name), data_path+new_file_name)
+            break
+
+    return GERFIN_t
+
 def MERGE(merge_file, DB_TABLE, DB_CODE, freq):
     i = 0
     found = False
@@ -122,10 +170,20 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         repeated_standard = 'last'
     #print('Reading file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
     #KEY_DATA_t = readExcelFile(data_path+NAME+'key'+suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
-    print('Reading file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
-    DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
-    if type(DATA_BASE_t) != dict:
+    try:
+        with open(data_path+NAME+'database_num'+suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+            database_num = int(f.read().replace('\n', ''))
         DATA_BASE_t = {}
+        for i in range(1,database_num+1):
+            print('Reading file: '+NAME+'database_'+str(i)+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+            DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+            for d in DB_t.keys():
+                DATA_BASE_t[d] = DB_t[d]
+    except:
+        print('Reading file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+        DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
+        if type(DATA_BASE_t) != dict:
+            DATA_BASE_t = {}
     
     print('Concating file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
     KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
@@ -253,14 +311,34 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
 
     return KEY_DATA_t, DATA_BASE_dict
 
-def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf):
+def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf, FREQLIST=None):
     updated = 0
     tStart = time.time()
     print('Updating file: ', int(time.time() - tStart),'s'+'\n')
-    print('Reading original database: '+NAME+'database'+orig_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
-    original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
-    print('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
-    updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    try:
+        with open(data_path+NAME+'database_num'+orig_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+            database_num = int(f.read().replace('\n', ''))
+        original_database = {}
+        for i in range(1,database_num+1):
+            print('Reading file: '+NAME+'database_'+str(i)+orig_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+            DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+            for d in DB_t.keys():
+                original_database[d] = DB_t[d]
+    except:
+        print('Reading original database: '+NAME+'database'+orig_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+        original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    try:
+        with open(data_path+NAME+'database_num'+up_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+            database_num = int(f.read().replace('\n', ''))
+        updated_database = {}
+        for i in range(1,database_num+1):
+            print('Reading file: '+NAME+'database_'+str(i)+up_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+            DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+            for d in DB_t.keys():
+                updated_database[d] = DB_t[d]
+    except:
+        print('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
+        updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
     
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
@@ -285,9 +363,30 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
             ERROR('Updated file index does not belongs to the original file index list: '+ind)
     sys.stdout.write("\n\n")
     for key in original_database.keys():
-        original_database[key] = original_database[key].sort_index(axis=0)
+        original_database[key] = original_database[key].sort_index(axis=0, ascending=False)
+        if FREQLIST != None:
+            original_database[key] = original_database[key].reindex(FREQLIST[key[3]])
     original_file = original_file.reset_index()
     original_file = original_file.reindex(key_list, axis='columns')
     print('updated:', updated, '\n')
 
     return original_file, original_database
+
+def GERFIN_CRAW(g, head, skip, url='https://sdw.ecb.europa.eu/browse.do?node=9691296',FILTER=['CURRENCY.18', 'CURRENCY_DENOM.18', 'EXR_TYPE.18', 'EXR_SUFFIX.18']):
+
+    options = Options()
+    options.add_argument("--disable-notifications")
+    options.add_experimental_option("prefs", {"profile.default_content_setting_values.cookies": 2})
+    chrome = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+    chrome.get(url)
+    time.sleep(5)
+    Select(chrome.find_element_by_name('FREQ.18')).select_by_value('D')
+    for fil in FILTER:
+        selection = Select(chrome.find_element_by_name(fil))
+        for s in range(len(selection.options)):
+            selection.select_by_index(s)
+    chrome.execute_script("document.getElementById('exportOptions').setAttribute('style', 'display: block;')")
+    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@id="exportOptions"]/a[text()="Excel (csv)"]'))).click()
+    GERFIN_t = GERFIN_WEBDRIVER(chrome, g, header=head, index_col=0, skiprows=skip)
+
+    return GERFIN_t

@@ -1,123 +1,131 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import math, re, sys, calendar, os, copy, time
+import math, re, sys, calendar, os, copy, time, numpy
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
+import GERFIN_concat as CCT
+from GERFIN_concat import ERROR, readExcelFile
 
 ENCODING = 'utf-8-sig'
-data_path = './output/'
-NAME = 'EIKON'
-NAME1 = ''
-NAME2 = '_old'
+data_path = "./output/"
+with open(data_path+CCT.NAME+'_TOT_name.txt','r',encoding='ANSI') as f:
+    DF_suffix = f.read()
 
-def ERROR(error_text):
-    print('\n\n= ! = '+error_text+'\n\n')
-    with open('./ERROR.log','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(error_text)
-    sys.exit()
-def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, \
-             header_=None,skiprows_=None,index_col_=None,sheet_name_=None):
-    try:
-        t = pd.read_excel(dir, header=header_,skiprows=skiprows_,index_col=index_col_,sheet_name=sheet_name_)
-        #print(t)
-        return t
-    except FileNotFoundError:
-        if acceptNoFile:
-            return default
-        else:
-            ERROR('找不到檔案：'+dir)
-    except:
-        try: #檔案編碼格式不同
-            t = pd.read_excel(dir, header=header_,skiprows=skiprows_,index_col=index_col_,sheet_name=sheet_name_)
-            #print(t)
-            return t
-        except:
-            return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+if CCT.START_YEAR != "0":
+    local = False
+    checkDESC = True
+else:
+    local = True #bool(int(input('Check from local data (1/0): ')))
+    checkDESC = bool(int(input('Check data description (1/0): ')))
 
-#def CONCATE(df_key, DB_A, DB_Q, DB_M, DB_name_A, DB_name_Q, DB_name_M):
+def GERFIN_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True, checkOnly='', checkIgnore=[]):
     
-DB_TABLE = 'DB_'
-DB_CODE = 'data'
-this_year = datetime.now().year + 1
-Year_list = [tmp for tmp in range(1947,this_year)]
-Quarter_list = []
-for q in range(1947,this_year):
-    for r in range(1,5):
-        Quarter_list.append(str(q)+'-Q'+str(r))
-Month_list = []
-for y in range(1947,this_year):
-    for m in range(1,13):
-        Month_list.append(str(y)+'-'+str(m).rjust(2,'0'))
+    tStart = time.time()
 
-tStart = time.time()
-print('Reading file: '+NAME+'_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
-KEY_DATA_t = readExcelFile(data_path+NAME+'_key'+NAME1+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_=NAME+'_key')
-print('Reading file: '+NAME+'_key'+NAME2+', Time: ', int(time.time() - tStart),'s'+'\n')
-df_key = readExcelFile(data_path+NAME+'_key'+NAME2+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_=NAME+'_key')
-#print('Reading file: EIKON_database, Time: ', int(time.time() - tStart),'s'+'\n')
-#DATA_BASE_t = readExcelFile(data_path+'EIKON_database.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    print('Checking Identities: ', int(time.time() - tStart),'s'+'\n')
+    df_key = df_key.set_index('name')
+    
+    unknown = 0
+    unknown_list = []
+    unknown_earliest = str(datetime.today().year)
+    toolong = 0
+    toolong_list = []
+    toomanymonths = False
+    includingweekly = False
+    notsame = 0
+    updated = 0
+    update_list = []
+    CHECK = ['desc_e', 'desc_c', 'freq', 'base', 'quote', 'source', 'form_e', 'form_c']
+    UPDATE = ['last']
+    for ind in df_key.index:
+        sys.stdout.write("\rChecking Index: "+ind+" ")
+        sys.stdout.flush()
+        if str(df_key.loc[ind, 'desc_e']).find(checkOnly) < 0:
+            continue
+        to_be_ignore = False
+        for ignore in checkIgnore:
+            if str(df_key.loc[ind, 'desc_e']).find(ignore) >= 0:
+                to_be_ignore = True
+                break
+        if to_be_ignore == True:
+            continue
+        if len(ind) > 17:
+            toolong_list.append(ind)
+            toolong += 1
+        if df_key.loc[ind, 'freq'] == 'M' and str(df_key.loc[ind, 'last']) !='Nan':
+            if datetime.strptime(df_key.loc[ind, 'last'], '%Y-%m')-relativedelta(months=1000) > datetime.strptime(df_key.loc[ind, 'start'], '%Y-%m'):
+                toomanymonths = True
+        if df_key.loc[ind, 'freq'] == 'W':
+            includingweekly = True
+        if ind not in DF_KEY.index:
+            #print('Index Unknown: '+ind)
+            unknown_list.append([ind, df_key.loc[ind, 'start']])
+            if str(df_key.loc[ind, 'start'])[:4] < unknown_earliest:
+                unknown_earliest = str(df_key.loc[ind, 'start'])[:4]
+            unknown += 1
+        else:
+            for check in CHECK:
+                if str(df_key.loc[ind, check]).strip().lower() != str(DF_KEY.loc[ind, check]).strip().lower():
+                    if check == 'start' and (str(DF_KEY.loc[ind, check]).strip() == 'Nan' or str(df_key.loc[ind, check]).strip() < str(DF_KEY.loc[ind, check]).strip()):
+                        continue
+                    elif str(DF_KEY.loc[ind, check]).strip() == 'nan' and str(df_key.loc[ind, check]).strip() == '':
+                        continue
+                    elif checkDESC == False and (check == 'desc_e' or check == 'desc_c' or check == 'form_e' or check == 'form_c'):
+                        continue
+                    print(check+' error')
+                    if check == 'desc_e' and str(df_key.loc[ind, check]).replace(str(DF_KEY.loc[ind, check]), '') != str(df_key.loc[ind, check]):
+                        print('df_key(not equal part) = '+str(df_key.loc[ind, check]).replace(str(DF_KEY.loc[ind, check]), ''))
+                    else:
+                        print('DF_KEY = '+str(DF_KEY.loc[ind, check]))
+                        print('df_key = '+str(df_key.loc[ind, check]))
+                    notsame += 1
+            for update in UPDATE:
+                if type(df_key.loc[ind, update]) != type(DF_KEY.loc[ind, update]) and df_key.loc[ind, update] != DF_KEY.loc[ind, update]:
+                    if str(DF_KEY.loc[ind, update]).strip() == 'Nan' or ((type(DF_KEY.loc[ind, update]) == int or type(DF_KEY.loc[ind, update]) == numpy.int64) and (type(df_key.loc[ind, update]) == int or type(df_key.loc[ind, update]) == numpy.int64)):
+                        continue
+                    print('DF_KEY = '+str(DF_KEY.loc[ind, update])+', type =', type(DF_KEY.loc[ind, update]))
+                    print('df_key = '+str(df_key.loc[ind, update])+', type =', type(df_key.loc[ind, update]))
+                    print('Incorrect Time Type')
+                    continue
+                if df_key.loc[ind, update] != DF_KEY.loc[ind, update] and str(DF_KEY.loc[ind, update]).strip() == 'Nan':
+                    continue
+                if df_key.loc[ind, update] > DF_KEY.loc[ind, update]:
+                    update_list.append(ind)
+                    updated += 1
+                elif df_key.loc[ind, update] < DF_KEY.loc[ind, update]:
+                    print('The program did not fetch the latest data for: '+ind)  
+    sys.stdout.write("\n")
+    print('unknown: ', unknown)
+    if unknown != 0:
+        print('unknown earliest: ', unknown_earliest)
+    print('nametoolong: ', toolong)
+    print('notsame: ', notsame)
+    print('updated: ', updated)
+    print('includingweekly: ', str(includingweekly))
+    print('toomanymonths: ', str(toomanymonths))
 
-print('Concating file: '+NAME+'_key'+NAME1+', Time: ', int(time.time() - tStart),'s'+'\n')
-KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
-"""
-print('Concating file: EIKON_database, Time: ', int(time.time() - tStart),'s'+'\n')
-for d in DB_name_A:
-    sys.stdout.write("\rConcating sheet: "+str(d))
-    sys.stdout.flush()
-    if d in DATA_BASE_t.keys():
-        DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_A[d])
-    else:
-        DATA_BASE_t[d] = DB_A[d]
-sys.stdout.write("\n")
-for d in DB_name_Q:
-    sys.stdout.write("\rConcating sheet: "+str(d))
-    sys.stdout.flush()
-    if d in DATA_BASE_t.keys():
-        DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_Q[d])
-    else:
-        DATA_BASE_t[d] = DB_Q[d]
-sys.stdout.write("\n")
-for d in DB_name_M:
-    sys.stdout.write("\rConcating sheet: "+str(d))
-    sys.stdout.flush()
-    if d in DATA_BASE_t.keys():
-        DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_M[d])
-    else:
-        DATA_BASE_t[d] = DB_M[d]
-sys.stdout.write("\n")
-"""
-print('Time: ', int(time.time() - tStart),'s'+'\n')
-KEY_DATA_t = KEY_DATA_t.sort_values(by=['name', 'db_table'], ignore_index=True)
-unrepeated = 0
-#unrepeated_index = []
-for i in range(1, len(KEY_DATA_t)):
-    if KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i-1] and KEY_DATA_t['name'][i] != KEY_DATA_t['name'][i+1]:
-        #if str(KEY_DATA_t['last'][i]) >= '2010':
-        print(list(KEY_DATA_t.iloc[i]),'\n')
-        unrepeated += 1
-        #repeated_index.append(i)
-        #print(KEY_DATA_t['name'][i],' ',KEY_DATA_t['name'][i-1])
-        #key = KEY_DATA_t.iloc[i]
-        #DATA_BASE_t[key['db_table']] = DATA_BASE_t[key['db_table']].drop(columns = key['db_code'])
-        #unrepeated_index.append(i)
-        
-    #sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
-    #sys.stdout.flush()
-#sys.stdout.write("\n")
-print('unrepeated: ', unrepeated)
-#for i in unrepeated_index:
-    #sys.stdout.write("\rDropping repeated data key(s): "+str(i))
-    #sys.stdout.flush()
-    #KEY_DATA_t = KEY_DATA_t.drop([i])
-#sys.stdout.write("\n")
-"""
-KEY_DATA_t.reset_index(drop=True, inplace=True)
-if KEY_DATA_t.iloc[0]['snl'] != 1:
-    KEY_DATA_t.loc[0, 'snl'] = 1
-for s in range(1,KEY_DATA_t.shape[0]):
-    sys.stdout.write("\rSetting new snls: "+str(s))
-    sys.stdout.flush()
-    KEY_DATA_t.loc[s, 'snl'] = KEY_DATA_t.loc[0, 'snl'] + s
-sys.stdout.write("\n")
-"""
+    unfound = 0
+    unfound_list = []
+    if checkNotFound == True:
+        for ind in DF_KEY.index:
+            sys.stdout.write("\rChecking Index: "+ind+" ")
+            sys.stdout.flush()
+            if ind not in df_key.index:
+                #print('Index Not Found: '+ind)
+                unfound_list.append(ind)
+                unfound += 1
+        sys.stdout.write("\n")
+        print('unfound: ', unfound)
+    
+    return unknown_list, toolong_list, update_list, unfound_list
+
+if local == True:
+    main_suf = input('Main data suffix: ')
+    print('Reading file: GERFIN_key'+main_suf+'\n')
+    df_key = readExcelFile(data_path+'GERFIN_key'+main_suf+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='GERFIN_key')
+    print('Reading TOT file: GERFIN_key'+DF_suffix+'\n')
+    DF_KEY = readExcelFile(data_path+'GERFIN_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='GERFIN_key')
+    DF_KEY = DF_KEY.set_index('name') 
+    unknown_list, toolong_list, update_list, unfound_list = GERFIN_identity(data_path, df_key, DF_KEY, checkDESC=checkDESC)
