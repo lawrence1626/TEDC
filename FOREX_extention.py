@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
 # pylint: disable=unbalanced-tuple-unpacking
-import math, re, sys, calendar, os, copy, time, shutil
+import math, re, sys, calendar, os, copy, time, shutil, logging
 import pandas as pd
 import numpy as np
 import requests as rq
@@ -20,24 +20,25 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import StaleElementReferenceException
 import webdriver_manager
 from webdriver_manager.chrome import ChromeDriverManager
 
 NAME = 'FOREX_'
-databank = 'FOREX'
+databank = NAME[:-1]
 base_year = ['1999','2010','2015']
 ENCODING = 'utf-8-sig'
 data_path = "./data/"
 out_path = "./output/"
 DB_TABLE = 'DB_'
 DB_CODE = 'data'
-START_YEAR = input('Output file suffix (If test identity press 0): ')
+excel_suffix = input('Output file suffix (If test identity press 0): ')
 find_unknown = False
 main_suf = '?'
 merge_suf = '?'
-dealing_start_year = 1999
-start_year = 1999
-if START_YEAR != '0':
+dealing_start_year = 1940
+start_year = 1940
+if excel_suffix != '0':
     merging = bool(int(input('Merging data file (1/0): ')))
     updating = bool(int(input('Updating TOT file (1/0): ')))
     if merging and updating:
@@ -81,9 +82,9 @@ def ERROR(error_text, waiting=False):
         sys.stdout.write("\r"+error_text)
         sys.stdout.flush()
     else:
-        print('\n\n= ! = '+error_text+'\n\n')
-    with open('./ERROR.log','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(error_text)
+        sys.stdout.write('\n\n')
+        logging.error('= ! = '+error_text)
+        sys.stdout.write('\n\n')
     sys.exit()
 
 def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,encoding_=ENCODING,engine_='python',sep_=None, wait=False):
@@ -136,6 +137,223 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
 
+def PRESENT(file_path):
+    if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
+        logging.info('Present File Exists. Reading Data From Default Path.\n')
+        return True
+    else:
+        return False
+
+def FOREX_WEBDRIVER(chrome, file_name, header=None, index_col=None, skiprows=None, usecols=None, names=None, csv=True, Zip=False):
+
+    chrome.execute_script("window.open()")
+    chrome.switch_to.window(chrome.window_handles[-1])
+    chrome.get('chrome://downloads')
+    time.sleep(3)
+    try:
+        if chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content #tag')").text == '已刪除':
+            ERROR('The file was not properly downloaded')
+    except JavascriptException:
+        ERROR('The file was not properly downloaded')
+    excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
+    new_file_name = file_name+re.sub(r'.+?(\..+)$', r"\1", excel_file)
+    chrome.close()
+    chrome.switch_to.window(chrome.window_handles[0])
+    FOREX_t = pd.DataFrame()
+    while True:
+        try:
+            if Zip == True:
+                FOREX_zip = new_file_name
+                if os.path.isfile((Path.home() / "Downloads" / excel_file)) == False:
+                    sys.stdout.write("\rWaiting for Download...")
+                    sys.stdout.flush()
+                    raise FileNotFoundError
+            else:
+                if csv == True:
+                    FOREX_t = readFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                else:
+                    FOREX_t = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+            if type(FOREX_t) != dict and FOREX_t.empty == True and Zip == False:
+                break
+        except:
+            time.sleep(1)
+        else:
+            sys.stdout.write('\nDownload Complete\n\n')
+            if os.path.isfile((Path.home() / "Downloads" / new_file_name)) and excel_file != new_file_name:
+                os.remove((Path.home() / "Downloads" / new_file_name))
+            os.rename((Path.home() / "Downloads" / excel_file), (Path.home() / "Downloads" / new_file_name))
+            if os.path.isfile(data_path+new_file_name):
+                if datetime.fromtimestamp(os.path.getmtime(data_path+new_file_name)).strftime('%Y-%m') ==\
+                     datetime.fromtimestamp(os.path.getmtime((Path.home() / "Downloads" / new_file_name))).strftime('%Y-%m'):
+                    os.remove(data_path+new_file_name)
+                else:
+                    if os.path.isfile(data_path+'old/'+new_file_name):
+                        os.remove(data_path+'old/'+new_file_name)
+                    shutil.move(data_path+new_file_name, data_path+'old/'+new_file_name)
+            shutil.move((Path.home() / "Downloads" / new_file_name), data_path+new_file_name)
+            break
+    if type(FOREX_t) != dict and FOREX_t.empty == True and Zip == False:
+        ERROR('Empty DataFrame')
+
+    if Zip == True:
+        return FOREX_zip
+    else:
+        return FOREX_t
+
+def FOREX_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=False):
+    
+    link_list = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
+    link_found = False
+    for link in link_list:
+        if (text_match == True and link.text.find(keyword) >= 0) or (text_match == False and link.get_attribute(get_attribute).find(keyword) >= 0):
+            link_found = True
+            link.click()
+            break
+    link_meassage = None
+    if link_found == False:
+        if text_match == True:
+            key_string = link.text
+        else:
+            key_string = link.get_attribute(get_attribute)
+        link_meassage = 'Link Not Found in key string: '+key_string+', key = '+keyword
+    return link_found, link_meassage
+
+def FOREX_WEB(chrome, g, file_name, url, header=None, index_col=0, skiprows=None, csv=False, output=False, Zip=False, start_year=None, FREQ=None, ITEM=None, index_file=None, freq=''):
+
+    link_found = False
+    link_message = None
+    logging.info('Downloading file: FOREX_'+str(g)+freq+'\n')
+    chrome.get(url)
+
+    y = 0
+    height = chrome.execute_script("return document.documentElement.scrollHeight")
+    FOREX_t = pd.DataFrame()
+    while True:
+        if link_found == True:
+            break
+        try:
+            chrome.execute_script("window.scrollTo(0,"+str(y)+")")
+            if g == 1 or g == 2 or g == 8 or g == 9:
+                WebDriverWait(chrome, 20).until(EC.element_to_be_clickable((By.XPATH, './/div[select[@name="FREQ.18"]]/div/ul'))).click()
+                for f in FREQ:
+                    for d in range(FREQ[f]):
+                        ActionChains(chrome).send_keys(Keys.DOWN).perform()
+                    ActionChains(chrome).send_keys(Keys.ENTER).perform()
+                ActionChains(chrome).click(chrome.find_element_by_xpath('.//div[select[@name="FREQ.18"]]/div/ul/li/input')).perform()
+                WebDriverWait(chrome, 15).until(EC.visibility_of_element_located((By.XPATH, './/div[select[@name="FREQ.18"]]/div/ul/li[@class="select2-search-choice"]/div')))
+                element_list = [el.text for el in chrome.find_elements_by_xpath('.//div[select[@name="FREQ.18"]]/div/ul/li[@class="select2-search-choice"]/div')]
+                for f in FREQ:
+                    if f not in element_list:
+                        chrome.refresh()
+                        raise FileNotFoundError
+                for el in element_list:
+                    if el not in FREQ:
+                        chrome.refresh()
+                        raise FileNotFoundError
+                sys.stdout.write("\rWaiting for Download...")
+                sys.stdout.flush()
+                if g == 1 or g == 2:
+                    chrome.find_element_by_xpath('.//span[@class="download"]').click()
+                    target = chrome.find_element_by_id('exportOptions')
+                    link_found, link_meassage = FOREX_WEB_LINK(target, url, keyword='Excel', text_match=True)
+                else:
+                    chrome.find_element_by_xpath('.//a[@class="dataTable"]').click()
+                    while True:
+                        sys.stdout.write("\rWaiting for Download...")
+                        sys.stdout.flush()
+                        try:
+                            #WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@name="start"]'))).send_keys('01-01-'+str(start_year))
+                            FOREX_t = pd.read_html(chrome.find_element_by_id('dataTableID').get_attribute('outerHTML'), header=header, index_col=index_col, skiprows=skiprows)[0]
+                            FOREX_t.index.name = 'Period'
+                        except NoSuchElementException:
+                            time.sleep(1)
+                        else:
+                            sys.stdout.write('\nDownload Complete\n\n')
+                            FOREX_t.columns = pd.MultiIndex.from_tuples([index_file.loc[index_file['Currency'] == str(col)].values[0].tolist() for col in FOREX_t.columns])
+                            break
+                    #ActionChains(chrome).send_keys(Keys.ENTER).perform()
+                    link_found = True
+            elif g >= 3 and g <= 7:
+                WebDriverWait(chrome, 15).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="PPTSScrollBarContainer"]')))
+                if g >= 3 and g <= 6:
+                    chrome.find_element_by_xpath('.//div[@class="PPTabControlItems"]/div[contains(., "'+FREQ[freq]+'")]').click()
+                    while True:
+                        time.sleep(5)
+                        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/td[@class="Custom PPTextBoxSideContainer"]/div/div'))).click()
+                        ActionChains(chrome).move_to_element(chrome.find_element_by_xpath('.//td[input[@class="PPTextBoxInput"]]')).send_keys(ITEM[g]).perform()
+                        time.sleep(5)
+                        WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/table[@class="PPTLVNodesTable"]/tbody/tr'))).click()
+                        try:
+                            WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="PPTSCellConText"][contains(text(), "'+ITEM[g]+'")]')))
+                            #chrome.find_element_by_xpath('.//div[@class="PPTSCellConText"][contains(text(), "'+ITEM[g]+'")]')
+                        except (NoSuchElementException, StaleElementReferenceException):
+                            time.sleep(1)
+                        else:
+                            report = 'Selected sheets'
+                            break
+                else:
+                    report = 'Entire report'
+                chrome.find_element_by_id('ExportSplitButton').click()
+                chrome.find_element_by_id('ExportMenuItemXLSX').click()
+                while True:
+                    chrome.find_element_by_xpath('.//span[contains(., "'+report+'")]').click()
+                    if report == 'Selected sheets':
+                        chrome.find_element_by_xpath('.//span[contains(., "'+FREQ[freq]+'")]').click()
+                    if chrome.find_element_by_xpath('.//span[contains(., "'+report+'")]/div').get_attribute('class') != 'RBImg Checked':
+                        continue
+                    elif report == 'Selected sheets' and chrome.find_element_by_xpath('.//span[contains(., "'+FREQ[freq]+'")]/div').get_attribute('class') != 'CBImg Checked':
+                        continue
+                    else:
+                        break
+                chrome.find_element_by_xpath('.//div[div[div[text()="OK"]]]').click()
+                link_found = True
+            if link_found == False:
+                raise FileNotFoundError
+        except (FileNotFoundError, TimeoutException):
+            y+=500
+            if (y > min(height, 5000) and link_found == False):
+                if link_message != None:
+                    ERROR(link_message)
+                else:
+                    ERROR('Download File Not Found.')
+        except Exception as e:
+            ERROR(str(e))
+        else:
+            break
+    time.sleep(3)
+    if output == True:
+        if csv == True:
+            FOREX_t.to_csv(data_path+file_name+'.csv')
+        else:
+            FOREX_t.to_excel(data_path+file_name+'.xlsx', sheet_name='Exchange Rates')
+    else:
+        FOREX_t = FOREX_WEBDRIVER(chrome, file_name, header=header, index_col=index_col, skiprows=skiprows, csv=csv, Zip=Zip)
+
+    return FOREX_t
+
+def FOREX_IMF(FOREX_temp, file_path):
+    try:
+        FOREX_his = readExcelFile(file_path, header_ =[0], index_col_=0, sheet_name_=0)
+        if str(FOREX_his.columns[0])[:4].isnumeric() == False:
+            raise IndexError
+    except IndexError:
+        FOREX_his = readExcelFile(file_path, header_ =[0], index_col_=1, skiprows_=list(range(6)), sheet_name_=0)
+    
+    if 'Curaçao and Sint Maarten' in FOREX_temp.index and 'Netherlands Antilles' in FOREX_temp.index:
+        FOREX_temp.loc['Netherlands Antilles'] = FOREX_temp.loc['Netherlands Antilles'].replace('...', 0)
+        FOREX_temp.loc['Curaçao and Sint Maarten'] = FOREX_temp.loc['Curaçao and Sint Maarten'].replace('...', 0)
+        FOREX_temp.loc['Netherlands Antilles'] += FOREX_temp.loc['Curaçao and Sint Maarten']
+        FOREX_temp = FOREX_temp.drop(['Curaçao and Sint Maarten'])
+    elif 'Curaçao and Sint Maarten' in FOREX_temp.index:
+        FOREX_temp.index = [dex if dex != 'Curaçao and Sint Maarten' else 'Netherlands Antilles' for dex in FOREX_temp.index]
+    FOREX_t = pd.concat([FOREX_temp, FOREX_his], axis=1).dropna(how='all').dropna(axis=1, how='all')
+    FOREX_t = FOREX_t.loc[:, ~FOREX_t.columns.duplicated()].sort_index(axis=0).sort_index(axis=1).replace('...', np.NaN)
+    if 'Scale' in FOREX_t.columns:
+        FOREX_t = FOREX_t.drop(columns=['Scale'])
+    FOREX_t.to_excel(file_path, sheet_name='Exchange Rates')
+
+    return FOREX_t
+
 Base = readExcelFile(data_path+'base_year.xlsx', header_ = [0],index_col_=0)
 Country = readFile(data_path+'Country.csv', header_ = 0)
 ECB = Country.set_index('Currency_Code').to_dict()
@@ -143,7 +361,7 @@ IMF = Country.set_index('IMF_country').to_dict()
 CRC = Country.set_index('Country_Code').to_dict()
 OLC = Country.set_index('Country_Code').to_dict()
 CCOFER = Country.set_index('Country_Name').to_dict()
-def COUNTRY(code):
+def COUNTRY(code, noprint=False):
     if code in ECB['Country_Code']:
         return str(ECB['Country_Code'][code])
     elif code in IMF['Country_Code']:
@@ -153,7 +371,10 @@ def COUNTRY(code):
     elif code in CRC['Country_Name']:
         return str(code)
     else:
-        ERROR('國家代碼錯誤: '+code)
+        if noprint == True:
+            raise IndexError
+        else:
+            ERROR('國家代碼錯誤: '+code)
 def CURRENCY(code):
     if code in ECB['Currency_Name']:
         return str(ECB['Currency_Name'][code])
@@ -205,37 +426,6 @@ before2 = ['Ecb','1 Ecu','Sdr','Ifs','Ihs','Imf','Iso','Exchange S ','Rate S ','
 after2 = ['ECB','1 ECU','SDR','IFS','IHS','IMF','ISO','Exchanges ','Rates ','am','pm','of ',"People's","People's",'USD','US ','weekly','','CFA','CFP','Foreign Exchange','Rate,','Rate.','NSA','COFER','and ','in ','): Total','or ','LUF','EMU ','REXA','REXEURD','REXE','REXEURE','REXI','REXEURI','Subsidized by']
 before3 = ['CYPrus','EURo']
 after3 = ['Cyprus','Euro']
-
-def FOREX_WEBDRIVER(chrome, suffix, header=None, index_col=None, skiprows=None, usecols=None, names=None, csv=True):
-
-    chrome.execute_script("window.open()")
-    chrome.switch_to.window(chrome.window_handles[-1])
-    chrome.get('chrome://downloads')
-    time.sleep(5)
-    excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
-    new_file_name = 'GERFIN'+str(suffix)+re.sub(r'.+?(\..+)$', r"\1", excel_file)
-    chrome.close()
-    chrome.switch_to.window(chrome.window_handles[0])
-    while True:
-        try:            
-            if csv == True:
-                FOREX_t = readFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
-            else:
-                FOREX_t = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
-        except:
-            time.sleep(1)
-        else:
-            if os.path.isfile((Path.home() / "Downloads" / new_file_name)) and excel_file != new_file_name:
-                os.remove((Path.home() / "Downloads" / new_file_name))
-            os.rename((Path.home() / "Downloads" / excel_file), (Path.home() / "Downloads" / new_file_name))
-            if os.path.isfile(data_path+new_file_name):
-                if os.path.isfile(data_path+'old/'+new_file_name):
-                    os.remove(data_path+'old/'+new_file_name)
-                shutil.move(data_path+new_file_name, data_path+'old/'+new_file_name)
-            shutil.move((Path.home() / "Downloads" / new_file_name), data_path+new_file_name)
-            break
-
-    return FOREX_t
 
 def MERGE(merge_file, DB_TABLE, DB_CODE, freq):
     i = 0
@@ -291,7 +481,9 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
     #KEY_DATA_t = readExcelFile(data_path+NAME+'key'+suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
     print('Reading file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
     DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
-    if type(DATA_BASE_t) != dict:
+    if KEY_DATA_t.empty == False and type(DATA_BASE_t) != dict:
+        ERROR(NAME+'database'+suf+'.xlsx Not Found.')
+    elif type(DATA_BASE_t) != dict:
         DATA_BASE_t = {}
     
     print('Concating file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
@@ -431,6 +623,7 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
     original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
     print('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
     updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    CAT = ['desc_e', 'desc_c', 'base', 'quote', 'form_e', 'form_c']
     
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
@@ -439,18 +632,23 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
         sys.stdout.flush()
 
         if ind in original_file.index:
-            original_file.loc[ind, 'desc_e'] = updated_file.loc[ind, 'desc_e']
+            for c in CAT:
+                original_file.loc[ind, c] = updated_file.loc[ind, c]
             if updated_file.loc[ind, 'last'] == 'Nan':
                 continue
             elif (original_file.loc[ind, 'last'] == 'Nan' and updated_file.loc[ind, 'last'] != 'Nan') or updated_file.loc[ind, 'last'] > original_file.loc[ind, 'last']:
                 updated+=1
             if updated_file.loc[ind, 'last'] != 'Nan':
                 original_file.loc[ind, 'last'] = updated_file.loc[ind, 'last']
+            if updated_file.loc[ind, 'start'] != 'Nan' and (original_file.loc[ind, 'start'] == 'Nan' or updated_file.loc[ind, 'start'] < original_file.loc[ind, 'start']):
+                original_file.loc[ind, 'start'] = updated_file.loc[ind, 'start']
             for period in updated_database[updated_file.loc[ind, 'db_table']].index:
                 if updated_file.loc[ind, 'db_table'][3] == 'W' and type(period) != str:
                     period = period.strftime('%Y-%m-%d')
                 if str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) != 'nan':
                     original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]
+                elif period >= updated_file.loc[ind, 'start'] and str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) == 'nan':
+                    original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = ''
         else:
             ERROR('Updated file index does not belongs to the original file index list: '+ind)
     sys.stdout.write("\n\n")
@@ -623,7 +821,7 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                     name = frequency+COUNTRY(FOREX_t.index[ind])+'REXSDRE'+suffix
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRE'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -631,9 +829,9 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                                     break
                             if done == False:
                                 name_replicate.append(replicate_name)
-                        if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
+                        """if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRE'+suffix
-                            name_replicate.append(replicate_name)
+                            name_replicate.append(replicate_name)"""
                     if COUNTRY(FOREX_t.index[ind]) == '111':
                         replicate_name = frequency+'001REXI'+suffix
                         name_replicate.append(replicate_name)
@@ -641,7 +839,7 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                     name = frequency+COUNTRY(FOREX_t.index[ind])+'REXSDRDE'+suffix
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRDE'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -649,9 +847,9 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                                     break
                             if done == False:
                                 name_replicate.append(replicate_name)
-                        if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
+                        """if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRDE'+suffix
-                            name_replicate.append(replicate_name)
+                            name_replicate.append(replicate_name)"""
                     if COUNTRY(FOREX_t.index[ind]) == '111':
                         replicate_name = frequency+'001REXE'+suffix
                         name_replicate.append(replicate_name)
@@ -660,7 +858,7 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                     name = frequency+COUNTRY(FOREX_t.index[ind])+'REXSDRA'+suffix
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRA'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -668,9 +866,9 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                                     break
                             if done == False:
                                 name_replicate.append(replicate_name)
-                        if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
+                        """if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRA'+suffix
-                            name_replicate.append(replicate_name)
+                            name_replicate.append(replicate_name)"""
                     if COUNTRY(FOREX_t.index[ind]) == '111':
                         replicate_name = frequency+'001REXD'+suffix
                         name_replicate.append(replicate_name)
@@ -678,7 +876,7 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                     name = frequency+COUNTRY(FOREX_t.index[ind])+'REXSDRDA'+suffix
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRDA'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -686,15 +884,15 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                                     break
                             if done == False:
                                 name_replicate.append(replicate_name)
-                        if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
+                        """if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXSDRDA'+suffix
-                            name_replicate.append(replicate_name)
+                            name_replicate.append(replicate_name)"""
                     if COUNTRY(FOREX_t.index[ind]) == '111':
                         replicate_name = [frequency+'001REXA'+suffix, frequency+'001REX'+suffix, frequency+'001REXW'+suffix]
                         name_replicate.extend(replicate_name)
         
         value = list(FOREX_t.loc[FOREX_t.index[ind]])
-        index = FOREX_t.loc[FOREX_t.index[ind]].index
+        index = list(FOREX_t.loc[FOREX_t.index[ind]].index)
         if associate == False:
             index_item = FOREX_t.index[ind]
         else:
@@ -709,7 +907,7 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                     name = frequency+COUNTRY(FOREX_t.index[ind])+'REXE'+suffix
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXE'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -718,16 +916,19 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                             if done == False:
                                 name_replicate.append(replicate_name)
                         if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
-                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXE'+suffix, frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDEE'+suffix]
+                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDEE'+suffix]
                             name_replicate.extend(replicate_name)
-                    if COUNTRY(FOREX_t.index[ind]) == '163' or COUNTRY(FOREX_t.index[ind]) == '248':
+                    if COUNTRY(FOREX_t.index[ind]) == '163':
                         replicate_name = [frequency+'111REXEURI'+suffix, frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDEE'+suffix]
+                        name_replicate.extend(replicate_name)
+                    elif COUNTRY(FOREX_t.index[ind]) == '248':
+                        replicate_name = [frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDEE'+suffix]
                         name_replicate.extend(replicate_name)
                 else:
                     name = frequency+COUNTRY(FOREX_t.index[ind])+'REXI'+suffix
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXI'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -736,10 +937,13 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                             if done == False:
                                 name_replicate.append(replicate_name)
                         if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
-                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXI'+suffix, frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDEI'+suffix]
+                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDEI'+suffix]
                             name_replicate.extend(replicate_name)
-                    if COUNTRY(FOREX_t.index[ind]) == '163' or COUNTRY(FOREX_t.index[ind]) == '248':
+                    if COUNTRY(FOREX_t.index[ind]) == '163':
                         replicate_name = [frequency+'111REXEURE'+suffix, frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDEI'+suffix]
+                        name_replicate.extend(replicate_name)
+                    elif COUNTRY(FOREX_t.index[ind]) == '248':
+                        replicate_name = [frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDEI'+suffix]
                         name_replicate.extend(replicate_name)
             elif form_e == 'Average of observations through period (A)':
                 if opp == False:
@@ -748,7 +952,7 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                     name_replicate.append(frequency+COUNTRY(FOREX_t.index[ind])+'REXW'+suffix)
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXA'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -773,16 +977,19 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                             if done == False:
                                 name_replicate.append(replicate_name)
                         if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
-                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXA'+suffix, frequency+str(Country.iloc[i]['Country_Code'])+'REX'+suffix, frequency+str(Country.iloc[i]['Country_Code'])+'REXW'+suffix, frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDE'+suffix]
+                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDE'+suffix]
                             name_replicate.extend(replicate_name)
-                    if COUNTRY(FOREX_t.index[ind]) == '163' or COUNTRY(FOREX_t.index[ind]) == '248':
+                    if COUNTRY(FOREX_t.index[ind]) == '163':
                         replicate_name = [frequency+'111REXEUR'+suffix, frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDE'+suffix]
+                        name_replicate.extend(replicate_name)
+                    elif COUNTRY(FOREX_t.index[ind]) == '248':
+                        replicate_name = [frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDE'+suffix]
                         name_replicate.extend(replicate_name)
                 else:
                     name = frequency+COUNTRY(FOREX_t.index[ind])+'REXD'+suffix
                     name_currency = CURRENCY(FOREX_t.index[ind])
                     for i in range(Country.shape[0]):
-                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]):# and str(Country.iloc[i]['IMF_country']) == 'nan':
+                        if str(Country.iloc[i]['Currency_Name']) == name_currency and str(Country.iloc[i]['Country_Code']) != COUNTRY(FOREX_t.index[ind]) and str(Country.iloc[i]['IMF_country']) not in FOREX_t.index:
                             replicate_name = frequency+str(Country.iloc[i]['Country_Code'])+'REXD'+suffix
                             for key in SORT_DATA:
                                 if key[0] == replicate_name:
@@ -791,14 +998,17 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
                             if done == False:
                                 name_replicate.append(replicate_name)
                         if COUNTRY(FOREX_t.index[ind]) == '163' and str(Country.iloc[i]['Old_legacy_currency']) == 'Y':
-                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXD'+suffix, frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDED'+suffix]
+                            replicate_name = [frequency+str(Country.iloc[i]['Country_Code'])+'REXUSDED'+suffix]
                             name_replicate.extend(replicate_name)
-                    if COUNTRY(FOREX_t.index[ind]) == '163' or COUNTRY(FOREX_t.index[ind]) == '248':
+                    if COUNTRY(FOREX_t.index[ind]) == '163':
                         replicate_name = [frequency+'111REXEURD'+suffix, frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDED'+suffix]
+                        name_replicate.extend(replicate_name)
+                    elif COUNTRY(FOREX_t.index[ind]) == '248':
+                        replicate_name = [frequency+COUNTRY(FOREX_t.index[ind])+'REXUSDED'+suffix]
                         name_replicate.extend(replicate_name)
         
         value = list(FOREX_t.loc[FOREX_t.index[ind]])
-        index = FOREX_t.loc[FOREX_t.index[ind]].index
+        index = list(FOREX_t.loc[FOREX_t.index[ind]].index)
         index_item = FOREX_t.index[ind]
         roundnum = 10
         if associate == False:
@@ -818,23 +1028,24 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
             else:
                 name = frequency+str(df_key.iloc[ind]['name'])[1:4]+'REXEUR'+suffix
         
-        #try:
-        value = list(FOREX_t[df_key.iloc[ind]['db_table']][df_key.iloc[ind]['db_code']])
-        index = FOREX_t[df_key.iloc[ind]['db_table']][df_key.iloc[ind]['db_code']].index
-        #except KeyError:
-        #    value = list(db_table_t[df_key.iloc[ind]['db_code']])
-        #    index = db_table_t[df_key.iloc[ind]['db_code']].index
+        try:
+            value = list(FOREX_t[df_key.iloc[ind]['db_table']][df_key.iloc[ind]['db_code']])
+            index = FOREX_t[df_key.iloc[ind]['db_table']][df_key.iloc[ind]['db_code']].index
+        except KeyError:
+            value = list(db_table_t[df_key.iloc[ind]['db_code']])
+            index = db_table_t[df_key.iloc[ind]['db_code']].index
         code = str(df_key.iloc[ind]['name'])[1:4]
         roundnum = 10
 
         return name, value, index, code, roundnum
     elif source == 'International Financial Statistics (IFS)' and FOREXcurrency == 'United States Dollar (USD) (Millions of)':
         if form_e == 'World Currency Composition of Official Foreign Exchange Reserves':
-            name = frequency+'010VRC'+COUNTRY(FOREX_t.index[ind])+suffix
+            middle = '010VRC'
         elif form_e == 'Advanced Economies Currency Composition of Official Foreign Exchange Reserves':
-            name = frequency+'110VRC'+COUNTRY(FOREX_t.index[ind])+suffix
+            middle = '110VRC'
         elif form_e == 'Emerging and Developing Economies Currency Composition of Official Foreign Exchange Reserves':
-            name = frequency+'200VRC'+COUNTRY(FOREX_t.index[ind])+suffix
+            middle = '200VRC'
+        name = frequency+middle+COUNTRY(FOREX_t.index[ind])+suffix
 
         value = list(FOREX_t.loc[FOREX_t.index[ind]])
         index = FOREX_t.loc[FOREX_t.index[ind]].index
@@ -852,7 +1063,7 @@ def FOREX_NAME(source, frequency, form_e, FOREXcurrency, ind, FOREX_t, SORT_DATA
 def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, table_num, KEY_DATA, SORT_DATA, DATA_BASE, db_table_t, DB_name, snl, source, freqlist, frequency, form_e, FOREXcurrency, opp=False, suffix='', freqnum=None, freqsuffix=[], keysuffix=[], repl=None, again='', semiA=False, semi=False, weekA=False, weekE=False):
     freqlen = len(freqlist)
     name_replicate = []
-    NonValue = '...'
+    NonValue = ['nan','-','']
     if code_num >= 200:
         db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
         if frequency == 'W':
@@ -897,6 +1108,12 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
     weekE = weekE2
     form_e = form_e2
 
+    if source == 'Official ECB & EUROSTAT Reference':
+        nG = FOREX_t.shape[1]
+    elif source == 'International Financial Statistics (IFS)':
+        nG = FOREX_t.shape[0]
+    sys.stdout.write("\rLoading...("+str(round((ind+1)*100/nG, 1))+"%), name = "+name)
+    sys.stdout.flush()
     AREMOS_key = AREMOS_forex.loc[AREMOS_forex['code'] == name].to_dict('list')
     if pd.DataFrame(AREMOS_key).empty == True:
         if opp == False:
@@ -927,7 +1144,8 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
             ERROR('Source Error: '+str(source))
     
     if (name in DF_KEY.index and find_unknown == True) or (name not in DF_KEY.index and find_unknown == False):
-        return code_num, table_num, SORT_DATA, DATA_BASE, db_table_t, DB_name, snl, new_item_counts
+        if name.find('111REXEUR') < 0 or FOREXcurrency != 'United States Dollar (USD)':
+            return code_num, table_num, SORT_DATA, DATA_BASE, db_table_t, DB_name, snl, new_item_counts
     elif name not in DF_KEY.index and find_unknown == True:
         new_item_counts+=1
 
@@ -972,7 +1190,7 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
     #if quote == 'nan':
     if opp == False:
         if FOREXcurrency == 'United States Dollar (USD) (Millions of)':
-            NonValue = 'Nan'
+            #NonValue = 'nan'
             quote = ''
         else:
             if code == '1':
@@ -1004,6 +1222,10 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                 for word in range(len(keysuffix)):
                     if str(index[k]).find(keysuffix[word]) >= 0:
                         freq_index = str(index[k])[:freqnum]+freqsuffix[word]
+                        if semiA == True and freqsuffix[word] == '-S1':
+                            previous_index = str(index[k])[:freqnum]+'Q1'
+                        elif semiA == True and freqsuffix[word] == '-S2':
+                            previous_index = str(index[k])[:freqnum]+'Q3'
                         if frequency == 'A':
                             freq_index = int(freq_index)
                         break
@@ -1019,13 +1241,13 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                     freq_index = 'Nan'
                 #ERROR('Index Error: '+str(index[k]))
             if freq_index in db_table_t.index and ((find_unknown == False and int(str(freq_index)[:4]) >= dealing_start_year) or find_unknown == True):
-                if str(value[k]) == NonValue:
+                if str(value[k]) in NonValue:
                     db_table_t[db_code][freq_index] = ''
                 else:
                     found = True
                     if opp == False:
                         if semiA == True:
-                            if str(value[k-4]) == NonValue:
+                            if str(value[index.index(previous_index)]) in NonValue:
                                 db_table_t[db_code][freq_index] = ''
                             elif nominal_index == True:
                                 nominal_found = False
@@ -1037,12 +1259,12 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                                             db_table_t[db_code][freq_index] = ''
                                         else:
                                             found = True
-                                            db_table_t[db_code][freq_index] = ((float(value[k])+float(value[k-4]))/2)*100/INDEXBASE(nominal_year, code, index_item, NonValue)
+                                            db_table_t[db_code][freq_index] = ((float(value[k])+float(value[index.index(previous_index)]))/2)*100/INDEXBASE(nominal_year, code, index_item, NonValue)
                                         break
                                 if nominal_found == False:
                                     ERROR('Nominal Index Not Found: '+name)
                             else:
-                                db_table_t[db_code][freq_index] = (float(value[k])+float(value[k-4]))/2
+                                db_table_t[db_code][freq_index] = (float(value[k])+float(value[index.index(previous_index)]))/2
                         elif nominal_index == True:
                             nominal_found = False
                             found = False
@@ -1061,69 +1283,31 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                             if nominal_found == False:
                                 ERROR('Nominal Index Not Found: '+name)
                         elif old_legacy == True:
-                            if name.find('USD') >= 0:
-                                db_table_t[db_code][freq_index] = float(value[k])
-                            else:
+                            if name.find('USD') >= 0 or name.find('EUR') >= 0 or name.find('LOCK') >= 0:
                                 db_table_t[db_code][freq_index] = float(value[k])*LOCKING(code)
+                            else:
+                                db_table_t[db_code][freq_index] = float(value[k])
                         else:
                             db_table_t[db_code][freq_index] = float(value[k])
                     else:
                         if semiA == True:
-                            if str(value[k-4]) == NonValue:
+                            if str(value[index.index(previous_index)]) in NonValue:
                                 db_table_t[db_code][freq_index] = ''
                             else:
-                                db_table_t[db_code][freq_index] = (round(1/float(value[k]), roundnum)+round(1/float(value[k-4]), roundnum))/2
+                                db_table_t[db_code][freq_index] = (round(1/float(value[k]), roundnum)+round(1/float(value[index.index(previous_index)]), roundnum))/2
                         elif old_legacy == True:
-                            if name.find('USD') >= 0:
-                                db_table_t[db_code][freq_index] = round(1/float(value[k]), roundnum)
-                            else:
+                            if name.find('USD') >= 0 or name.find('EUR') >= 0 or name.find('LOCK') >= 0:
                                 db_table_t[db_code][freq_index] = round(1/(float(value[k])*LOCKING(code)), roundnum)
+                            else:
+                                db_table_t[db_code][freq_index] = round(1/float(value[k]), roundnum)
                         else:
                             db_table_t[db_code][freq_index] = round(1/float(value[k]), roundnum)
-                    if start_found == False and found == True:
+                    if start_found == False:
                         if frequency == 'A':
                             start = int(freq_index)
                         else:
                             start = str(freq_index)
                         start_found = True
-                    if start_found == True:
-                        if k == len(value)-1:
-                            if frequency == 'A':
-                                last = int(freq_index)
-                            else:
-                                last = str(freq_index)
-                            last_found = True
-                        else:
-                            for st in range(k+1, len(value)):
-                                if not not keysuffix:
-                                    for word in range(len(keysuffix)):
-                                        if str(index[st]).find(keysuffix[word]) >= 0:
-                                            if semi == True:
-                                                if str(value[st]) != NonValue:
-                                                    last_found = False
-                                                    break
-                                                else:
-                                                    last_found = True
-                                            else:
-                                                if str(value[st]) != 'nan':
-                                                    last_found = False
-                                                    break
-                                                else:
-                                                    last_found = True
-                                        else:
-                                            last_found = True
-                                else:
-                                    if (str(index[st]).find(frequency) >= 0 or str(index[st]).isnumeric()) and str(value[st]) != NonValue:
-                                        last_found = False
-                                    else:
-                                        last_found = True
-                                if last_found == False:
-                                    break
-                            if last_found == True:
-                                if frequency == 'A':
-                                    last = int(freq_index)
-                                else:
-                                    last = str(freq_index)
             else:
                 continue
     else:
@@ -1142,6 +1326,8 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                     if (index[k]-db_table_t.index[j]).days < 7 and (index[k]-db_table_t.index[j]).days >= 0:
                         head = k
                         try:
+                            if np.isnan(float(value[k])):
+                                raise ValueError
                             weekdays.append(float(value[k]))
                         except ValueError:
                             continue
@@ -1149,13 +1335,13 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                         break
                 if weekA == True:
                     if opp == False and len(weekdays) > 0:
-                        if old_legacy == True and name.find('USD') < 0:
+                        if old_legacy == True:
                             db_table_t[db_code][db_table_t.index[j]] = float(sum(weekdays)/len(weekdays))*LOCKING(code)
                         else:
                             db_table_t[db_code][db_table_t.index[j]] = float(sum(weekdays)/len(weekdays))
                         found = True
                     elif len(weekdays) > 0:
-                        if old_legacy == True and name.find('USD') < 0:
+                        if old_legacy == True:
                             db_table_t[db_code][db_table_t.index[j]] = round(1/float(sum(weekdays)/len(weekdays)), roundnum)*LOCKING(code)
                         else:
                             db_table_t[db_code][db_table_t.index[j]] = round(1/float(sum(weekdays)/len(weekdays)), roundnum)
@@ -1164,13 +1350,13 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                         db_table_t[db_code][db_table_t.index[j]] = ''
                 elif weekE == True:
                     if opp == False and len(weekdays) > 0:
-                        if old_legacy == True and name.find('USD') < 0:
+                        if old_legacy == True:
                             db_table_t[db_code][db_table_t.index[j]] = float(weekdays[-1])*LOCKING(code)
                         else:
                             db_table_t[db_code][db_table_t.index[j]] = float(weekdays[-1])
                         found = True
                     elif  len(weekdays) > 0:
-                        if old_legacy == True and name.find('USD') < 0:
+                        if old_legacy == True:
                             db_table_t[db_code][db_table_t.index[j]] = round(1/float(weekdays[-1]), roundnum)*LOCKING(code)
                         else:
                             db_table_t[db_code][db_table_t.index[j]] = round(1/float(weekdays[-1]), roundnum)
@@ -1180,21 +1366,16 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
                 if start_found == False and found == True:
                     start = str(db_table_t.index[j]).replace(' 00:00:00','')
                     start_found = True
-                if start_found == True:
-                    if (index[len(value)-1]-db_table_t.index[j]).days < 6:
-                        untill = j
-                        for l in list(reversed(range(untill))):
-                            if db_table_t[db_code][db_table_t.index[l]] != '':
-                                last = str(db_table_t.index[l]).replace(' 00:00:00','')
-                                last_found = True
-                                break
-                        if last_found == True:
-                            break
 
     if start_found == False:
         if found == True:
             ERROR('start not found: '+str(name))
-    elif last_found == False:
+    try:
+        if frequency == 'A':
+            last = db_table_t[db_code].loc[~db_table_t[db_code].isin(NonValue)].index[-1]
+        else:
+            last = str(db_table_t[db_code].loc[~db_table_t[db_code].isin(NonValue)].index[-1]).replace(' 00:00:00','')
+    except IndexError:
         if found == True:
             ERROR('last not found: '+str(name))
     if found == False:
@@ -1213,6 +1394,7 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
 
 def FOREX_CROSSRATE(g, new_item_counts, DF_KEY, df_key, AREMOS_forex, code_num, table_num, KEY_DATA, SORT_DATA, DATA_BASE, db_table_t, DB_name, snl, source, freqlist, frequency, form_e, FOREXcurrency, opp=False, suffix=''):
     freqlen = len(freqlist)
+    NonValue = ['nan','-','']
     print('Calculating Cross Rate: '+NAME+str(g)+', frequency = '+frequency+', opposite = '+str(opp)+' Time: ', int(time.time() - tStart),'s'+'\n')
     for ind in range(df_key.shape[0]):
         sys.stdout.write("\rLoading...("+str(round((ind+1)*100/df_key.shape[0], 1))+"%)*")
@@ -1220,10 +1402,16 @@ def FOREX_CROSSRATE(g, new_item_counts, DF_KEY, df_key, AREMOS_forex, code_num, 
         
         cross_rate = False
         if form_e == 'Average of observations through period (A)' and str(df_key.iloc[ind]['name']).find('REXA') >= 0 and str(df_key.iloc[ind]['freq']) == frequency and OLD_LEGACY(str(df_key.iloc[ind]['name'])[1:4]) != 'Y':
-            USDPEREUR = DATA_BASE[df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURD'+suffix].index[0]]['db_table']][df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURD'+suffix].index[0]]['db_code']]
+            try:
+                USDPEREUR = DATA_BASE[df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURD'+suffix].index[0]]['db_table']][df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURD'+suffix].index[0]]['db_code']]
+            except KeyError:
+                USDPEREUR = db_table_t[df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURD'+suffix].index[0]]['db_code']]
             cross_rate = True
         if form_e == 'End of period (E)' and str(df_key.iloc[ind]['name']).find('REXE') >= 0 and str(df_key.iloc[ind]['name']).find('REXEUR') < 0 and str(df_key.iloc[ind]['freq']) == frequency and OLD_LEGACY(str(df_key.iloc[ind]['name'])[1:4]) != 'Y':
-            USDPEREUR = DATA_BASE[df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURE'+suffix].index[0]]['db_table']][df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURE'+suffix].index[0]]['db_code']]
+            try:
+                USDPEREUR = DATA_BASE[df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURE'+suffix].index[0]]['db_table']][df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURE'+suffix].index[0]]['db_code']]
+            except KeyError:
+                USDPEREUR = db_table_t[df_key.iloc[df_key[df_key['name'] == frequency+'111REXEURE'+suffix].index[0]]['db_code']]
             cross_rate = True
     
         if cross_rate == True:
@@ -1268,18 +1456,35 @@ def FOREX_CROSSRATE(g, new_item_counts, DF_KEY, df_key, AREMOS_forex, code_num, 
             db_code = DB_CODE+str(code_num).rjust(3,'0')
             db_table_t[db_code] = ['' for tmp in range(freqlen)]
             
-            start = df_key.iloc[ind]['start']
-            last = df_key.iloc[ind]['last']
+            #start = df_key.iloc[ind]['start']
+            #last = df_key.iloc[ind]['last']
+            start_found = False
+            found = False
             for k in range(len(value)):
                 if (find_unknown == False and int(str(index[k])[:4]) >= dealing_start_year) or find_unknown == True:
-                    if str(value[k]) == '':
+                    if str(value[k]) in NonValue or USDPEREUR[index[k]] in NonValue:
                         db_table_t[db_code][index[k]] = ''
                     else:
+                        found = True
                         if opp == False:
                             db_table_t[db_code][index[k]] = float(value[k])*USDPEREUR[index[k]]
                         else:
-                            db_table_t[db_code][index[k]] = round(1/(float(value[k])*USDPEREUR[index[k]]), roundnum)             
+                            db_table_t[db_code][index[k]] = round(1/(float(value[k])*USDPEREUR[index[k]]), roundnum)
+                        if start_found == False:
+                            if frequency == 'A':
+                                start = int(index[k])
+                            else:
+                                start = str(index[k])
+                            start_found = True            
 
+            if start_found == False:
+                if found == True:
+                    ERROR('start not found: '+str(name))
+            try:
+                last = db_table_t[db_code].loc[~db_table_t[db_code].isin(NonValue)].index[-1]
+            except IndexError:
+                if found == True:
+                    ERROR('last not found: '+str(name))
             desc_e = str(AREMOS_key['description'][0])
             #if desc_e.find('FOREIGN EXCHANGE') >= 0:
             for ph in range(len(before1)):
@@ -1329,17 +1534,3 @@ def FOREX_CROSSRATE(g, new_item_counts, DF_KEY, df_key, AREMOS_forex, code_num, 
     sys.stdout.write("\n")
 
     return code_num, table_num, SORT_DATA, DATA_BASE, db_table_t, DB_name, snl, new_item_counts
-
-def FOREX_CRAW(g, head, skip, url='https://data.imf.org/regular.aspx?key=61545862'):
-
-    options = Options()
-    options.add_argument("--disable-notifications")
-    options.add_experimental_option("prefs", {"profile.default_content_setting_values.cookies": 2})
-    chrome = webdriver.Chrome(ChromeDriverManager().install(), options=options)
-    chrome.get(url)
-    time.sleep(5)
-    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@id="DimCombo2552"]'))).click()
-    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@id="ExportSplitButton"]'))).click()
-    FOREX_t = FOREX_WEBDRIVER(chrome, g, header=head, index_col=0, skiprows=skip)
-
-    return FOREX_t

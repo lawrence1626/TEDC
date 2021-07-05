@@ -1,6 +1,6 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import math, re, sys, calendar, os, copy, time
+import math, re, sys, calendar, os, copy, time, logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
@@ -8,17 +8,17 @@ from urllib.error import HTTPError
 
 ENCODING = 'utf-8-sig'
 data_path = './output/'
-START_YEAR = input('Output file suffix (If test identity press 0): ')
+excel_suffix = input('Output file suffix (If test identity press 0): ')
 
 def ERROR(error_text, waiting=False):
     if waiting == True:
         sys.stdout.write("\r"+error_text)
         sys.stdout.flush()
     else:
-        print('\n\n= ! = '+error_text+'\n\n')
-    with open('./ERROR.log','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(error_text)
-    sys.exit()
+        sys.stdout.write('\n\n')
+        logging.error('= ! = '+error_text)
+        sys.stdout.write('\n\n')
+        sys.exit()
 
 def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,encoding_=ENCODING,engine_='python',sep_=None, wait=False):
     try:
@@ -70,6 +70,13 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
 
+def PRESENT(file_path):
+    if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
+        logging.info('Present File Exists. Reading Data From Default Path.\n')
+        return True
+    else:
+        return False
+
 def MERGE(merge_file, DB_TABLE, DB_CODE, freq):
     i = 0
     found = False
@@ -120,17 +127,19 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         repeated_standard = 'start'
     else:
         repeated_standard = 'last'
-    #print('Reading file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    #logging.info('Reading file: '+NAME+'key'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     #KEY_DATA_t = readExcelFile(data_path+NAME+'key'+suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
-    print('Reading file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
-    if type(DATA_BASE_t) != dict:
+    if KEY_DATA_t.empty == False and type(DATA_BASE_t) != dict:
+        ERROR(NAME+'database'+suf+'.xlsx Not Found.')
+    elif type(DATA_BASE_t) != dict:
         DATA_BASE_t = {}
     
-    print('Concating file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating file: '+NAME+'key'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
     
-    print('Concating file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     for f in FREQNAME:
         for d in DB_name_dict[f]:
             sys.stdout.write("\rConcating sheet: "+str(d))
@@ -141,7 +150,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                 DATA_BASE_t[d] = DB_dict[f][d]
         sys.stdout.write("\n")
 
-    print('Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Time: '+str(int(time.time() - tStart))+' s'+'\n')
     KEY_DATA_t = KEY_DATA_t.sort_values(by=['freq', 'name', 'db_table', 'snl'], ignore_index=True)
     
     repeated = 0
@@ -193,13 +202,13 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
     KEY_DATA_t = KEY_DATA_t.drop(repeated_index)
     KEY_DATA_t.reset_index(drop=True, inplace=True)
     #print(KEY_DATA_t)
-    print('Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
     for s in range(KEY_DATA_t.shape[0]):
         sys.stdout.write("\rSetting new snls: "+str(s+1))
         sys.stdout.flush()
         KEY_DATA_t.loc[s, 'snl'] = s+1
     sys.stdout.write("\n")
-    print('Setting new files, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Setting new files, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     
     start_table_dict = {}
     start_code_dict = {}
@@ -235,7 +244,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             DB_dict[f] = DB_new_dict[f]
             DB_name_dict[f] = DB_name_new_dict[f]
 
-    print('Concating new files: '+NAME+'database, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating new files: '+NAME+'database, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     DATA_BASE_dict = {}
     for f in FREQNAME:
         if not DB_name_dict[f]:
@@ -249,18 +258,19 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         sys.stdout.write("\n")
     
     #print(KEY_DATA_t)
-    print('Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 
     return KEY_DATA_t, DATA_BASE_dict
 
 def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf):
     updated = 0
     tStart = time.time()
-    print('Updating file: ', int(time.time() - tStart),'s'+'\n')
-    print('Reading original database: '+NAME+'database'+orig_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Updating file: '+str(int(time.time() - tStart))+' s'+'\n')
+    logging.info('Reading original database: '+NAME+'database'+orig_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
-    print('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    CAT = ['desc_e', 'desc_c', 'unit', 'book', 'form_e', 'form_c']
     
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
@@ -269,18 +279,23 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
         sys.stdout.flush()
 
         if ind in original_file.index:
-            original_file.loc[ind, 'desc_e'] = updated_file.loc[ind, 'desc_e']
+            for c in CAT:
+                original_file.loc[ind, c] = updated_file.loc[ind, c]
             if updated_file.loc[ind, 'last'] == 'Nan':
                 continue
             elif (original_file.loc[ind, 'last'] == 'Nan' and updated_file.loc[ind, 'last'] != 'Nan') or updated_file.loc[ind, 'last'] > original_file.loc[ind, 'last']:
                 updated+=1
             if updated_file.loc[ind, 'last'] != 'Nan':
                 original_file.loc[ind, 'last'] = updated_file.loc[ind, 'last']
+            if updated_file.loc[ind, 'start'] != 'Nan' and (original_file.loc[ind, 'start'] == 'Nan' or updated_file.loc[ind, 'start'] < original_file.loc[ind, 'start']):
+                original_file.loc[ind, 'start'] = updated_file.loc[ind, 'start']
             for period in updated_database[updated_file.loc[ind, 'db_table']].index:
                 if updated_file.loc[ind, 'db_table'][3] == 'W' and type(period) != str:
                     period = period.strftime('%Y-%m-%d')
                 if str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) != 'nan':
                     original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]
+                elif period >= updated_file.loc[ind, 'start'] and str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) == 'nan':
+                    original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = ''
         else:
             ERROR('Updated file index does not belongs to the original file index list: '+ind)
     sys.stdout.write("\n\n")
@@ -288,6 +303,6 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
         original_database[key] = original_database[key].sort_index(axis=0)
     original_file = original_file.reset_index()
     original_file = original_file.reindex(key_list, axis='columns')
-    print('updated:', updated, '\n')
+    logging.info('updated: '+str(updated)+'\n')
 
     return original_file, original_database

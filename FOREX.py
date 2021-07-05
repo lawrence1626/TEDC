@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
 # pylint: disable=unbalanced-tuple-unpacking
-import math, re, sys, calendar, os, copy, time
+import math, re, sys, calendar, os, copy, time, logging
 import pandas as pd
 import numpy as np
 import requests as rq
@@ -13,11 +13,13 @@ import webdriver_manager
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, date
 import FOREX_extention as EXT
-from FOREX_extention import ERROR, MERGE, NEW_KEYS, CONCATE, UPDATE, readFile, readExcelFile, FOREX_NAME, FOREX_DATA, FOREX_CROSSRATE, OLD_LEGACY
+from FOREX_extention import ERROR, MERGE, NEW_KEYS, CONCATE, UPDATE, readFile, readExcelFile, FOREX_NAME, FOREX_DATA, FOREX_CROSSRATE, OLD_LEGACY, PRESENT, FOREX_WEB, FOREX_IMF, COUNTRY
 import FOREX_test as test
 from FOREX_test import FOREX_identity
+FORMAT = '%(asctime)s %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT, handlers=[logging.FileHandler("LOG.log", 'w', EXT.ENCODING)], datefmt='%Y-%m-%d %I:%M:%S %p')
 
-ENCODING = 'utf-8-sig'
+ENCODING = EXT.ENCODING
 
 NAME = EXT.NAME
 data_path = './data/'
@@ -29,7 +31,7 @@ dealing_start_year = EXT.dealing_start_year
 start_year = EXT.start_year
 merging = EXT.merging
 updating = EXT.updating
-START_YEAR = EXT.START_YEAR
+excel_suffix = EXT.excel_suffix
 DF_suffix = test.DF_suffix
 main_file = readExcelFile(out_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
 merge_file = readExcelFile(out_path+NAME+'key'+merge_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
@@ -42,6 +44,13 @@ for i in range(len(key_list)):
         snl_pos = i
         break
 tStart = EXT.tStart
+LOG = ['excel_suffix', 'merging', 'updating', 'find_unknown','dealing_start_year']
+for key in LOG:
+    logging.info(key+': '+str(locals()[key])+'\n')
+log = logging.getLogger()
+stream = logging.StreamHandler(sys.stdout)
+stream.setFormatter(logging.Formatter('%(message)s'))
+log.addHandler(stream)
 
 def takeFirst(alist):
     return alist[0]
@@ -71,20 +80,20 @@ for f in FREQNAME:
     table_num_dict[f] = 1
     code_num_dict[f] = 1
 if merge_file.empty == False and merging == True and updating == False:
-    print('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time:', int(time.time() - tStart),'s'+'\n')
+    logging.info('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
     for f in FREQNAME:
         table_num_dict[f], code_num_dict[f] = MERGE(merge_file, DB_TABLE, DB_CODE, f)
     if main_file.empty == False:
-        print('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time:', int(time.time() - tStart),'s'+'\n')
-        print('Reading file: '+NAME+'database'+main_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
-        main_database = readExcelFile(out_path+NAME+'database'+main_suf+'.xlsx', header_ = 0, index_col_=0)
+        logging.info('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        logging.info('Reading file: '+NAME+'database'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        main_database = readExcelFile(out_path+NAME+'database'+main_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
         for s in range(main_file.shape[0]):
             sys.stdout.write("\rSetting snls: "+str(s+snl))
             sys.stdout.flush()
             main_file.loc[s, 'snl'] = s+snl
         sys.stdout.write("\n")
-        print('Setting files, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Setting files, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         db_table_new = 0
         db_code_new = 0
         for f in range(main_file.shape[0]):
@@ -105,7 +114,7 @@ else:
         code_num_dict[f] = 1
 
 if updating == False and DF_suffix != merge_suf:
-    print('Reading file: '+NAME+'key'+DF_suffix+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Reading file: '+NAME+'key'+DF_suffix+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     DF_KEY = readExcelFile(out_path+NAME+'key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_=NAME+'key')
     DF_KEY = DF_KEY.set_index('name')
 elif updating == False and DF_suffix == merge_suf:
@@ -116,13 +125,41 @@ elif updating == False and DF_suffix == merge_suf:
 SUFFIX = {'A':'', 'S':'.S', 'Q':'.Q', 'M':'.M', 'W':'.W'}
 REPL = {'A':'', 'S':None, 'Q':'-Q', 'M':'-', 'W':None}
 new_item_counts = 0
+chrome = None
 
 for g in range(start_file,last_file+1):
     if main_file.empty == False:
         break
-    print('Reading file: '+NAME+str(g)+' Time: ', int(time.time() - tStart),'s'+'\n')
+    if chrome == None:
+        options = Options()
+        options.add_argument("--disable-notifications")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("ignore-certificate-errors")
+        options.add_experimental_option("excludeSwitches", ["enable-logging"])
+        chrome = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+        chrome.set_window_position(980,0)
+    logging.info('Reading file: '+NAME+str(g)+' Time: '+str(int(time.time() - tStart))+' s'+'\n')
     if g == 1 or g == 2 or g == 8 or g == 9:############################################################ ECB ##################################################################
-        FOREX_t = readFile(data_path+NAME+str(g)+'.csv', header_ = [0,1,2], index_col_=0, skiprows_=[0,4])
+        file_path = data_path+NAME+str(g)+'.csv'
+        if PRESENT(file_path):
+            if g == 1 or g == 2:
+                skip = [0,4]
+            else:
+                skip = [3]
+            FOREX_t = readFile(data_path+NAME+str(g)+'.csv', header_ = [0,1,2], index_col_=0, skiprows_=skip)
+            #FOREX_t = readFile(data_path+NAME+str(g)+'.csv', header_=[0], index_col_=0)
+        else:
+            if g == 1 or g == 8:
+                url = 'https://sdw.ecb.europa.eu/browse.do?node=9691296'
+            else:
+                url = 'https://sdw.ecb.europa.eu/browse.do?node=9691297'
+            if g == 1 or g == 2:
+                FREQ = {'A':1, 'H':2, 'M':2, 'Q':2}
+                FOREX_t = FOREX_WEB(chrome, g, file_name=NAME+str(g), url=url, header=[0,1,2], index_col=0, skiprows=[0,4], csv=True, FREQ=FREQ)
+            else:
+                FREQ = {'D':2}
+                index_file = readFile(file_path.replace('.csv','_columns.csv'), header_=[0])
+                FOREX_t = FOREX_WEB(chrome, g, file_name=NAME+str(g), url=url, header=[0], index_col=0, skiprows=[1,2,3,4], output=True, csv=True, FREQ=FREQ, index_file=index_file)
         if str(FOREX_t.index[0]).find('/') >= 0:
             new_index = []
             for ind in FOREX_t.index:
@@ -132,10 +169,10 @@ for g in range(start_file,last_file+1):
             FOREX_t = FOREX_t[::-1]
         
         nG = FOREX_t.shape[1]
-        print('Total Columns:',nG,'Time: ', int(time.time() - tStart),'s'+'\n')        
+        logging.info('Total Columns: '+str(nG)+' Time: '+str(int(time.time() - tStart))+' s'+'\n')        
         for i in range(nG):
-            sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
-            sys.stdout.flush()
+            #sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
+            #sys.stdout.flush()
 
             source = 'Official ECB & EUROSTAT Reference'
             form_e = str(FOREX_t.columns[i][2])
@@ -149,11 +186,31 @@ for g in range(start_file,last_file+1):
                 freqsuffix = ['']
                 frequency = 'A'
                 keysuffix = ['-12-31']
-                for opp in [False, True]:
-                    code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                        FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                            DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
             elif str(FOREX_t.columns[i][0]).find('EXR.H') >= 0:
+                freqnum = 5
+                freqsuffix = ['S1','S2']
+                frequency = 'S'
+                keysuffix = ['06-30','12-31']
+            elif str(FOREX_t.columns[i][0]).find('EXR.M') >= 0:
+                freqnum = 7
+                freqsuffix = ['']
+                frequency = 'M'
+                keysuffix = ['-']
+            elif str(FOREX_t.columns[i][0]).find('EXR.Q') >= 0:
+                freqnum = 5
+                freqsuffix = ['Q1','Q2','Q3','Q4']
+                frequency = 'Q'
+                keysuffix = ['03-31','06-30','09-30','12-31']
+            elif str(FOREX_t.columns[i][0]).find('EXR.D') >= 0:
+                frequency = 'W'
+                weekA = True
+            
+            for opp in [False, True]:
+                code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
+                    FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
+                        DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
+            
+            if str(FOREX_t.columns[i][0]).find('EXR.M') >= 0 and str(FOREX_t.columns[i][0]).find('SP00.E') >= 0:#Using End of period Monthly data to produce End of period Semiannual data
                 freqnum = 5
                 freqsuffix = ['S1','S2']
                 frequency = 'S'
@@ -162,143 +219,117 @@ for g in range(start_file,last_file+1):
                     code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
                         FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
                             DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-            elif str(FOREX_t.columns[i][0]).find('EXR.M') >= 0:
+            elif str(FOREX_t.columns[i][0]).find('EXR.D') >= 0 and str(FOREX_t.columns[i][0]).find('ISK') >= 0:#Using Iceland Daily data to produce End of period data of other frequency of Iceland
+                weekA = False
+                form_e = 'End of period (E)'
                 freqnum = 7
-                freqsuffix = ['']
+                freqsuffix = ['','','','','','','']
                 frequency = 'M'
-                keysuffix = ['-']
+                keysuffix = ['-25','-26','-27','-28','-29','-30','-31']
                 for opp in [False, True]:
                     code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
                         FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
                             DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-                if str(FOREX_t.columns[i][0]).find('SP00.E') >= 0:
-                    freqnum = 5
-                    freqsuffix = ['S1','S2']
-                    frequency = 'S'
-                    keysuffix = ['06-30','12-31']
-                    for opp in [False, True]:
-                        code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                            FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                                DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-            elif str(FOREX_t.columns[i][0]).find('EXR.Q') >= 0:
                 freqnum = 5
-                freqsuffix = ['Q1','Q2','Q3','Q4']
+                freqsuffix = ['Q1','Q1','Q1','Q1','Q2','Q2','Q2','Q2','Q3','Q3','Q3','Q3','Q4','Q4','Q4','Q4']
                 frequency = 'Q'
-                keysuffix = ['03-31','06-30','09-30','12-31']
+                keysuffix = ['03-28','03-29','03-30','03-31','06-27','06-28','06-29','06-30','09-27','09-28','09-29','09-30','12-28','12-29','12-30','12-31']
                 for opp in [False, True]:
                     code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
                         FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
                             DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-            elif str(FOREX_t.columns[i][0]).find('EXR.D') >= 0:
-                frequency = 'W'
-                weekA = True
+                freqnum = 5
+                freqsuffix = ['S1','S1','S1','S1','S2','S2','S2','S2']
+                frequency = 'S'
+                keysuffix = ['06-27','06-28','06-29','06-30','12-28','12-29','12-30','12-31']
                 for opp in [False, True]:
                     code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
                         FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
                             DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-                if str(FOREX_t.columns[i][0]).find('ISK') >= 0:
-                    weekA = False
-                    form_e = 'End of period (E)'
-                    freqnum = 7
-                    freqsuffix = ['','','','','','','']
-                    frequency = 'M'
-                    keysuffix = ['-25','-26','-27','-28','-29','-30','-31']
-                    for opp in [False, True]:
-                        code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                            FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                                DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-                    freqnum = 5
-                    freqsuffix = ['Q1','Q1','Q1','Q1','Q2','Q2','Q2','Q2','Q3','Q3','Q3','Q3','Q4','Q4','Q4','Q4']
-                    frequency = 'Q'
-                    keysuffix = ['03-28','03-29','03-30','03-31','06-27','06-28','06-29','06-30','09-27','09-28','09-29','09-30','12-28','12-29','12-30','12-31']
-                    for opp in [False, True]:
-                        code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                            FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                                DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-                    freqnum = 5
-                    freqsuffix = ['S1','S1','S1','S1','S2','S2','S2','S2']
-                    frequency = 'S'
-                    keysuffix = ['06-27','06-28','06-29','06-30','12-28','12-29','12-30','12-31']
-                    for opp in [False, True]:
-                        code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                            FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                                DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
-                    freqnum = 4
-                    freqsuffix = ['','','','']
-                    frequency = 'A'
-                    keysuffix = ['12-28','12-29','12-30','12-31']
-                    for opp in [False, True]:
-                        code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                            FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                                DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
+                freqnum = 4
+                freqsuffix = ['','','','']
+                frequency = 'A'
+                keysuffix = ['12-28','12-29','12-30','12-31']
+                for opp in [False, True]:
+                    code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
+                        FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
+                            DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, weekA=weekA)
     
     elif g >= 3 and g <= 6:############################################################ IMF ##################################################################
-        FOREX_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_ =0, index_col_=1, skiprows_=list(range(6)), sheet_name_=0)
-        FOREX_t = FOREX_t.drop(columns=['Unnamed: 0', 'Scale', 'Base Year'])
+        for frequency in ['A','M','Q','S']:
+            file_suffix = frequency
+            if frequency == 'S' and (g == 3 or g == 5):
+                file_suffix = 'M'
+            elif frequency == 'S' and (g == 4 or g == 6):
+                file_suffix = 'Q'
+            file_path = data_path+NAME+str(g)+file_suffix+'_historical.xlsx'
+            logging.info('Frequency = '+frequency+' Time: '+str(int(time.time() - tStart))+' s'+'\n')
+            if PRESENT(file_path):
+                FOREX_t = readExcelFile(file_path, header_ =[0], index_col_=0, sheet_name_=0)
+            else:
+                url = 'https://data.imf.org/regular.aspx?key=63087883'
+                FREQ = {'A':'Annual', 'Q':'Quarterly', 'M':'Monthly'}
+                ITEM = {3:'Domestic Currency per SDR, End of Period', 4:'Domestic Currency per SDR, Period Average', 5:'Domestic Currency per U.S. Dollar, End of Period', 6:'Domestic Currency per U.S. Dollar, Period Average'}
+                FOREX_temp = FOREX_WEB(chrome, g, file_name=NAME+str(g)+file_suffix, url=url, header=[0], index_col=1, skiprows=list(range(6)), FREQ=FREQ, ITEM=ITEM, freq=file_suffix)
+                FOREX_t = FOREX_IMF(FOREX_temp, file_path)
+            #print(FOREX_t)
         
-        nG = FOREX_t.shape[0]
-        print('Total Rows:',nG,'Time: ', int(time.time() - tStart),'s'+'\n')
-        #print(FOREX_t)        
-        for i in range(nG):
-            sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
-            sys.stdout.flush()
-            
-            source = 'International Financial Statistics (IFS)'
-            freqnum = None
-            freqsuffix = []
-            keysuffix = []
-            repl = None
-            semiA = False
-            semi = False
-            if g == 3 or g == 5:
-                form_e = 'End of period (E)'
-                if g == 3:
-                    FOREXcurrency = 'Special Drawing Rights (SDR)'
-                elif g == 5:
-                    FOREXcurrency = 'United States Dollar (USD)'
-                for frequency in ['A','M','Q','S']:
+            nG = FOREX_t.shape[0]
+            logging.info('Total Rows: '+str(nG)+' Time: '+str(int(time.time() - tStart))+' s'+'\n')       
+            for i in range(nG):
+                #sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
+                #sys.stdout.flush()
+                
+                try:
+                    COUNTRY(FOREX_t.index[i], noprint=True)
+                except:
+                    ERROR('發現未知國家: '+FOREX_t.index[i]+', 請於 Country.xlsx 作調整')
+                    #continue
+                source = 'International Financial Statistics (IFS)'
+                freqnum = None
+                freqsuffix = []
+                keysuffix = []
+                repl = None
+                semiA = False
+                semi = False
+                if g == 3 or g == 5:
+                    form_e = 'End of period (E)'
+                    if g == 3:
+                        FOREXcurrency = 'Special Drawing Rights (SDR)'
+                    elif g == 5:
+                        FOREXcurrency = 'United States Dollar (USD)'
                     if frequency == 'S':
                         freqnum = 4
                         freqsuffix = ['-S1','-S2']
                         keysuffix = ['M06','M12']
                         semi = True
-                    for opp in [False, True]:
-                        code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                            FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                                DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, repl=REPL[frequency], semi=semi, semiA=semiA)
-            elif g == 4 or g == 6:
-                form_e = 'Average of observations through period (A)'
-                if g == 4:
-                    FOREXcurrency = 'Special Drawing Rights (SDR)'
-                elif g == 6:
-                    FOREXcurrency = 'United States Dollar (USD)'
-                for frequency in ['A','M','Q','S']:
+                elif g == 4 or g == 6:
+                    form_e = 'Average of observations through period (A)'
+                    if g == 4:
+                        FOREXcurrency = 'Special Drawing Rights (SDR)'
+                    elif g == 6:
+                        FOREXcurrency = 'United States Dollar (USD)'
                     if frequency == 'S':
                         freqnum = 4
                         freqsuffix = ['-S1','-S2']
                         keysuffix = ['Q2','Q4']
                         semiA = True
                         semi = True
-                    for opp in [False, True]:
-                        code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                            FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                                DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, repl=REPL[frequency], semi=semi, semiA=semiA)
-                
-        sys.stdout.write("\n\n") 
-        
-        df_key_temp = pd.DataFrame(KEY_DATA, columns = key_list)
-        if g == 5:
-            FOREXcurrency = 'Euro'
-            form_e = 'End of period (E)'
-            for frequency in ['A','M','Q','S']:
                 for opp in [False, True]:
                     code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
-                        FOREX_CROSSRATE(g, new_item_counts, DF_KEY, df_key_temp, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
-                            DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency])
-        elif g == 6:
-            FOREXcurrency = 'Euro'
-            form_e = 'Average of observations through period (A)'
-            for frequency in ['A','M','Q','S']:
+                        FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
+                            DB_name_dict[frequency], snl, source, FREQLIST[frequency], frequency, form_e, FOREXcurrency, opp=opp, suffix=SUFFIX[frequency], freqnum=freqnum, freqsuffix=freqsuffix, keysuffix=keysuffix, repl=REPL[frequency], semi=semi, semiA=semiA)
+                
+            sys.stdout.write("\n\n") 
+            
+            df_key_temp = pd.DataFrame(KEY_DATA, columns = key_list)
+            if g == 5 or g == 6:
+                if g == 5:
+                    FOREXcurrency = 'Euro'
+                    form_e = 'End of period (E)'
+                elif g == 6:
+                    FOREXcurrency = 'Euro'
+                    form_e = 'Average of observations through period (A)'
                 for opp in [False, True]:
                     code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
                         FOREX_CROSSRATE(g, new_item_counts, DF_KEY, df_key_temp, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
@@ -306,27 +337,38 @@ for g in range(start_file,last_file+1):
     
     elif g == 7 or g == 10 or g == 11:
         if g == 7:
-            FOREX_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_ =0, index_col_=1, skiprows_=list(range(4)), skipfooter_=3, sheet_name_=0)
+            file_path = data_path+NAME+str(g)+'_historical.xlsx'
+            if PRESENT(file_path):
+                FOREX_t = readExcelFile(file_path, header_ =[0], index_col_=0, sheet_name_=0)
+            else:
+                url = 'https://data.imf.org/regular.aspx?key=41175'
+                FOREX_temp = FOREX_WEB(chrome, g, file_name=NAME+str(g), url=url, header=[0], index_col=1, skiprows=list(range(4)))
+                FOREX_t = FOREX_IMF(FOREX_temp, file_path)
+            #print(FOREX_t)
             source = 'International Financial Statistics (IFS)'
             FOREXcurrency = 'United States Dollar (USD) (Millions of)'
             form_e = 'World Currency Composition of Official Foreign Exchange Reserves'
         else:
-            FOREX_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_ =0, index_col_=1, skiprows_=list(range(6)), skipfooter_=3, sheet_name_=0)
+            FOREX_t = readExcelFile(data_path+NAME+str(g)+'.xlsx', header_=0, index_col_=1, skiprows_=list(range(6)), skipfooter_=3, sheet_name_=0)
             source = 'International Financial Statistics (IFS)'
             FOREXcurrency = 'United States Dollar (USD) (Millions of)'
-            if g == 9:
+            if g == 10:
                 form_e = 'Advanced Economies Currency Composition of Official Foreign Exchange Reserves'
-            elif g == 10:
+            elif g == 11:
                 form_e = 'Emerging and Developing Economies Currency Composition of Official Foreign Exchange Reserves'
-        FOREX_t = FOREX_t.drop(columns=['Unnamed: 0'])
+            FOREX_t = FOREX_t.drop(columns=['Unnamed: 0'])
         
         nG = FOREX_t.shape[0]
         frequency = 'Q'
-        print('Total Rows:',nG,'Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Total Rows: '+str(nG)+' Time: '+str(int(time.time() - tStart))+' s'+'\n')
         #print(FOREX_t)      
         for i in range(nG):
-            sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
-            sys.stdout.flush()
+            #sys.stdout.write("\rLoading...("+str(round((i+1)*100/nG, 1))+"%)*")
+            #sys.stdout.flush()
+            try:
+                COUNTRY(FOREX_t.index[i], noprint=True)
+            except:
+                continue
             
             code_num_dict[frequency], table_num_dict[frequency], SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, new_item_counts = \
                 FOREX_DATA(i, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, SORT_DATA[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency],\
@@ -334,7 +376,10 @@ for g in range(start_file,last_file+1):
                     
     sys.stdout.write("\n\n")
     if find_unknown == True:
-        print('Total New Items Found:', new_item_counts, 'Time: ', int(time.time() - tStart),'s'+'\n') 
+        logging.info('Total New Items Found: '+str(new_item_counts)+' Time: '+str(int(time.time() - tStart))+' s'+'\n') 
+if chrome != None:
+    chrome.quit()
+    chrome = None
 
 for f in FREQNAME:
     if main_file.empty == False:
@@ -345,7 +390,7 @@ for f in FREQNAME:
         DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
         DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))      
 
-print('Time: ', int(time.time() - tStart),'s'+'\n')
+print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 if main_file.empty == True:
     df_key = pd.DataFrame(KEY_DATA, columns = key_list)
 else:
@@ -360,12 +405,12 @@ else:
         ERROR('No new items were found.')
     df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown)    
 
-print(df_key)
-#print(DATA_BASE_t)
+logging.info(df_key)
+#logging.info(DATA_BASE_t)
 
-print('Time: ', int(time.time() - tStart),'s'+'\n')
-df_key.to_excel(out_path+NAME+"key"+START_YEAR+".xlsx", sheet_name=NAME+'key')
-with pd.ExcelWriter(out_path+NAME+"database"+START_YEAR+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
+df_key.to_excel(out_path+NAME+"key"+excel_suffix+".xlsx", sheet_name=NAME+'key')
+with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
     if updating == True:
         for d in DATA_BASE_dict:
             sys.stdout.write("\rOutputing sheet: "+str(d))
@@ -381,7 +426,7 @@ with pd.ExcelWriter(out_path+NAME+"database"+START_YEAR+".xlsx") as writer: # py
                     DATA_BASE_dict[f][d].to_excel(writer, sheet_name = d)
 sys.stdout.write("\n")
 
-print('Time: ', int(time.time() - tStart),'s'+'\n')
+print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 
 #print('Total items not found: ',len(CONTINUE), '\n')
 
@@ -399,13 +444,13 @@ for i in range(AREMOS_forex.shape[0]):
     elif OLD_LEGACY(str(AREMOS_forex.loc[i, 'country_code'])) == 'S' and str(AREMOS_forex.loc[i, 'code'])[:1] in freq_list and str(AREMOS_forex.loc[i, 'code']).find('REX') >= 0:
         if str(AREMOS_forex.loc[i, 'code']) not in DF_NAME:
             SDR.append(AREMOS_forex.loc[i, 'code'])
-print('Total Old Legacy Currency items not found: ', len(OLCurrency), '\n')
-print('Total International Monetary Fund (IMF) SDRs items not found: ', len(SDR), '\n')
+logging.debug('Total Old Legacy Currency items not found: '+str(len(OLCurrency))+'\n')
+logging.debug('Total International Monetary Fund (IMF) SDRs items not found: '+str(len(SDR))+'\n')
 #print('Items not found: ', len(LEFT), '\n')
-print('Time: ', int(time.time() - tStart),'s'+'\n')
+print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 if updating == False:
     if find_unknown == True:
         checkNotFound = False
     else:
         checkNotFound = True
-    unknown_list, toolong_list, update_list, unfound_list = FOREX_identity(out_path, df_key, DF_KEY, checkNotFound=checkNotFound, checkDESC=True)
+    unknown_list, toolong_list, update_list, unfound_list = FOREX_identity(out_path, df_key, DF_KEY, checkNotFound=checkNotFound, checkDESC=True, tStart=tStart, start_year=dealing_start_year)

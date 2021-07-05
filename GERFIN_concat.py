@@ -1,6 +1,6 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import math, re, sys, calendar, os, copy, time, shutil
+import math, re, sys, calendar, os, copy, time, shutil, logging
 import pandas as pd
 import numpy as np
 import requests as rq
@@ -24,17 +24,16 @@ from webdriver_manager.chrome import ChromeDriverManager
 ENCODING = 'utf-8-sig'
 data_path = "./data2/"
 out_path = "./output/"
-NAME = input('Bank: ')
-START_YEAR = input('Output file suffix (If test identity press 0): ')
+excel_suffix = input('Output file suffix (If test identity press 0): ')
 
 def ERROR(error_text, waiting=False):
     if waiting == True:
         sys.stdout.write("\r"+error_text)
         sys.stdout.flush()
     else:
-        print('\n\n= ! = '+error_text+'\n\n')
-    with open('./ERROR.log','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(error_text)
+        sys.stdout.write('\n\n')
+        logging.error('= ! = '+error_text)
+        sys.stdout.write('\n\n')
     sys.exit()
 
 def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,encoding_=ENCODING,engine_='python',sep_=None, wait=False):
@@ -87,34 +86,174 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
 
-def GERFIN_WEBDRIVER(chrome, suffix, header=None, index_col=None, skiprows=None, usecols=None, names=None, csv=True):
+def PRESENT(file_path):
+    if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
+        logging.info('Present File Exists. Reading Data From Default Path.\n')
+        return True
+    else:
+        return False
+
+def GERFIN_WEBDRIVER(chrome, file_name, header=None, index_col=None, skiprows=None, usecols=None, names=None, csv=True, Zip=False):
 
     chrome.execute_script("window.open()")
     chrome.switch_to.window(chrome.window_handles[-1])
     chrome.get('chrome://downloads')
-    time.sleep(5)
+    time.sleep(3)
+    try:
+        if chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content #tag')").text == '已刪除':
+            ERROR('The file was not properly downloaded')
+    except JavascriptException:
+        ERROR('The file was not properly downloaded')
     excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
-    new_file_name = 'GERFIN'+str(suffix)+re.sub(r'.+?(\..+)$', r"\1", excel_file)
+    new_file_name = file_name+re.sub(r'.+?(\..+)$', r"\1", excel_file)
     chrome.close()
     chrome.switch_to.window(chrome.window_handles[0])
+    GERFIN_t = pd.DataFrame()
     while True:
-        try:            
-            if csv == True:
-                GERFIN_t = readFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+        try:
+            if Zip == True:
+                GERFIN_zip = new_file_name
+                if os.path.isfile((Path.home() / "Downloads" / excel_file)) == False:
+                    sys.stdout.write("\rWaiting for Download...")
+                    sys.stdout.flush()
+                    raise FileNotFoundError
             else:
-                GERFIN_t = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                if csv == True:
+                    GERFIN_t = readFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                else:
+                    GERFIN_t = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+            if type(GERFIN_t) != dict and GERFIN_t.empty == True and Zip == False:
+                break
         except:
             time.sleep(1)
         else:
+            sys.stdout.write('\nDownload Complete\n\n')
             if os.path.isfile((Path.home() / "Downloads" / new_file_name)) and excel_file != new_file_name:
                 os.remove((Path.home() / "Downloads" / new_file_name))
             os.rename((Path.home() / "Downloads" / excel_file), (Path.home() / "Downloads" / new_file_name))
             if os.path.isfile(data_path+new_file_name):
-                if os.path.isfile(data_path+'old/'+new_file_name):
-                    os.remove(data_path+'old/'+new_file_name)
-                shutil.move(data_path+new_file_name, data_path+'old/'+new_file_name)
+                if datetime.fromtimestamp(os.path.getmtime(data_path+new_file_name)).strftime('%Y-%m') ==\
+                     datetime.fromtimestamp(os.path.getmtime((Path.home() / "Downloads" / new_file_name))).strftime('%Y-%m'):
+                    os.remove(data_path+new_file_name)
+                else:
+                    if os.path.isfile(data_path+'old/'+new_file_name):
+                        os.remove(data_path+'old/'+new_file_name)
+                    shutil.move(data_path+new_file_name, data_path+'old/'+new_file_name)
             shutil.move((Path.home() / "Downloads" / new_file_name), data_path+new_file_name)
             break
+    if type(GERFIN_t) != dict and GERFIN_t.empty == True and Zip == False:
+        ERROR('Empty DataFrame')
+
+    if Zip == True:
+        return GERFIN_zip
+    else:
+        return GERFIN_t
+
+def GERFIN_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=False):
+    
+    link_list = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
+    link_found = False
+    for link in link_list:
+        if (text_match == True and link.text.find(keyword) >= 0) or (text_match == False and link.get_attribute(get_attribute).find(keyword) >= 0):
+            link_found = True
+            link.click()
+            break
+    link_meassage = None
+    if link_found == False:
+        if text_match == True:
+            key_string = link.text
+        else:
+            key_string = link.get_attribute(get_attribute)
+        link_meassage = 'Link Not Found in key string: '+key_string+', key = '+keyword
+    return link_found, link_meassage
+
+def GERFIN_WEB(chrome, g, file_name, url, header=None, index_col=0, skiprows=None, csv=False, output=False, Zip=False, start_year=None):
+
+    link_found = False
+    link_message = None
+    logging.info('Downloading file: GERFIN_'+str(g)+'\n')
+    chrome.get(url)
+
+    y = 0
+    DOWN = 2
+    height = chrome.execute_script("return document.documentElement.scrollHeight")
+    while True:
+        if link_found == True:
+            break
+        try:
+            chrome.execute_script("window.scrollTo(0,"+str(y)+")")
+            if g == 1 or g == 4:
+                WebDriverWait(chrome, 15).until(EC.element_to_be_clickable((By.XPATH, './/div[select[@name="FREQ.18"]]/div/ul'))).click()
+                for d in range(DOWN):
+                    ActionChains(chrome).send_keys(Keys.DOWN).perform()
+                ActionChains(chrome).send_keys(Keys.ENTER).click(chrome.find_element_by_xpath('.//div[select[@name="FREQ.18"]]/div/ul/li/input')).perform()
+                WebDriverWait(chrome, 15).until(EC.visibility_of_element_located((By.XPATH, './/div[select[@name="FREQ.18"]]/div/ul/li[@class="select2-search-choice"]/div')))
+                if chrome.find_element_by_xpath('.//div[select[@name="FREQ.18"]]/div/ul/li[@class="select2-search-choice"]/div').text != 'D':
+                    chrome.refresh()
+                    raise FileNotFoundError
+                sys.stdout.write("\rWaiting for Download...")
+                sys.stdout.flush()
+                chrome.find_element_by_xpath('.//a[@class="dataTable"]').click()
+                while True:
+                    sys.stdout.write("\rWaiting for Download...")
+                    sys.stdout.flush()
+                    try:
+                        #WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@name="start"]'))).send_keys('01-01-'+str(start_year))
+                        GERFIN_t = pd.read_html(chrome.find_element_by_id('dataTableID').get_attribute('outerHTML'), header=header, index_col=index_col, skiprows=skiprows)[0]
+                        GERFIN_t.index.name = 'Period'
+                    except NoSuchElementException:
+                        time.sleep(1)
+                    else:
+                        sys.stdout.write('\nDownload Complete\n\n')
+                        break
+                #ActionChains(chrome).send_keys(Keys.ENTER).perform()
+                link_found = True
+            elif g == 2:
+                WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="Add all"]'))).click()
+                link_found, link_meassage = GERFIN_WEB_LINK(chrome, url, keyword='data-basket')
+                WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@name="its_from"]'))).send_keys(str(start_year))
+                chrome.find_element_by_xpath('.//span[text()="English"]').click()
+                chrome.find_element_by_xpath('.//input[@value="Go to download"]').click()
+                link_found, link_meassage = GERFIN_WEB_LINK(chrome, url, keyword='Daily series', text_match=True)
+            elif g == 3:
+                email = open(data_path+'email.txt','r',encoding='ANSI').read()
+                password = open(data_path+'password.txt','r',encoding='ANSI').read()
+                try:
+                    WebDriverWait(chrome, 5).until(EC.visibility_of_element_located((By.ID, 'eml'))).send_keys(email)
+                    WebDriverWait(chrome, 5).until(EC.visibility_of_element_located((By.ID, 'pw'))).send_keys(password)
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/input[@type="submit"]'))).click()
+                except TimeoutException:
+                    time.sleep(0)
+                WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.ID, 'content-table')))
+                link_found, link_meassage = GERFIN_WEB_LINK(chrome, url, keyword='GERFIN', text_match=True)
+                time.sleep(2)
+                link_found, link_meassage = GERFIN_WEB_LINK(chrome, url, keyword='download')
+                WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/input[@name="download_data"]'))).click()
+                link_found = True
+            if link_found == False:
+                raise FileNotFoundError
+        except (FileNotFoundError, TimeoutException):
+            if g == 1 or g == 4:
+                DOWN+=1
+            else:
+                y+=500
+            if (y > height and link_found == False) or DOWN > 5:
+                if link_message != None:
+                    ERROR(link_message)
+                else:
+                    if DOWN > 5:
+                        ERROR('Frequency of Daily was not able to be selected.')
+                    else:
+                        ERROR('Download File Not Found.')
+        except Exception as e:
+            ERROR(str(e))
+        else:
+            break
+    time.sleep(3)
+    if output == True:
+        GERFIN_t.to_csv(data_path+file_name+'.csv')
+    else:
+        GERFIN_t = GERFIN_WEBDRIVER(chrome, file_name, header=header, index_col=index_col, skiprows=skiprows, csv=csv, Zip=Zip)
 
     return GERFIN_t
 
@@ -175,20 +314,22 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             database_num = int(f.read().replace('\n', ''))
         DATA_BASE_t = {}
         for i in range(1,database_num+1):
-            print('Reading file: '+NAME+'database_'+str(i)+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+            logging.info('Reading file: '+NAME+'database_'+str(i)+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
             DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
             for d in DB_t.keys():
                 DATA_BASE_t[d] = DB_t[d]
     except:
-        print('Reading file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
         DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
-        if type(DATA_BASE_t) != dict:
+        if KEY_DATA_t.empty == False and type(DATA_BASE_t) != dict:
+            ERROR(NAME+'database'+suf+'.xlsx Not Found.')
+        elif type(DATA_BASE_t) != dict:
             DATA_BASE_t = {}
     
-    print('Concating file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating file: '+NAME+'key'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
     
-    print('Concating file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     for f in FREQNAME:
         for d in DB_name_dict[f]:
             sys.stdout.write("\rConcating sheet: "+str(d))
@@ -199,7 +340,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                 DATA_BASE_t[d] = DB_dict[f][d]
         sys.stdout.write("\n")
 
-    print('Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Time: '+str(int(time.time() - tStart))+' s'+'\n')
     KEY_DATA_t = KEY_DATA_t.sort_values(by=['freq', 'name', 'db_table', 'snl'], ignore_index=True)
     
     repeated = 0
@@ -257,7 +398,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         sys.stdout.flush()
         KEY_DATA_t.loc[s, 'snl'] = s+1
     sys.stdout.write("\n")
-    print('Setting new files, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Setting new files, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     
     start_table_dict = {}
     start_code_dict = {}
@@ -293,7 +434,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             DB_dict[f] = DB_new_dict[f]
             DB_name_dict[f] = DB_name_new_dict[f]
 
-    print('Concating new files: '+NAME+'database, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating new files: '+NAME+'database, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     DATA_BASE_dict = {}
     for f in FREQNAME:
         if not DB_name_dict[f]:
@@ -314,31 +455,32 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
 def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf, FREQLIST=None):
     updated = 0
     tStart = time.time()
-    print('Updating file: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Updating file: '+str(int(time.time() - tStart))+' s'+'\n')
     try:
         with open(data_path+NAME+'database_num'+orig_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
             database_num = int(f.read().replace('\n', ''))
         original_database = {}
         for i in range(1,database_num+1):
-            print('Reading file: '+NAME+'database_'+str(i)+orig_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+            logging.info('Reading original database: '+NAME+'database_'+str(i)+orig_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
             DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
             for d in DB_t.keys():
                 original_database[d] = DB_t[d]
     except:
-        print('Reading original database: '+NAME+'database'+orig_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading original database: '+NAME+'database'+orig_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
     try:
         with open(data_path+NAME+'database_num'+up_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
             database_num = int(f.read().replace('\n', ''))
         updated_database = {}
         for i in range(1,database_num+1):
-            print('Reading file: '+NAME+'database_'+str(i)+up_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+            logging.info('Reading updated database: '+NAME+'database_'+str(i)+up_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
             DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
             for d in DB_t.keys():
                 updated_database[d] = DB_t[d]
     except:
-        print('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    CAT = ['desc_e', 'desc_c', 'form_e', 'form_c']
     
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
@@ -347,18 +489,23 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
         sys.stdout.flush()
 
         if ind in original_file.index:
-            original_file.loc[ind, 'desc_e'] = updated_file.loc[ind, 'desc_e']
+            for c in CAT:
+                original_file.loc[ind, c] = updated_file.loc[ind, c]
             if updated_file.loc[ind, 'last'] == 'Nan':
                 continue
             elif (original_file.loc[ind, 'last'] == 'Nan' and updated_file.loc[ind, 'last'] != 'Nan') or updated_file.loc[ind, 'last'] > original_file.loc[ind, 'last']:
                 updated+=1
             if updated_file.loc[ind, 'last'] != 'Nan':
                 original_file.loc[ind, 'last'] = updated_file.loc[ind, 'last']
+            if updated_file.loc[ind, 'start'] != 'Nan' and (original_file.loc[ind, 'start'] == 'Nan' or updated_file.loc[ind, 'start'] < original_file.loc[ind, 'start']):
+                original_file.loc[ind, 'start'] = updated_file.loc[ind, 'start']
             for period in updated_database[updated_file.loc[ind, 'db_table']].index:
                 if updated_file.loc[ind, 'db_table'][3] == 'W' and type(period) != str:
                     period = period.strftime('%Y-%m-%d')
                 if str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) != 'nan':
                     original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]
+                elif period >= updated_file.loc[ind, 'start'] and str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) == 'nan':
+                    original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = ''
         else:
             ERROR('Updated file index does not belongs to the original file index list: '+ind)
     sys.stdout.write("\n\n")
@@ -368,25 +515,6 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
             original_database[key] = original_database[key].reindex(FREQLIST[key[3]])
     original_file = original_file.reset_index()
     original_file = original_file.reindex(key_list, axis='columns')
-    print('updated:', updated, '\n')
+    logging.info('updated: '+str(updated)+'\n')
 
     return original_file, original_database
-
-def GERFIN_CRAW(g, head, skip, url='https://sdw.ecb.europa.eu/browse.do?node=9691296',FILTER=['CURRENCY.18', 'CURRENCY_DENOM.18', 'EXR_TYPE.18', 'EXR_SUFFIX.18']):
-
-    options = Options()
-    options.add_argument("--disable-notifications")
-    options.add_experimental_option("prefs", {"profile.default_content_setting_values.cookies": 2})
-    chrome = webdriver.Chrome(ChromeDriverManager().install(), options=options)
-    chrome.get(url)
-    time.sleep(5)
-    Select(chrome.find_element_by_name('FREQ.18')).select_by_value('D')
-    for fil in FILTER:
-        selection = Select(chrome.find_element_by_name(fil))
-        for s in range(len(selection.options)):
-            selection.select_by_index(s)
-    chrome.execute_script("document.getElementById('exportOptions').setAttribute('style', 'display: block;')")
-    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@id="exportOptions"]/a[text()="Excel (csv)"]'))).click()
-    GERFIN_t = GERFIN_WEBDRIVER(chrome, g, header=head, index_col=0, skiprows=skip)
-
-    return GERFIN_t
