@@ -1,12 +1,13 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
-import math, sys, calendar, os, copy, time
+import math, sys, calendar, os, copy, time, logging, zipfile
 import regex as re
 import pandas as pd
 import numpy as np
 import quandl as qd
 import requests as rq
+import win32com.client as win32
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -14,11 +15,14 @@ import webdriver_manager
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
+from iteration_utilities import duplicates
 import US_extention as EXT
-from US_extention import ERROR, readFile, readExcelFile, US_NOTE, US_HISTORYDATA, DATA_SETS, takeFirst, US_IHS, US_BLS, MERGE, NEW_KEYS, CONCATE, UPDATE,\
- US_POPP, US_FAMI, EXCHANGE, NEW_LABEL, US_STL, US_DOT, US_TICS, US_BTSDOL, US_ISM, US_RCM, US_CBS, US_DOA, US_AISI, US_EIAIRS, US_SEMI
+from US_extention import ERROR, readFile, readExcelFile, US_NOTE, US_HISTORYDATA, DATA_SETS, takeFirst, US_IHS, US_BLS, MERGE, NEW_KEYS, CONCATE, UPDATE, ATTRIBUTES,\
+ US_POPP, US_FAMI, EXCHANGE, NEW_LABEL, US_STL, US_DOT, US_TICS, US_BTSDOL, US_ISM, US_RCM, US_CBS, US_DOA, US_AISI, US_EIAIRS, US_SEMI, US_WEB, GET_NAME, PRESENT, US_FTD_NEW, US_POPT
 import US_test as test
 from US_test import US_identity
+FORMAT = '%(asctime)s %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT, handlers=[logging.FileHandler("LOG.log", 'w', EXT.ENCODING)], datefmt='%Y-%m-%d %I:%M:%S %p')
 
 find_unknown = False
 main_suf = '?'
@@ -33,22 +37,22 @@ updating = bool(int(input('Updating TOT file (1/0): ')))
 if merging and updating:
     ERROR('Cannot do merging and updating at the same time.')
 elif merging or updating:
-    merge_suf = input('Merging data suffix: ')
-    main_suf = input('Main data suffix: ')
+    merge_suf = input('Be Merged(Original) data suffix: ')
+    main_suf = input('Main(Updated) data suffix: ')
 else:
     find_unknown = bool(int(input('Check if new items exist (1/0): ')))
-    if find_unknown == False:
+    """if find_unknown == False:
         dealing_start_year = int(input("Dealing with data from year: "))
         start_year = dealing_start_year-10
         start_yearQ = dealing_start_year-10
         start_yearM = dealing_start_year-10
-        start_yearS = dealing_start_year-10
+        start_yearS = dealing_start_year-10"""
 bls_start = dealing_start_year
 TICS_start = str(dealing_start_year)+'-01'
 DF_suffix = test.DF_suffix
 Historical = False
 make_discontinued = False
-ENCODING = 'utf-8-sig'
+ENCODING = EXT.ENCODING
 excel_suffix = EXT.excel_suffix
 if main_suf == '?':
     keyword = input('keyword: ')
@@ -58,13 +62,31 @@ if main_suf == '?':
 else:
     keyword = ['','']
 if keyword[0] == 'BLS':
-    ignore = re.split(r',', input('ignore: ')) 
+    ig = input('ignore: ')
+    if ig != '':
+        ignore = re.split(r',', ig)
+    else:
+        ignore = []
 else:
     ignore = []
-NAME = 'US_'
-data_path = './data/'
-out_path = "./output/"
-databank = 'US'
+LOG = ['excel_suffix', 'merging', 'updating', 'find_unknown','dealing_start_year']
+for key in LOG:
+    logging.info(key+': '+str(locals()[key])+'\n')
+log = logging.getLogger()
+stream = logging.StreamHandler(sys.stdout)
+stream.setFormatter(logging.Formatter('%(message)s'))
+log.addHandler(stream)
+sys.stdout.write("\n\n")
+if merging:
+    logging.info('Process: File Merging\n')
+elif updating:
+    logging.info('Process: File Updating\n')
+else:
+    logging.info('Data Processing\n')
+NAME = EXT.NAME
+data_path = EXT.data_path
+out_path = EXT.out_path
+databank = NAME[:-1]
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'type', 'snl', 'source', 'form_e', 'form_c', 'table_id']
 main_file = readExcelFile(out_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
 merge_file = readExcelFile(out_path+NAME+'key'+merge_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
@@ -116,20 +138,20 @@ for f in FREQNAME:
     table_num_dict[f] = 1
     code_num_dict[f] = 1
 if merge_file.empty == False and merging == True and updating == False:
-    print('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time:', int(time.time() - tStart),'s'+'\n')
+    logging.info('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
     for f in FREQNAME:
         table_num_dict[f], code_num_dict[f] = MERGE(merge_file, DB_TABLE, DB_CODE, f)
     if main_file.empty == False:
-        print('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time:', int(time.time() - tStart),'s'+'\n')
-        print('Reading file: '+NAME+'database'+main_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
-        main_database = readExcelFile(out_path+NAME+'database'+main_suf+'.xlsx', header_ = 0, index_col_=0)
+        logging.info('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        logging.info('Reading file: '+NAME+'database'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        main_database = readExcelFile(out_path+NAME+'database'+main_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
         for s in range(main_file.shape[0]):
             sys.stdout.write("\rSetting snls: "+str(s+snl))
             sys.stdout.flush()
             main_file.loc[s, 'snl'] = s+snl
         sys.stdout.write("\n")
-        print('Setting files, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Setting files, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         db_table_new = 0
         db_code_new = 0
         for f in range(main_file.shape[0]):
@@ -148,11 +170,11 @@ else:
     for f in FREQNAME:
         table_num_dict[f] = 1
         code_num_dict[f] = 1
-print('Reading table: TABLES, Time: ', int(time.time() - tStart),'s'+'\n')
+logging.info('Reading table: TABLES, Time: '+str(int(time.time() - tStart))+' s'+'\n')
 TABLES = readExcelFile(data_path+'tables.xlsx', header_ = 0, sheet_name_=0)
 if updating == False and DF_suffix != merge_suf:
-    print('Reading file: US_key'+DF_suffix+', Time: ', int(time.time() - tStart),'s'+'\n')
-    DF_KEY = readExcelFile(out_path+'US_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
+    logging.info('Reading file: US_key'+DF_suffix+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+    DF_KEY = readExcelFile(out_path+'US_key'+DF_suffix+'.xlsx', header_=0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
     DF_KEY = DF_KEY.set_index('name')
 elif updating == False and DF_suffix == merge_suf:
     DF_KEY = merge_file
@@ -177,7 +199,7 @@ def FILE_NAME(source, address):
         if TABLES.iloc[t]['Source'] == source and TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] not in file_name:
             file_name.append(TABLES.iloc[t]['File'])
     return file_name  
-def SHEET_NAME(address, fname, TABLE=None, loc=0):
+def SHEET_NAME(address, fname):
     sheet_name = []
     for t in range(TABLES.shape[0]):
         if TABLES.iloc[t]['Address'] == address and TABLES.iloc[t]['File'] == fname:
@@ -227,36 +249,36 @@ def SCALE(code, address, SERIES=None):
             return('')
         else:
             ERROR('Scale error: '+code)
+Titles = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='titles').to_dict()
 def US_KEY(address, counting=False, key=None):
-    Titles = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='titles').to_dict()
     if address.find('BOC') >= 0:
-        print('Reading file: BOC_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: BOC_datasets, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         if key.find('FTD') >= 0:
             BOC_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='FTDdatasets').to_dict()
         else:
             BOC_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=[0,1,2], sheet_name_='BOCdatasets').to_dict()
-        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+key+'_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
         return Series, BOC_datasets, Titles
     elif address.find('BTS') >= 0 or address.find('DOL') >= 0:
-        print('Reading file: '+address[:3]+'_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+address[:3]+'_datasets, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         Datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_=address[:3]+'datasets').to_dict()
-        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+key+'_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
         return Series, Datasets, Titles
     elif address.find('NIPA') >= 0 or address.find('FAAT') >= 0:
         address = re.sub(r'NIPA/.*', "NIPA/", address)
         BEA_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='BEAdatasets')
-        print('Reading file: BEA TablesRegister, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: BEA TablesRegister, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         BEA_table = readFile(BEA_datasets.loc[address, 'Table'], header_ = 0, index_col_='TableId')#readExcelFile(data_path+address+'TablesRegister.xlsx', header_ = 0, index_col_='TableId', sheet_name_=0)
-        print('Reading file: BEA SeriesRegister, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: BEA SeriesRegister, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         BEA_series = readFile(BEA_datasets.loc[address, 'Series'], header_ = 0, index_col_='%SeriesCode')#readExcelFile(data_path+address+'SeriesRegister.xlsx', header_ = 0, index_col_='%SeriesCode', sheet_name_=0)
         if counting == True:
             return BEA_series
         return BEA_series, BEA_table, Titles
     elif address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0 or address.find('FDSA') >= 0 or address.find('DOA') >= 0:
         Table = None
-        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+key+'_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
         if address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0:
             Table = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=[0,1,2], sheet_name_='BEAdatasets')
@@ -266,24 +288,24 @@ def US_KEY(address, counting=False, key=None):
     elif address.find('EIA') >= 0 or address.find('SEMI') >= 0:
         Series = None
         if address.find('PETR') >= 0:
-            print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+            logging.info('Reading file: '+key+'_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
             Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
         Datasets = None
         if address.find('EIA') >= 0:
-            print('Reading file: '+address[:3]+'_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
+            logging.info('Reading file: '+address[:3]+'_datasets, Time: '+str(int(time.time() - tStart))+' s'+'\n')
             Datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_=address[:3]+'datasets').to_dict()
         return Series, Datasets, Titles
     elif address.find('ISM') >= 0:
-        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+key+'_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         Series = readExcelFile(data_path+address+key+'_series.xlsx', header_ = 0, index_col_=0)
         with open(data_path+address+'api_key.txt','r',encoding='ANSI') as f:
             API = f.read()
         return Series, API, Titles
     elif address.find('FRB') >= 0:
-        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+key+'_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         if key == 'FRB_G17':
             keydata = readExcelFile(data_path+address+'keydata.xlsx', header_=0,index_col_=[0,1] , sheet_name_='keydata')
-            FRB_series = readFile(data_path+address+key+'.csv', header_ = 0).drop_duplicates(subset=['Series Name:'], ignore_index=True)
+            FRB_series = readFile(data_path+address+key+'_series.csv', header_ = 0).drop_duplicates(subset=['Series Name:'], ignore_index=True)
             for i in range(FRB_series.shape[0]):
                 new_name = re.split(r'\.', FRB_series.iloc[i]['Series Name:'])
                 prefix = str(keydata.loc[(new_name[0], new_name[2]), 'Series Prefix'])
@@ -303,33 +325,32 @@ def US_KEY(address, counting=False, key=None):
         if counting == True:
             return FRB_series
         return FRB_series, None, Titles
-    elif address.find('STL') >= 0:
-        print('Reading file: '+key+'_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        """elif address.find('STL') >= 0:
+        logging.info('Reading file: '+key+'_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         STL_series = readExcelFile(data_path+address+key+'.xls', sheet_name_=0)
         STL_series = list(STL_series[0])
-        return STL_series, None, Titles
+        return STL_series, None, Titles"""
     elif address.find('IRS') >= 0:
-        print('Reading file: IRS_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: IRS_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         if address.find('UIIT') >= 0:
-            Series = readExcelFile(data_path+address+key+'.xls', sheet_name_=0)
-            Series = list(Series[0])
+            return None, None, Titles
         else:
             Series = readExcelFile(data_path+address+'IRS_series.xlsx', header_ = 0, index_col_=0)
-        print('Reading file: '+address[:3]+'_datasets, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: '+address[:3]+'_datasets, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         Datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_=address[:3]+'datasets').to_dict()
         return Series, Datasets, Titles
     elif address.find('NAR') >= 0:
-        print('Reading file: NAR_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: NAR_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         NAR_series = readExcelFile(data_path+address+'NAR_series.xlsx', header_ = 0, sheet_name_=0)
         return NAR_series, None, Titles
     elif address.find('CBS') >= 0:
-        print('Reading file: CBS_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: CBS_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         CBS_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='CBSdatasets')
         return CBS_datasets, None, Titles
     elif address.find('DOT') >= 0:
         DOT_table = None
         DOTdatasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='DOTdatasets')
-        print('Reading file: DOT_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: DOT_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         if address.find('MTST') >= 0:
             DOT_series = DOTdatasets
         elif address.find('TICS') >= 0:
@@ -337,14 +358,20 @@ def US_KEY(address, counting=False, key=None):
             DOT_table = DOTdatasets
         return DOT_series, DOT_table, Titles
     elif address.find('bls') >= 0:
-        print('Reading file: BLS_series, Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('Reading file: BLS_series, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         BLS_datasets = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='BLSdatasets')
-        BLS_series = {}
-        if address.find('ec/') >= 0:
-            BLS_table = readFile(address+BLS_datasets.loc[address, 'SERIES'], names_=['series_id','comp_code','group_code','ownership_code','periodicity_code','seasonal',\
-            'footnote_code','begin_year','begin_period','end_year','end_period'], index_col_=0, skiprows_=[0], acceptNoFile=False, sep_='\\t').to_dict()
+        file_path = data_path+'BLS/'+address[-3:-1]+'/'+address[-3:-1]+"_table.csv"
+        if PRESENT(file_path):
+            BLS_table = readFile(file_path, header_=0, index_col_=0).to_dict()
         else:
-            BLS_table = readFile(address+BLS_datasets.loc[address, 'SERIES'], header_=0, index_col_=0, acceptNoFile=False, sep_='\\t').to_dict()
+            if address.find('ec/') >= 0:
+                BLS_table = readFile(address+BLS_datasets.loc[address, 'SERIES'], names_=['series_id','comp_code','group_code','ownership_code','periodicity_code','seasonal',\
+                'footnote_code','begin_year','begin_period','end_year','end_period'], index_col_=0, skiprows_=[0], acceptNoFile=False, sep_='\\t')#.to_dict()
+            else:
+                BLS_table = readFile(address+BLS_datasets.loc[address, 'SERIES'], header_=0, index_col_=0, acceptNoFile=False, sep_='\\t')#.to_dict()
+            BLS_table.to_csv(file_path)
+            BLS_table = BLS_table.to_dict()
+        BLS_series = {}
         BLS_series['datasets'] = BLS_datasets
         if str(BLS_datasets.loc[address, 'ISADJUSTED']) != 'nan':
             BLS_series['ISADJUSTED'] = readFile(address+BLS_datasets.loc[address, 'ISADJUSTED'], header_=0, index_col_=0, acceptNoFile=False, sep_='\\t')
@@ -423,6 +450,8 @@ def US_KEY(address, counting=False, key=None):
         BLS_series = {}
         BLS_series['BASE'] = pd.DataFrame()
         return BLS_series, pd.DataFrame(), Titles
+    elif address.find('STL') >= 0:
+        return None, None, Titles
     else:
         ERROR('Series Error: '+address)
 def US_LEVEL(LABEL, source, Series=None, loc1=None, loc2=None, name=None, indent=None):
@@ -521,13 +550,15 @@ def US_ADDNOTE(attri, NOTE, note, note_num, note_part, specific=False, alphabet=
 
     return note, note_num, note_part, note_suffix
 
+NonValue_t = ['nan','Nan', '.....', 'ND', 'None', '0', '(S)', '(NA)', 'N', 'NA', '-', '', '(-)', 'n.a.', '(*)', '(D)', 'U', '.', '*', '--', 'Not Available', 'Not Applicable','\xa0','ZZZZZZ']
+
 def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_num, table_num, KEY_DATA, DATA_BASE, db_table_t, DB_name, snl, source, freqlist, frequency, UNIT='nan', LABEL=pd.DataFrame(), label_level=[], NOTE=[], FOOTNOTE=[], series=None, table=None, titles=None, repl=None, repl2=None, formnote={}, YEAR=None, QUAR=None, RAUQ=None):
     freqlen = len(freqlist)
     unit = ''
     Calculation_type = ''
     form_e = ''
     form_c = ''
-    NonValue = ['nan', '.....', 'ND', 'None', '0', '(S)', '(NA)', 'N', 'NA', '-', '', '(-)', 'n.a.', '(*)', '(D)', 'U', '.', '*', '--', 'Not Available', 'Not Applicable']
+    NonValue = NonValue_t.copy()
     if source == 'Department Of The Treasury' or source == 'Federal Reserve Bank of Richmond' or source == 'Bureau of Economic Analysis' or source == 'Bureau Of Labor Statistics':
         NonValue.remove('0')
     if source == 'Bureau Of Labor Statistics' and address.find('DSCO') < 0:
@@ -612,7 +643,10 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
             Calculation_type = series['DATA TYPES'].loc[repl, 'dt_desc']
         else:
             Calculation_type = US_t.iloc[ind]['Label']
-        form_e = table['Form'][file_name]
+        if file_name.find('http') >= 0:
+            form_e = table['Form'][sheet_name]
+        else:
+            form_e = table['Form'][file_name]
         form_c = 'Not Seasonally Adjusted'
         UNIT = unit
         dt_key = repl
@@ -663,14 +697,14 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
     elif source == 'Department Of The Treasury, Bureau Of The Fiscal Service':
         unit = 'Millions of United States Dollars'
         Calculation_type = US_t.iloc[ind]['type']
-        form_e = series.loc[repl, 'Name']
+        form_e = series.loc[file_name, 'Name']
         form_c = 'Not Seasonally Adjusted'
         UNIT = unit
     elif source == 'Department Of The Treasury':
-        if file_name == 's1_globl':
+        if sheet_name.find('s1_globl') >= 0:
             unit = 'Millions of United States Dollars'
             form_e = 'U.S. Transactions with Foreigners in Long-term Domestic and Foreign Securities'
-        elif file_name == 'mfhhis01':
+        elif sheet_name.find('mfhhis01') >= 0:
             unit = 'Billions of United States Dollars'
             form_e = 'Portfolio Holdings of U.S. and Foreign Securities'
         Calculation_type = series['DATA TYPES'].loc[US_t.iloc[ind]['Index'][:1], 'dt_desc']
@@ -704,7 +738,7 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
                 if LABEL[US_t.index[ind]].find(M3IMF) >= 0:
                     break
                 elif LABEL[US_t.index[ind]].find(word) >= 0:
-                    form_e = 'Components of Non-'+FNAME[fname]
+                    form_e = 'Components of Non-'+FNAME[sheet_name]
                     break
         elif address.find('G19') >= 0:
             form_c = ADJUST[bool(re.search(r'_N$', US_t.iloc[ind]['Index']))]
@@ -740,7 +774,10 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
                 if str(US_t.iloc[ind]['Index'])[repl2:] == 'CSBR':
                     unit = 'Millions of Chained Dollars'
                 Calculation_type = series['GEO LEVELS'].loc[str(US_t.iloc[ind]['Index'])[repl2:], 'geo_desc']
-                form_e = table['Form'][file_name]
+                if file_name.find('http') >= 0:
+                    form_e = table['Form'][sheet_name]
+                else:
+                    form_e = table['Form'][file_name]
                 if form_e == 'U.S. Imports of Energy-Related Petroleum Products':
                     unit = series['CATEGORIES'].loc[categ, 'unit']
                 form_c = series['ISADJUSTED'].loc[str(US_t.iloc[ind]['Index'])[:1], 'adj_desc']
@@ -974,7 +1011,7 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
         if address.find('HOUS') >= 0:
             note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[repl:]], NOTE, note, note_num, note_part, specific=True)
             attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0]) + Calculation_type + ', '
-        if address.find('MRTS') >= 0 or (address.find('UIWC') >= 0 and frequency == 'M') or sheet_name == 'Summary Table of Cargo Revenue Ton-Miles':
+        if address.find('MRTS') >= 0 or (address.find('UIWC') >= 0 and frequency == 'M') or sheet_name == 'Cargo Revenue Ton-Miles':
             note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[1:repl]], NOTE, note, note_num, note_part, specific=True)
             attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0])
         if address.find('CBS') >= 0:
@@ -983,13 +1020,16 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
         if address.find('MWTS') >= 0 or address.find('MRTS') >= 0:
             note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[:1]], NOTE, note, note_num, note_part, specific=True)
             attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0])
+        if str(sheet_name).find('mfhhis') >= 0:
+            note, note_num, note_part, note_suffix = US_ADDNOTE([str(US_t.iloc[ind]['Index'])[1:]], NOTE, note, note_num, note_part, specific=True)
+            attribute[0] = re.sub(r',\s$', note_suffix+', ', attribute[0])
     if address.find('STL') >= 0 or file_name == 'TRPT' or file_name == 'UIWC' or file_name == 'UIIT':
         attri = []
         for note_item in NOTE:
             if note_item[0].find(str(US_t.iloc[ind]['Index'])+'.') >= 0:
                 attri.append(note_item[0])
         note, note_num, note_part, note_suffix = US_ADDNOTE(attri, NOTE, note, note_num, note_part, specific=True)
-    elif address.find('BTS') >= 0 and sheet_name != 'Summary Table of Cargo Revenue Ton-Miles':
+    elif address.find('BTS') >= 0 and sheet_name != 'Cargo Revenue Ton-Miles':
         note, note_num, note_part, note_suffix = US_ADDNOTE(str(US_t.iloc[ind]['Label_note']), NOTE, note, note_num, note_part, alphabet=True)
         attribute[0] = re.sub(r', ', note_suffix+', ', attribute[0])
     if source == 'Bureau of Economic Analysis' or source == 'Bureau Of Census' or source == 'National Association of Home Builders'\
@@ -1142,64 +1182,47 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
                     db_table_t[db_code][freq_index] = float(value[k])
                 except ValueError:
                     ERROR('Nontype Value detected: '+str(value[k]))
-                if start_found == False and found == True:
+                if start_found == False:
                     if frequency == 'A':
                         start = int(freq_index)
                     else:
                         start = str(freq_index)
                     start_found = True
-                if start_found == True:
-                    if k == len(value)-1:
-                        if frequency == 'A':
-                            last = int(freq_index)
-                        else:
-                            last = str(freq_index)
-                        last_found = True
-                    else:
-                        for st in range(k+1, len(value)):
-                            if ((frequency != 'A' and str(index[st]).find(frequency) >= 0) or str(index[st]).isnumeric() or source == 'Federal Reserve Board') and str(value[st]).strip() not in NonValue:
-                                last_found = False
-                            else:
-                                last_found = True
-                            if last_found == False:
-                                break
-                        if last_found == True:
-                            if frequency == 'A':
-                                last = int(freq_index)
-                            else:
-                                last = str(freq_index)
         else:
             continue
     
     if start_found == False:
         if found == True:
             ERROR('start not found: '+str(name))
-    elif last_found == False:
+    try:
+        last = db_table_t[db_code].loc[~db_table_t[db_code].isin(NonValue)].index[-1]
+    except IndexError:
         if found == True:
             ERROR('last not found: '+str(name))
     if found == False:
         start = 'Nan'
         last = 'Nan'
     
-    if bls_start == None or (bls_start != None and find_unknown == True):
-        if source == 'Bureau Of Labor Statistics' and frequency == 'M' and start.replace('-', '-M') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('-M','-')]).strip() not in NonValue:
-            ERROR('start error: '+str(name))
-        elif source == 'Bureau Of Labor Statistics' and frequency == 'A' and str(start)+YEAR[repl] != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['start'].replace(YEAR[repl],''))]).strip() not in NonValue:
-            ERROR('start error: '+str(name))
-        elif source == 'Bureau Of Labor Statistics' and frequency == 'S' and start.replace('S', 'S0') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('S0','S')]).strip() not in NonValue:
-            ERROR('start error: '+str(name))
-        elif source == 'Bureau Of Labor Statistics' and frequency == 'Q' and US_t.iloc[ind]['start'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace(US_t.iloc[ind]['start'][-3:],QUAR[US_t.iloc[ind]['start'][-3:]])]).strip() not in NonValue:
+    if (bls_start == None or (bls_start != None and find_unknown == True)) and source == 'Bureau Of Labor Statistics':
+        if frequency == 'M' and start.replace('-', '-M') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('-M','-')]).strip() not in NonValue:
+            ERROR('start error: '+str(name)+', produced start = '+start.replace('-', '-M')+', dataframe start = '+US_t.iloc[ind]['start'])
+        elif frequency == 'A' and str(start)+YEAR[repl] != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['start'].replace(YEAR[repl],''))]).strip() not in NonValue:
+            ERROR('start error: '+str(name)+', produced start = '+str(last)+YEAR[repl]+', dataframe start = '+US_t.iloc[ind]['start'])
+        elif frequency == 'S' and start.replace('S', 'S0') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('S0','S')]).strip() not in NonValue:
+            ERROR('start error: '+str(name)+', produced start = '+start.replace('S', 'S0')+', dataframe start = '+US_t.iloc[ind]['start'])
+        elif frequency == 'Q' and US_t.iloc[ind]['start'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace(US_t.iloc[ind]['start'][-3:],QUAR[US_t.iloc[ind]['start'][-3:]])]).strip() not in NonValue:
             if start.replace(start[-2:], RAUQ[repl2][start[-2:]]) != US_t.iloc[ind]['start']:
-                ERROR('start error: '+str(name))
-    if source == 'Bureau Of Labor Statistics' and frequency == 'M' and last.replace('-', '-M') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('-M','-')]).strip() not in NonValue:
-        ERROR('last error: '+str(name))
-    elif source == 'Bureau Of Labor Statistics' and frequency == 'A' and str(last)+YEAR[repl] != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['last'].replace(YEAR[repl],''))]).strip() not in NonValue:
-        ERROR('last error: '+str(name))
-    elif source == 'Bureau Of Labor Statistics' and frequency == 'S' and last.replace('S', 'S0') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('S0','S')]).strip() not in NonValue:
-        ERROR('last error: '+str(name))
-    elif source == 'Bureau Of Labor Statistics' and frequency == 'Q' and US_t.iloc[ind]['last'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace(US_t.iloc[ind]['last'][-3:],QUAR[US_t.iloc[ind]['last'][-3:]])]).strip() not in NonValue:
-        if last.replace(last[-2:], RAUQ[repl2][last[-2:]]) != US_t.iloc[ind]['last']:
-            ERROR('last error: '+str(name))
+                ERROR('start error: '+str(name)+', produced start = '+start.replace(start[-2:], RAUQ[repl2][start[-2:]])+', dataframe start = '+US_t.iloc[ind]['start'])
+    if source == 'Bureau Of Labor Statistics' and str(US_t.iloc[ind]['last'])[:4] >= str(dealing_start_year):
+        if frequency == 'M' and last.replace('-', '-M') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('-M','-')]).strip() not in NonValue:
+            ERROR('last error: '+str(name)+', produced last = '+last.replace('-', '-M')+', dataframe last = '+US_t.iloc[ind]['last'])
+        elif frequency == 'A' and str(last)+YEAR[repl] != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['last'].replace(YEAR[repl],''))]).strip() not in NonValue:
+            ERROR('last error: '+str(name)+', produced last = '+str(last)+YEAR[repl]+', dataframe last = '+US_t.iloc[ind]['last'])
+        elif frequency == 'S' and last.replace('S', 'S0') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('S0','S')]).strip() not in NonValue:
+            ERROR('last error: '+str(name)+', produced last = '+last.replace('S', 'S0')+', dataframe last = '+US_t.iloc[ind]['last'])
+        elif frequency == 'Q' and US_t.iloc[ind]['last'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace(US_t.iloc[ind]['last'][-3:],QUAR[US_t.iloc[ind]['last'][-3:]])]).strip() not in NonValue:
+            if last.replace(last[-2:], RAUQ[repl2][last[-2:]]) != US_t.iloc[ind]['last']:
+                ERROR('last error: '+str(name)+', produced last = '+last.replace(last[-2:], RAUQ[repl2][last[-2:]])+', dataframe last = '+US_t.iloc[ind]['last'])
 
     key_tmp= [databank, name, db_table, db_code, desc_e, desc_c, frequency, start, last, unit, Calculation_type, snl, source, form_e, form_c, table_id]
     KEY_DATA.append(key_tmp)
@@ -1214,6 +1237,7 @@ MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'
 TABLE_NAME = {'ISADJUSTED':'adj','CATEGORIES':'cat','DATA TYPES':'dt','GEO LEVELS':'geo'}
 NEW_TABLES = TABLES.copy()
 NEW_TABLES = NEW_TABLES.set_index(['Address','File','Sheet']).sort_index()
+Zip_table = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=[0,1], sheet_name_='ZIPdatasets').sort_index()
 chrome = None
 new_item_counts = 0
 
@@ -1233,8 +1257,10 @@ for source in SOURCE(TABLES):
         if to_be_ignore == True:
             continue            
         address = address[4:]
+        zip_list = []
         #TABLES = TABLES.set_index(['Sheet'], drop=False)
-        Series, Table, Titles = US_KEY(address, key=re.sub(r'BEA|FED|BOC|HOUS|APEP|STL|FTD/|DOT|BTS|DOL|RCM|EIA|IRS', "", address).replace('/',''))
+        if address.find('FRB') < 0:
+            Series, Table, Titles = US_KEY(address, key=re.sub(r'BEA|BOC|HOUS|APEP|FTD/|DOT|BTS|DOL|RCM|EIA|IRS', "", address).replace('/',''))
         if source == 'Institute for Supply Management':
             qd.ApiConfig.api_key = Table
         for fname in FILE_NAME(source, address):
@@ -1242,30 +1268,58 @@ for source in SOURCE(TABLES):
                 continue
             if str(fname).find(keyword[1]) < 0:
                 continue
-            if chrome == None and fname.find('http') >= 0 and address.find('AISI') < 0 and address.find('FRB') < 0:
+            Zip = False
+            if source == 'Bureau of Economic Analysis' or source == 'Federal Reserve Economic Data' or address.find('MTST') >= 0\
+                 or fname == 'UIWC' or fname == 'UIIT' or fname == 'BEOL' or fname == 'TRPT':
+                Zip = True
+            if chrome == None and ((fname.find('http') >= 0 and address.find('AISI') < 0) or Zip == True or address.find('BOC') >= 0):
                 options = Options()
                 options.add_argument("--disable-notifications")
-                options.add_experimental_option("prefs", {"profile.default_content_setting_values.cookies": 2})
+                options.add_argument("--disable-popup-blocking")
+                options.add_argument("ignore-certificate-errors")
+                options.add_experimental_option("excludeSwitches", ["enable-logging"])
+                #options.add_experimental_option("prefs", {"profile.default_content_setting_values.cookies": 2})
                 chrome = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+                chrome.set_window_position(980,0)
+            if Zip == True:
+                file_address = data_path+address
+                file_path = file_address+Zip_table.at[(address,fname), 'Zipname']+'.zip'
+                present_file_existed = PRESENT(file_path)
+                if Zip_table.at[(address,fname), 'Zipname']+'.zip' not in zip_list:
+                    if present_file_existed == True:
+                        zipname = Zip_table.at[(address,fname), 'Zipname']+'.zip'
+                    else:
+                        zipname = US_WEB(chrome, address, Zip_table.at[(address,fname), 'website'], Zip_table.at[(address,fname), 'Zipname'], Table=Zip_table, Zip=True, file_name=fname)
+                    zip_list.append(zipname)
+                zf = zipfile.ZipFile(file_path,'r')
+                if source == 'Federal Reserve Economic Data' or fname == 'UIWC' or fname == 'UIIT' or fname == 'BEOL':
+                    Series_temp = readExcelFile(zf.open(fname+'.xls'), sheet_name_=0)
+                    Series = list(Series_temp[0])
             if source == 'Bureau of Economic Analysis' and (address.find('NIPA') >= 0 or address.find('FAAT') >= 0):
-                print('Reading source file, Time: ', int(time.time() - tStart),'s'+'\n')
-                US_t_dict = readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, skiprows_=list(range(7)), acceptNoFile=False)
+                logging.info('Reading source file, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+                US_t_dict = readExcelFile(zf.open(fname+'.xlsx'), header_=0, index_col_=0, skiprows_=list(range(7)), acceptNoFile=False)
+                unit_dict = readExcelFile(zf.open(fname+'.xlsx'), usecols_=[0], acceptNoFile=False)
                 sheet_list = list(US_t_dict)
+                sheet_list.remove('Contents')
             else:
                 sheet_list = SHEET_NAME(address, fname)
             for sname in sheet_list:
                 if sname == 'None':
                     sname = None
-                if Historical == False and str(NEW_TABLES.loc[(address,fname,sname), 'keyword']).find('historical') >= 0:
-                    continue
-                bls_read = False
+                if Historical == False:
+                    try:
+                        if str(NEW_TABLES.loc[(address,fname,sname), 'keyword']).find('historical') >= 0:
+                            continue
+                    except KeyError:
+                        time.sleep(0)
+                #bls_read = False
                 if source == 'Bureau of Economic Analysis' and (address.find('NIPA') >= 0 or address.find('FAAT') >= 0):
                     US_t = US_t_dict[sname]
                 distinguish_sheet = False
                 if address.find('HOUS') >= 0 or address.find('NAR') >= 0 or address.find('POP') >= 0 or address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0 or address.find('PETR') >= 0:
                     distinguish_sheet = True
                 for freq in FREQUENCY(address, fname, sname, distinguish_sheet):
-                    print('Reading file: '+fname+', sheet: '+str(sname)+', frequency: '+freq+', Time: ', int(time.time() - tStart),'s'+'\n')
+                    logging.info('Reading file: '+fname+', sheet: '+str(sname)+', frequency: '+freq+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
                     unit = 'nan'
                     repl2 = None
                     formnote = {}
@@ -1274,8 +1328,9 @@ for source in SOURCE(TABLES):
                     RAUQ = None
                     if source == 'Bureau of Economic Analysis':
                         if address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0:
+                            unit = re.sub(r'\s+NOTE:.+', "", str(readExcelFile(zf.open(fname+'.xls'), usecols_=[0], sheet_name_=sname).iloc[1][0]).strip())
                             HEAD = {'A':1,'Q':2}
-                            US_t = readExcelFile(data_path+address+fname+'.xls', index_col_=0, skiprows_=list(range(int(Table.loc[(address,fname,sname), 'skip'].item()))), sheet_name_=sname)
+                            US_t = readExcelFile(zf.open(fname+'.xls'), index_col_=0, skiprows_=list(range(int(Table.loc[(address,fname,sname), 'skip'].item()))), sheet_name_=sname)
                             US_t.columns = [US_t.iloc[i].fillna(method='pad').str.strip() for i in range(HEAD[freq])]
                             BEA_cols = []
                             for j in range(len(US_t.columns)):
@@ -1300,15 +1355,14 @@ for source in SOURCE(TABLES):
                                 else:
                                     BEA_inds.append('nan')
                             US_t.insert(loc=0, column='Index', value=BEA_inds)
-                            excel = ''
                             if address.find('DIRI') >= 0:
-                                repl2 = re.sub(r'.+(U\.S\..+)', r"\1", str(readExcelFile(data_path+address+fname+'.xls', usecols_=[0], sheet_name_=sname).iloc[0][0]).strip())
+                                repl2 = re.sub(r'.+(U\.S\..+)', r"\1", str(readExcelFile(zf.open(fname+'.xls'), usecols_=[0], sheet_name_=sname).iloc[0][0]).strip())
                             else:
-                                repl2 = re.sub(r'.+,\s+(.+)', r"\1", str(readExcelFile(data_path+address+fname+'.xls', usecols_=[0], sheet_name_=sname).iloc[0][0]).strip())
+                                repl2 = re.sub(r'.+,\s+(.+)', r"\1", str(readExcelFile(zf.open(fname+'.xls'), usecols_=[0], sheet_name_=sname).iloc[0][0]).strip())
                         else:
-                            excel = 'x'
+                            unit = re.sub(r'\s+NOTE:.+', "", str(unit_dict[sname].iloc[1][0]).strip())
                         if US_t.empty == False:
-                            unit = re.sub(r'\s+NOTE:.+', "", str(readExcelFile(data_path+address+fname+'.xls'+excel, usecols_=[0], sheet_name_=sname).iloc[1][0]).strip())
+                            #unit = re.sub(r'\s+NOTE:.+', "", str(readExcelFile(data_path+address+fname+'.xls'+excel, usecols_=[0], sheet_name_=sname).iloc[1][0]).strip())
                             if address.find('NIPA') >= 0 or address.find('FAAT') >= 0:
                                 sname = re.split(r'\-', sname)[0]
                             US_t = US_t.rename(columns={'Unnamed: 1':'Label','Unnamed: 2':'Index'})
@@ -1337,18 +1391,25 @@ for source in SOURCE(TABLES):
                                     label_level[item] = -1
                             note, footnote = US_NOTE(US_t.index, sname, label, address)
                     elif source == 'Federal Reserve Board':
+                        file_path = data_path+address+sname+'.csv'
                         if address.find('G17') >= 0:
-                            US_temp = readFile(fname, header_=None, names_=['code','year']+MONTH, acceptNoFile=False, sep_='\\s+')
-                            US_t = US_HISTORYDATA(US_temp, name='year', MONTH=MONTH, make_idx=True)
+                            if PRESENT(file_path):
+                                US_temp = readFile(file_path, header_=[0], acceptNoFile=False)
+                            else:
+                                US_temp = readFile(fname, header_=None, names_=['code','year']+MONTH, acceptNoFile=False, sep_='\\s+')
+                                US_temp.to_csv(file_path)
+                            US_t = US_HISTORYDATA(US_temp, name='year', address=address, freq=freq, MONTH=MONTH, make_idx=True, find_unknown=find_unknown, DF_KEY=DF_KEY)
                         elif address.find('H6') >= 0 or address.find('G19') >= 0 or address.find('H15') >= 0:
-                            if fname.find('discontinued') >= 0:
-                                Series, Table, Titles = US_KEY(address, key=fname)
-                            US_t = readFile(data_path+address+fname+'.csv', header_=0, index_col_=0, skiprows_=list(range(5))).T
+                            if PRESENT(file_path):
+                                US_t = readFile(file_path, header_=[0], index_col_=0, skiprows_=list(range(5))).T
+                            else:
+                                US_t = US_WEB(chrome, address, fname, sname, freq=freq, header=[0], index_col=0, skiprows=list(range(5)), csv=True).T
                             new_index = []
                             for i in range(US_t.shape[0]):
                                 new_index.append(US_t.index[i][:-2])
                             US_t.insert(loc=0, column='Index', value=new_index)
                             US_t = US_t.set_index('Index', drop=False)
+                        Series, Table, Titles = US_KEY(address, key=sname)
                         label = Series['Descriptions:']
                         label = NEW_LABEL(address[-3:], label.copy(), Series, Table)
                         label_level = None
@@ -1361,23 +1422,28 @@ for source in SOURCE(TABLES):
                                 CONTINUE.append(ind)
                     elif source == 'Federal Reserve Economic Data' or fname == 'UIWC' or fname == 'UIIT' or fname == 'BEOL':
                         Series_t = Series
-                        if fname == 'UIWC' or sname == 'UIWC':
-                            Series = list(readExcelFile(data_path+address+fname+'.xls', sheet_name_=0)[0])
-                        US_temp = readExcelFile(data_path+address+fname+'.xls', header_ =0, index_col_=0, sheet_name_=sname).T
+                        if fname == 'UIWC':
+                            Series = list(readExcelFile(zf.open(fname+'.xls'), sheet_name_=0)[0])
+                        US_temp = readExcelFile(zf.open(fname+'.xls'), header_ =0, index_col_=0, sheet_name_=sname).T
                         US_t, label, note, footnote = US_STL(US_temp, address, Series)
                         label_level = None
                         repl = None
                         Series = Series_t
                     elif source == 'Federal Reserve Bank of Richmond':
-                        US_temp = readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, sheet_name_=sname).T
+                        file_path = data_path+address+sname+'.xlsx'
+                        if PRESENT(file_path):
+                            US_temp = readExcelFile(file_path, header_ =[0], index_col_=0, sheet_name_=0).T
+                        else:
+                            US_temp = US_WEB(chrome, address, fname, sname, freq=freq, header=[0], index_col=0).T
                         US_t, label, note, footnote = US_RCM(US_temp, fname, Series)
                         label_level = None
                         repl = 4
                     elif source == 'U.S. Department of Agriculture':
-                        if fname.find('http') >= 0:
-                            US_temp = pd.DataFrame()
+                        file_path = data_path+address+sname+'.csv'
+                        if PRESENT(file_path):
+                            US_temp = readFile(file_path, header_=0, usecols_=[1,2,16,19])
                         else:
-                            US_temp = readFile(data_path+address+fname+'.csv', header_ =0, usecols_=[1,2,16,19])
+                            US_temp = US_WEB(chrome, address, fname, sname, Table=Table, header=0, usecols=[1,2,16,19], csv=True)
                         US_t, label, note, footnote = US_DOA(US_temp, Series, Table, address, fname, sname, chrome)
                         label_level = None
                         repl = 3
@@ -1391,64 +1457,73 @@ for source in SOURCE(TABLES):
                         repl = 4
                         repl2 = 7
                     elif source == 'National Federation of Independent Business' or source == 'Organization for Economic Cooperation and Development':
-                        if fname == 'Consumer Confidence Index':
-                            US_temp = readFile(data_path+address+fname+'.csv', header_ =0, index_col_=0, usecols_=[5,6]).T
+                        skip, excel, head, index_col, use, nm, output, trans  = ATTRIBUTES(address, sname, Series.to_dict())
+                        if sname == 'Consumer Confidence Index':
+                            file_path = data_path+address+sname+'.csv'
+                            csv = True
                         else:
-                            US_temp = pd.DataFrame()#readExcelFile(data_path+address+fname+'.xlsx', header_ =0, index_col_=0, sheet_name_=sname).T
-                        US_t, label, note, footnote = US_CBS(address, fname, sname, Series, US_temp, chrome)
+                            file_path = data_path+address+sname+'.xls'+excel
+                            csv = False
+                        if PRESENT(file_path):
+                            if sname == 'Consumer Confidence Index':
+                                US_temp = readFile(file_path, header_=head, index_col_=index_col, usecols_=use)
+                            else:
+                                US_temp = readExcelFile(file_path, header_=head, index_col_=index_col, usecols_=use, sheet_name_=0)
+                        else:
+                            US_temp = US_WEB(chrome, address, fname, sname, header=head, index_col=index_col, excel=excel, usecols=use, csv=csv, output=output)
+                        US_t, label, note, footnote = US_CBS(address, fname, sname, Series, US_temp, transpose=trans)
                         other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
                         note = note + US_NOTE(other_notes, sname, address=address, other=True)
                         label_level = None
                         repl = 5
                     elif source == 'Department Of The Treasury, Bureau Of The Fiscal Service':
-                        US_temp = readFile(data_path+address+fname+'.csv', header_ =0)
+                        US_temp = readFile(zf.open(fname+'.csv'), header_ =0)
                         US_temp = US_temp.sort_values(by=['Line Code Number','Calendar Year','Calendar Month Number'], ignore_index=True)
-                        US_t, label, note, footnote, label_level = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Key'])
-                        repl = fname
+                        US_t, label, note, footnote, label_level = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Key'], find_unknown=find_unknown, DF_KEY=DF_KEY)
+                        repl = None
                     elif source == 'Department Of The Treasury':
                         idx = 0
-                        if fname == 's1_globl':
+                        if sname == 's1_globl':
                             idx = [0,1,2]
+                        file_path = data_path+address+sname+'.csv'
+                        if PRESENT(file_path):
+                            US_temp = readFile(file_path, header_=[0], index_col_=idx, skiprows_=list(range(int(Table.loc[sname, 'skip'].item()))))
+                            US_present = pd.DataFrame()
+                            US_his = pd.DataFrame()
+                        else:
+                            sname_t = sname
+                            if sname.find('mfhhis') >= 0:
+                                sname_t = sname.replace('_historical','')
+                            US_temp = US_WEB(chrome, address, fname, sname_t, freq=freq, header=[0], index_col=idx, skiprows=list(range(int(Table.loc[sname, 'skip'].item()))), csv=True)
+                            if sname.find('mfhhis') >= 0:
+                                US_present = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', header=[0], index_col=0, widths=[30]+[8]*13)
+                                US_his = readFile(file_path, header_=[0], index_col_=0)
+                        if sname == 's1_globl':
                             KEYS = {3:['Marketable'],4:["Gov't"],5:['corporate','bonds'],0:['corporate','stocks'],1:['Foreign securities','Bonds'],2:['Stocks']}
-                            US_temp = readFile(data_path+address+fname+'.csv')
-                            for col in range(3, US_temp.shape[1]):
+                            US_test = readFile(data_path+address+sname+'.csv')
+                            for col in range(3, US_test.shape[1]):
                                 for key in KEYS[col%6]:
-                                    if key not in list(US_temp[col]):
-                                        ERROR('Items not found in column '+chr(ord('@')+col+1)+' of '+fname+'.csv: '+key)
-                        US_temp = readFile(data_path+address+fname+'.csv', header_ =0, index_col_ =idx, skiprows_=list(range(int(Table.loc[fname, 'skip'].item()))))
-                        US_t, label, note, footnote = US_TICS(US_temp, Series, data_path, address, fname, TICS_start, find_unknown=find_unknown)
+                                    if key not in list(US_test[col]):
+                                        ERROR('Items not found in column '+chr(ord('@')+col+1)+' of '+sname+'.csv: '+key)
+                        US_t, label, note, footnote = US_TICS(US_temp, Series, data_path, address, sname, TICS_start, US_present=US_present, US_his=US_his, find_unknown=find_unknown, DF_KEY=DF_KEY)
                         repl = 4
                         label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
+                        if sname.find('mfhhis') >= 0:
+                            other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
+                            note = note + US_NOTE(other_notes, sname, address=address, other=True)
                     elif source == 'Bureau Of Transportation Statistics' or source == 'Department Of Labor':
-                        fname_temp = fname
-                        if address.find('BTS') >= 0 and fname.find('http') >= 0:
-                            fname = sname
+                        file_name = fname
+                        if fname.find('http') >= 0:
+                            file_name = sname
                         TRPT_series = Series
                         if fname == 'TRPT':
-                            Series = list(readExcelFile(data_path+address+fname+'.xls', sheet_name_=0)[0])
-                        skip = None
-                        if str(Table['skip'][fname]) != 'nan':
-                            skip = list(range(int(Table['skip'][fname])))
-                        excel = ''
-                        if str(Table['excel'][fname]) != 'nan':
-                            excel = Table['excel'][fname]
-                        head = None
-                        if str(Table['head'][fname]) != 'nan':
-                            head = list(range(int(Table['head'][fname])))
-                        index = 0
-                        if str(Table['index'][fname]) != 'nan':
-                            index = list(range(int(Table['index'][fname])))
-                        use = None
-                        if str(Table['usecols'][fname]) != 'nan':
-                            use = [int(item) for item in re.split(r', ', str(Table['usecols'][fname]))]
-                        trans = Table['transpose'][fname]
-                        suffix = Table['suffix'][fname]
-                        nm = None
-                        if str(Table['names'][fname]) != 'nan':
-                            nm = [item for item in re.split(r', ', str(Table['names'][fname]))]
-                        if fname_temp != fname:
-                            fname = fname_temp
-                        US_t, label, note, footnote, unit = US_BTSDOL(data_path, address, fname, sname, Series, header=head, index_col=index, skiprows=skip, freq=freq, x=excel, usecols=use, transpose=trans, suffix=suffix, names=nm, TRPT=TRPT_series, chrome=chrome)
+                            Series_temp = readExcelFile(zf.open(fname+'.xls'), sheet_name_=0)
+                            Series = list(Series_temp[0])
+                        else:
+                            zf = None
+                        skip, excel, head, index, use, nm, output, trans  = ATTRIBUTES(address, file_name, Table)
+                        suffix = ATTRIBUTES(address, file_name, Table, key='suffix')
+                        US_t, label, note, footnote, unit = US_BTSDOL(data_path, address, fname, sname, Series, header=head, index_col=index, skiprows=skip, freq=freq, x=excel, usecols=use, transpose=trans, suffix=suffix, names=nm, TRPT=TRPT_series, chrome=chrome, zf=zf, output=output)
                         repl = 4
                         repl2 = 7
                         if suffix.find('SAT') >= 0:
@@ -1456,7 +1531,7 @@ for source in SOURCE(TABLES):
                         if fname == 'TRPT':
                             Series = TRPT_series
                         label_level = US_LEVEL(label, source, Series, loc1=1, loc2=repl, name='CATEGORIES', indent='cat_indent')
-                        if (address.find('UIWC') >= 0 and freq == 'M') or sname == 'Summary Table of Cargo Revenue Ton-Miles':
+                        if (address.find('UIWC') >= 0 and freq == 'M') or sname == 'Cargo Revenue Ton-Miles':
                             other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
                             note = note + US_NOTE(other_notes, sname, address=address, other=True)
                     elif source == 'Semiconductor Equipment and Materials International':
@@ -1468,94 +1543,52 @@ for source in SOURCE(TABLES):
                         label_level = None
                         repl = None
                     elif source == 'Energy Information Administration' or address.find('PETR') >= 0 or source == 'Internal Revenue Service':
-                        nrows = None
-                        skip = None
-                        if str(Table['skip'][fname]) != 'nan':
-                            skip = list(range(int(Table['skip'][fname])))
-                        excel = ''
-                        if str(Table['excel'][fname]) != 'nan':
-                            excel = Table['excel'][fname]
-                        head = None
-                        if str(Table['head'][fname]) != 'nan':
-                            head = list(range(int(Table['head'][fname])))
-                        use = None
-                        if str(Table['usecols'][fname]) != 'nan':
-                            use = lambda x: re.sub(r'[0-9]+$', "", str(x).strip()) in re.split(r', ', str(Table['usecols'][fname]))
-                        trans = Table['transpose'][fname]
-                        prefix = None
-                        if str(Table['prefix'][fname]) != 'nan':
-                            prefix = Table['prefix'][fname]
-                        if fname.find('crushed') >= 0:
-                            lines = readExcelFile(data_path+address+fname+'.xlsx', sheet_name_=sname)[0]
-                            data_head = -1
-                            l = 0
-                            while l < len(lines):
-                                if bool(re.match(r'Salient Statistics', str(lines[l]).replace('\n',''))):
-                                    data_head = l
-                                    skip = list(range(data_head))
-                                if data_head >= 0 and bool(re.match(r'Production', str(lines[l]).replace('\n',''))):
-                                    data_tail = l
-                                    nrows = data_tail-data_head
-                                    break
-                                l+=1
-                        US_t, label, note, footnote = US_EIAIRS(Series, data_path, address, fname, sname, freq, x=excel, header=head, index_col=0, skiprows=skip, transpose=trans, usecols=use, prefix=prefix, nrows=nrows, chrome=chrome)
+                        file_name = fname
+                        if fname.find('http') >= 0:
+                            file_name = sname
+                        skip, excel, head, index, use, nm, output, trans  = ATTRIBUTES(address, file_name, Table)
+                        prefix = ATTRIBUTES(address, file_name, Table, key='prefix')
+                        tables = ATTRIBUTES(address, file_name, Table, key='tables')
+                        US_t, label, note, footnote = US_EIAIRS(Series, data_path, address, fname, sname, freq, tables=tables, x=excel, header=head, index_col=index, skiprows=skip, transpose=trans, usecols=use, prefix=prefix, chrome=chrome)
                         repl = prefix
                         label_level = None
                     elif (source == 'Bureau Of Census' or source == 'National Association of Home Builders') and address.find('FTD') < 0:
-                        subword = str(Table['subword'][(address,fname,sname)])
-                        prefix = str(Table['prefix'][(address,fname,sname)])
-                        middle = str(Table['middle'][(address,fname,sname)])
-                        suffix = str(Table['suffix'][(address,fname,sname)])
+                        file_name = tuple([address,fname,sname])
+                        skip, excel, head, dex, use, nm, output, trans  = ATTRIBUTES(address, file_name, Table)
+                        subword = ATTRIBUTES(address, file_name, Table, key='subword')
+                        prefix = ATTRIBUTES(address, file_name, Table, key='prefix')
+                        middle = ATTRIBUTES(address, file_name, Table, key='middle')
+                        suffix = ATTRIBUTES(address, file_name, Table, key='suffix')
+                        datasets = ATTRIBUTES(address, file_name, Table, key='datasets')
+                        password = ATTRIBUTES(address, file_name, Table, key='password')
+                        key_text = ATTRIBUTES(address, file_name, Table, key='key_text')
+                        website = ATTRIBUTES(address, file_name, Table, key='website')
                         file_name = None
                         if str(Table['file_name'][(address,fname,sname)]) != 'nan':
                             file_name = fname
                         sheet_name = None
                         if str(Table['sheet_name'][(address,fname,sname)]) != 'nan':
                             sheet_name = sname
-                        datasets = None
-                        if str(Table['DataSets'][(address,fname,sname)]) != 'nan':
-                            datasets = Table['DataSets'][(address,fname,sname)]
-                        skip = None
-                        if str(Table['skip'][(address,fname,sname)]) != 'nan':
-                            skip = list(range(int(Table['skip'][(address,fname,sname)])))
-                        excel = ''
-                        if str(Table['excel'][(address,fname,sname)]) != 'nan':
-                            excel = Table['excel'][(address,fname,sname)]
-                        head = None
-                        if str(Table['head'][(address,fname,sname)]) != 'nan':
-                            head = list(range(int(Table['head'][(address,fname,sname)])))
-                        dex = None
-                        if str(Table['index_col'][(address,fname,sname)]) != 'nan':
-                            if Table['index_col'][(address,fname,sname)] == 0:
-                                dex = 0
-                            else:
-                                dex = list(range(int(Table['index_col'][(address,fname,sname)])+1))
-                        use = None
-                        if str(Table['usecols'][(address,fname,sname)]) != 'nan':
-                            use = [int(item) for item in re.split(r', ', str(Table['usecols'][(address,fname,sname)]))]
-                        trans = True
-                        if str(Table['transpose'][(address,fname,sname)]) != 'nan':
-                            trans = False
                         HIES = False
                         if address.find('HIES') >= 0:
                             HIES = True
-                        password = ''
-                        if str(Table['pass'][(address,fname,sname)]) != 'nan':
-                            password = Table['pass'][(address,fname,sname)]
-                        key_text = ''
-                        if str(Table['key_text'][(address,fname,sname)]) != 'nan':
-                            key_text = Table['key_text'][(address,fname,sname)]
                         if (address.find('MRTS') >= 0 and freq == 'Q') or (address.find('SHIP') >= 0 and freq == 'A'):
                             for table in Series:
                                 Series[table] = Series[table].reset_index().set_index(TABLE_NAME[table]+'_code')
+                        elif address.find('POPT') >= 0:
+                            US_POPT(chrome, website, data_path, address, fname, sname)
                         if address.find('POPP') >= 0:
-                            US_temp = readFile(data_path+address+fname+'.csv', header_=0)
-                            US_t, label, note, footnote = US_POPP(US_temp, data_path, address, datasets=datasets, DIY_series=Series)
+                            file_path = data_path+address+fname+'.csv'
+                            if PRESENT(file_path):
+                                US_temp = readFile(file_path, header_=[0])
+                            else:
+                                US_temp = US_WEB(chrome, address, website, fname, freq=freq, tables=[sname], header=[0], csv=True)
+                            US_t, label, note, footnote = US_POPP(US_temp, data_path, address, datasets=datasets, DIY_series=Series, find_unknown=find_unknown, DF_KEY=DF_KEY)
                         elif address.find('FAMI') >= 0 or address.find('MADI') >= 0 or address.find('SCEN') >= 0:
-                            US_t, label, note, footnote, formnote = US_FAMI(prefix, middle, data_path, address, fname, sname, Series, x=excel)
+                            US_t, label, note, footnote, formnote = US_FAMI(prefix, middle, data_path, address, fname, sname, Series, x=excel, chrome=chrome, website=website)
                         else:
-                            US_t, label, note, footnote = DATA_SETS(data_path, address, fname=file_name, sname=sheet_name, datasets=datasets, DIY_series=Series, MONTH=MONTH, password=password,\
-                                header=head, index_col=dex, skiprows=skip, freq=freq, x=excel, usecols=use, transpose=trans, HIES=HIES, subword=subword, prefix=prefix, middle=middle, suffix=suffix, chrome=chrome, key_text=key_text)
+                            US_t, label, note, footnote = DATA_SETS(data_path, address, fname=file_name, sname=sheet_name, datasets=datasets, DIY_series=Series, MONTH=MONTH, password=password, header=head, index_col=dex, skiprows=skip,\
+                                 freq=freq, x=excel, usecols=use, transpose=trans, HIES=HIES, subword=subword, prefix=prefix, middle=middle, suffix=suffix, chrome=chrome, key_text=key_text, Zip_table=Zip_table, website=website, find_unknown=find_unknown, DF_KEY=DF_KEY)
                         if datasets == fname:
                             for table in Series:
                                 if address.find('POPP') >= 0:
@@ -1589,35 +1622,22 @@ for source in SOURCE(TABLES):
                         if address.find('PRIC') >= 0:
                             unit = str(readExcelFile(data_path+address+fname+'.xls', usecols_=[0], sheet_name_=sname).iloc[1][0]).strip()
                     elif source == 'Bureau Of Census' and address.find('FTD') >= 0:
-                        prefix = str(Table['prefix'][fname])
-                        middle = str(Table['middle'][fname])
-                        suffix = str(Table['suffix'][fname])
-                        skip = None
-                        if str(Table['skip'][fname]) != 'nan':
-                            skip = list(range(int(Table['skip'][fname])))
-                        excel = ''
-                        if str(Table['excel'][fname]) != 'nan':
-                            excel = Table['excel'][fname]
-                        head = None
-                        multi = None
-                        if str(Table['head'][fname]) != 'nan' and fname != 'exh12':
-                            head = list(range(int(Table['head'][fname])))
-                        elif str(Table['head'][fname]) != 'nan' and fname == 'exh12':
-                            multi = int(Table['head'][fname])
-                        use = None
-                        if str(Table['usecols'][fname]) != 'nan':
-                            use = [int(item) for item in re.split(r', ', str(Table['usecols'][fname]))]
-                        elif str(Table['not_use'][fname]) != 'nan':
-                            use = lambda x: str(x) not in re.split(r', ', str(Table['not_use'][fname]))
-                        trans = Table['transpose'][fname]
-                        nm = None
-                        if str(Table['names'][fname]) != 'nan':
-                            ns = []
-                            for m in range(len(re.split(r'; ', str(Table['names'][fname])))):
-                                ns.append(re.split(r', ', re.split(r'; ', str(Table['names'][fname]))[m]))
-                            nm = pd.MultiIndex.from_product(ns)
-                        US_t, label, note, footnote = DATA_SETS(data_path, address, fname=fname, sname=sname, DIY_series=Series, header=head, index_col=0, skiprows=skip, freq=freq,\
-                             x=excel, usecols=use, names=nm, transpose=trans, multi=multi, prefix=prefix, middle=middle, suffix=suffix)
+                        file_name = fname
+                        if fname.find('http') >= 0:
+                            file_name = sname
+                        skip, excel, head, index, use, nm, output, trans  = ATTRIBUTES(address, file_name, Table)
+                        prefix = ATTRIBUTES(address, file_name, Table, key='prefix')
+                        middle = ATTRIBUTES(address, file_name, Table, key='middle')
+                        suffix = ATTRIBUTES(address, file_name, Table, key='suffix')
+                        multi = ATTRIBUTES(address, file_name, Table, key='multi')
+                        final_name = ATTRIBUTES(address, file_name, Table, key='final_name')
+                        ft900_name = ATTRIBUTES(address, file_name, Table, key='ft900_name')
+                        if fname.find('http') >= 0:
+                            US_t, label, note, footnote = DATA_SETS(data_path, address, fname=fname, sname=sname, DIY_series=Series, header=head, index_col=0, skiprows=skip, freq=freq,\
+                                 x=excel, usecols=use, names=nm, transpose=trans, multi=multi, prefix=prefix, middle=middle, suffix=suffix, chrome=chrome)
+                        else:
+                            US_t, label, note, footnote = US_FTD_NEW(chrome, data_path, address, fname, Series, prefix, middle, suffix, freq, trans, Zip_table, excel=excel,\
+                                 skip=skip, head=head, index_col=0, usecols=use, names=nm, multi=multi, final_name=final_name, ft900_name=ft900_name)
                         other_notes = readExcelFile(data_path+address+'other_notes.xlsx', header_=0, index_col_=0, sheet_name_=0, acceptNoFile=False)
                         note = note + US_NOTE(other_notes, sname, address=address, other=True)
                         repl = 4
@@ -1640,12 +1660,27 @@ for source in SOURCE(TABLES):
                         QUAR = {'main':{'M03':'Q1','M06':'Q2','M09':'Q3','M12':'Q4'}, 'other':{'Q01':'Q1','Q02':'Q2','Q03':'Q3','Q04':'Q4'}}
                         QUAR2 = {'M03':'Q1','M06':'Q2','M09':'Q3','M12':'Q4','Q01':'Q1','Q02':'Q2','Q03':'Q3','Q04':'Q4'}
                         RAUQ = {'main':{'Q1':'M03','Q2':'M06','Q3':'M09','Q4':'M12'}, 'other':{'Q1':'Q01','Q2':'Q02','Q3':'Q03','Q4':'Q04'}}
+                        SEMI = ['S01','S02']
+                        MON = ['M01','M02','M03','M04','M05','M06','M07','M08','M09','M10','M11','M12']
+                        FREQ = {'A':'Annual','S':'Semiannual','Q':'Quarterly','M':'Monthly'}
                         new_label = bool(Series['datasets'].loc[address, 'NEW_LAB'])
                         bls_key = str(Series['datasets'].loc[address, 'Y_KEY'])
                         bls_key2 = str(Series['datasets'].loc[address, 'Q_KEY'])
-                        if bls_read == False:
-                            US_temp = readFile(address+fname, header_=0, names_=['series_id','year','period','value','footnote_codes'], acceptNoFile=True, sep_='\\t')
-                            bls_read = True
+                        PERIODS = {'A':YEAR[bls_key],'S':SEMI,'Q':QUAR[bls_key2],'M':MON}
+                        freq_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+' - '+FREQ[freq]+'.csv'
+                        #if bls_read == False:
+                        if PRESENT(freq_path):
+                            US_temp = readFile(freq_path, header_=[0], index_col_=0)
+                        else:
+                            file_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+'.csv'#'BLS/INTLINE_t_'+address[-3:-1]+'_'+freq+'.xlsx'
+                            if PRESENT(file_path):
+                                US_temp = readFile(file_path, header_=[0], index_col_=0)
+                            else:
+                                print('Waiting for Download...'+'\n')
+                                US_temp = readFile(address+fname, header_=0, names_=['series_id','year','period','value','footnote_codes'], acceptNoFile=True, sep_='\\t')
+                                US_temp.to_csv(file_path)
+                                print('Download Complete, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+                            #bls_read = True
                             if address.find('in/') >= 0 and freq == 'A':
                                 for code in Table['begin_year']:
                                     sys.stdout.write("\rCorrection...("+str(round((list(Table['begin_year']).index(code)+1)*100/len(Table['begin_year']), 1))+"%)*")
@@ -1662,8 +1697,10 @@ for source in SOURCE(TABLES):
                                         delete.append(i)
                                 sys.stdout.write("\n")
                                 US_temp = US_temp.drop(delete)
+                            US_temp = US_temp.sort_values(by=['series_id','year','period'], ignore_index=True)
+                            US_temp = US_temp.loc[US_temp['period'].isin(PERIODS[freq])]
+                            US_temp.to_csv(freq_path)
                         if US_temp.empty == False:
-                            print('Time: ', int(time.time() - tStart),'s'+'\n') 
                             cat_idx = str(Series['datasets'].loc[address, 'CATEGORIES'])[3:]
                             item = str(Series['datasets'].loc[address, 'CONTENT']).lower()
                             idb = str(Series['datasets'].loc[address, 'UNIT'])[3:]+'_code'
@@ -1684,11 +1721,10 @@ for source in SOURCE(TABLES):
                                 idb = 'irc_code'
                             elif str(Series['datasets'].loc[address, 'UNIT']) == 'nan':
                                 idb = 'base_date'
-                            US_t, label, note, footnote = US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base=idb, address=address, start=bls_start, key=bls_key, key2=bls_key2, lab_base=labb, find_unknown=find_unknown)
+                            US_t, label, note, footnote = US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base=idb, address=address, DF_KEY=DF_KEY, start=bls_start, key=bls_key, key2=bls_key2, lab_base=labb, find_unknown=find_unknown, Series=Series)
                         else:
                             continue
                         if US_t.empty == False:
-                            US_t.to_excel(data_path+'BLS/US_t_'+address[-3:-1]+'_'+freq+'.xlsx', sheet_name=address[-3:-1]+'_'+freq)
                             if str(Series['datasets'].loc[address, 'NOTE']) != 'nan':
                                 note = US_NOTE(Series['NOTE'], sname, LABEL=Table, address=address, other=True)
                             if new_label == True:
@@ -1757,12 +1793,13 @@ for source in SOURCE(TABLES):
                         if address.find('SHIP') >= 0:
                             US_t = US_t.sort_index(axis=1)
                             index = list(US_t.columns)
+                    if not not list(duplicates(label.index.dropna())):
+                        if False in [d in NonValue_t for d in list(duplicates(label.index.dropna()))]:
+                            ERROR('Duplicated Indices found in the file.')
                     
                     nG = US_t.shape[0]
-                    if find_unknown == True:
-                        print('Items:',nG,', Total New Items Found:', new_item_counts, 'Time: ', int(time.time() - tStart),'s'+'\n')
-                    else:
-                        print('Total Items:',nG,'Time: ', int(time.time() - tStart),'s'+'\n')        
+                    if find_unknown == False:
+                        logging.info('Total Items: '+str(nG)+' Time: '+str(int(time.time() - tStart))+' s'+'\n')        
                     for i in range(nG):
                         sys.stdout.write("\rProducing Database...("+str(round((i+1)*100/nG, 1))+"%)*")
                         sys.stdout.flush()
@@ -1773,36 +1810,7 @@ for source in SOURCE(TABLES):
                             if Table['state_code'][US_t.iloc[i]['Index']] != 0:
                                 continue
                         
-                        suffix = '.'+freq
-                        if source == 'Bureau Of Labor Statistics' and address.find('DSCO') < 0:
-                            group = re.sub(r'[a-z]+\.', "", Series['datasets'].loc[address, 'DATA TYPE'])
-                        if address.find('ln/') >= 0 and freq == 'Q':
-                            name = US_t.iloc[i]['Index'].replace('-','').strip()[:-1]+suffix
-                        elif address.find('cu/') >= 0 or address.find('cw/') >= 0:
-                            if bool(re.match(r'0', str(Table[group+'_code'][US_t.iloc[i]['Index']]))):
-                                name = re.sub(r'0', "", US_t.iloc[i]['Index'], 1).replace('-','').strip()+suffix
-                            else:
-                                name = US_t.iloc[i]['Index'].replace('-','').strip()+suffix
-                        elif address.find('pc/') >= 0:
-                            name = US_t.iloc[i]['Index'].replace(str(Table[group+'_code'][US_t.iloc[i]['Index']]), '', 1).replace('-','').strip()+suffix
-                        elif address.find('bd/') >= 0:
-                            name = US_t.iloc[i]['Index'].strip()[:3]+US_t.iloc[i]['Index'].strip()[13]+US_t.iloc[i]['Index'].strip()[16:19]+US_t.iloc[i]['Index'].strip()[20:26]+suffix
-                        elif address.find('jt/') >= 0:
-                            name = US_t.iloc[i]['Index'].strip()[:6]+US_t.iloc[i]['Index'].strip()[7:11]+US_t.iloc[i]['Index'].strip()[17:21]+suffix
-                        elif address.find('in/') >= 0:
-                            name = US_t.iloc[i]['Index'].strip()[:-2]+suffix
-                        elif address.find('ml/') >= 0:
-                            name = US_t.iloc[i]['Index'].strip()[:3]+US_t.iloc[i]['Index'].strip()[8]+US_t.iloc[i]['Index'].strip()[10:]+suffix
-                        elif address.find('ESMS') >= 0:
-                            name = re.sub(r'[0-9]+[A-Z]+$', "", US_t.iloc[i]['Index'].replace('-','').strip())+suffix
-                        elif address.find('MCPI') >= 0:
-                            name = re.sub(r'[A-Z]+$', "", US_t.iloc[i]['Index'].replace('-','').strip())+suffix
-                        elif address.find('FRB') >= 0:
-                            name = US_t.iloc[i]['Index'].replace('DF_BA_N','').replace('1111A4T8','11A4T8').replace('.','').replace('-','').strip()+suffix
-                            if len(name) > 17:
-                                name = name.replace('_','')
-                        else:
-                            name = US_t.iloc[i]['Index'].replace('-','').strip()+suffix
+                        name = GET_NAME(address, freq, US_t.iloc[i]['Index'], source=source, Series=Series, Table=Table)
                         
                         if (name in DF_KEY.index and find_unknown == True) or (name not in DF_KEY.index and find_unknown == False):
                             continue
@@ -1823,6 +1831,8 @@ for source in SOURCE(TABLES):
                                  db_table_t_dict[freq], DB_name_dict[freq], snl, source, FREQLIST[freq], freq, unit, label, label_level, note, footnote, series=Series, \
                                      table=Table, titles=Titles, repl=repl, repl2=repl2, formnote=formnote, YEAR=YEAR2, QUAR=QUAR2, RAUQ=RAUQ)
                     sys.stdout.write("\n\n")
+                    if find_unknown == True:
+                        logging.info('Total New Items Found: '+str(new_item_counts)+' Time: '+str(int(time.time() - tStart))+' s'+'\n')
 if chrome != None:
     chrome.quit()
     chrome = None
@@ -1837,7 +1847,7 @@ for f in FREQNAME:
         DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
         DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))       
 
-print('Time: ', int(time.time() - tStart),'s'+'\n')
+print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 if main_file.empty == True:
     df_key = pd.DataFrame(KEY_DATA, columns = key_list)
 else:
@@ -1854,12 +1864,11 @@ else:
 
 if main_file.empty == True and find_unknown == True:
     NEW_TABLES['new_counts'] = [0 for i in range(NEW_TABLES.shape[0])]
-    NEW_TABLES['Total_counts'] = [NEW_TABLES.iloc[i]['counts'] for i in range(NEW_TABLES.shape[0])]
     new_tables = pd.DataFrame()
+    count = 0
     for ind in range(df_key.shape[0]):
         sys.stdout.write("\rCounting: "+str(ind+1)+" ")
         sys.stdout.flush()
-        count = 0
         counted = False
         addr = re.split(r',', df_key.iloc[ind]['table_id'])[0]
         fnm = re.split(r',', df_key.iloc[ind]['table_id'])[1]
@@ -1868,31 +1877,38 @@ if main_file.empty == True and find_unknown == True:
         for i in range(NEW_TABLES.loc[(addr,fnm)].shape[0]):
             if NEW_TABLES.loc[(addr,fnm)].iloc[i]['Source'] == 'Bureau of Economic Analysis' and (snm_l.find(str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower()) >= 0 or str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower().find(snm_l) >= 0):
                 NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
-                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'Total_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['Total_counts'] + 1
                 counted = True
+                count += 1
                 break
             elif snm == str(NEW_TABLES.loc[(addr,fnm)].index[i]):
                 NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
-                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'Total_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['Total_counts'] + 1
                 counted = True
+                count += 1
                 break
         if counted == False:
             ERROR('Item not counted: name = '+df_key.iloc[ind]['name']+', table_id = '+df_key.iloc[ind]['table_id'])
     for ind in range(NEW_TABLES.shape[0]):
-        if NEW_TABLES.iloc[ind]['new_counts'] != 0: #and NEW_TABLES.iloc[ind]['counts'] != NEW_TABLES.iloc[ind]['new_counts']:
+        if NEW_TABLES.iloc[ind]['new_counts'] != 0 and NEW_TABLES.iloc[ind]['counts'] != NEW_TABLES.iloc[ind]['new_counts']:
             new_tables = new_tables.append(NEW_TABLES.iloc[ind])
     sys.stdout.write("\n\n")
     df_key = df_key.drop(columns=['table_id'])
 elif main_file.empty == True:
     df_key = df_key.drop(columns=['table_id'])
 
-print(df_key)
-#print(DATA_BASE_t)
+logging.info(df_key)
+#logging.info(DATA_BASE_t)
+logging.info('Total Items: '+str(df_key.shape[0]))
 
-print('Time: ', int(time.time() - tStart),'s'+'\n')
+print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 df_key.to_excel(out_path+NAME+"key"+excel_suffix+".xlsx", sheet_name=NAME+'key')
-if updating == False:
-    with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer:
+    if updating == True:
+        for d in DATA_BASE_dict:
+            sys.stdout.write("\rOutputing sheet: "+str(d))
+            sys.stdout.flush()
+            if DATA_BASE_dict[d].empty == False:
+                DATA_BASE_dict[d].to_excel(writer, sheet_name = d)
+    else:
         for f in FREQNAME:
             for d in DATA_BASE_dict[f]:
                 sys.stdout.write("\rOutputing sheet: "+str(d))
@@ -1903,8 +1919,36 @@ if updating == False:
 
 if main_file.empty == True and find_unknown == True: 
     if new_tables.empty == False:
-        print('New items were found')
-print('Time: ', int(time.time() - tStart),'s'+'\n')
+        logging.info('New items were found')
+        if bool(int(input('Update the table file (1/0): '))):
+            new_tables['New Total Counts'] = new_tables['counts'].apply(lambda x: 0 if str(x) == 'nan' else x)+new_tables['new_counts']
+            try:
+                xl = win32.gencache.EnsureDispatch('Excel.Application')
+            except:
+                xl = win32.DispatchEx('Excel.Application')
+            xl.DisplayAlerts=False
+            xl.Visible = 0
+            ExcelFile = xl.Workbooks.Open(Filename=os.path.realpath(data_path+'tables.xlsx'))
+            Sheet = ExcelFile.Worksheets(1)
+            SetNewCounts = dict.fromkeys(NEW_TABLES.index.names)
+            SetNewCounts['counts'] = None
+            for col in NEW_TABLES.index.names:
+                for j in reversed(range(1, Sheet.UsedRange.Columns.Count+1)):
+                    if SetNewCounts['counts'] == None and Sheet.Cells(1, j).Value == 'counts':
+                        SetNewCounts['counts'] = j
+                    elif Sheet.Cells(1, j).Value == col:
+                        SetNewCounts[col] = j
+                        break
+            for new in range(new_tables.shape[0]):
+                for i in range(2, Sheet.UsedRange.Rows.Count+1):
+                    if False not in [Sheet.Cells(i,SetNewCounts[NEW_TABLES.index.names[k]]).Value == new_tables.index[new][k] for k in range(len(NEW_TABLES.index.names))]:
+                        Sheet.Cells(i,SetNewCounts['counts']).Value = new_tables.iloc[new]['New Total Counts']
+                        break
+            ExcelFile.Save()
+            ExcelFile.Close()
+            xl.Quit()
+
+print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 
 if updating == False:
     if keyword[0].isupper():
@@ -1912,6 +1956,6 @@ if updating == False:
         checkDESC=True
     else:
         checkNotFound=False
-        checkDESC=False
+        checkDESC=True
 
-    unknown_list, toolong_list, update_list, unfound_list = US_identity(out_path, df_key, DF_KEY, keyword=keyword, checkNotFound=checkNotFound, checkDESC=checkDESC)
+    unknown_list, toolong_list, update_list, unfound_list = US_identity(out_path, df_key, DF_KEY, keyword=keyword[0], checkNotFound=checkNotFound, checkDESC=checkDESC, tStart=tStart, start_year=dealing_start_year)

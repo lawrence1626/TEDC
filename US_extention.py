@@ -1,12 +1,14 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
-import math, sys, calendar, os, copy, time, shutil
+import math, sys, calendar, os, copy, time, shutil, logging, zipfile, io
 import regex as re
 import pandas as pd
 import numpy as np
 import quandl as qd
 import requests as rq
+import win32com.client as win32
+from requests.packages import urllib3
 from pathlib import Path
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -19,13 +21,18 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import ElementClickInterceptedException
+from selenium.common.exceptions import JavascriptException
 import webdriver_manager
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from urllib.error import HTTPError
+urllib3.disable_warnings()
 #from US_concat import CONCATE, readExcelFile
 
+NAME = 'US_'
 ENCODING = 'utf-8-sig'
 data_path = "./data/"
 out_path = "./output/"
@@ -40,10 +47,10 @@ def ERROR(error_text, waiting=False):
         sys.stdout.write("\r"+error_text)
         sys.stdout.flush()
     else:
-        print('\n\n= ! = '+error_text+'\n\n')
-    with open('./ERROR.log','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
-        f.write(error_text)
-    sys.exit()
+        sys.stdout.write('\n\n')
+        logging.error('= ! = '+error_text)
+        sys.stdout.write('\n\n')
+        sys.exit()
 
 def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,encoding_=ENCODING,engine_='python',sep_=None, wait=False):
     try:
@@ -94,6 +101,55 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
             return t
         except:
             return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+
+def PRESENT(file_path, forcing_download=False):
+    if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
+        if forcing_download == True:
+            return False
+        logging.info('Present File Exists. Reading Data From Default Path.\n')
+        return True
+    else:
+        return False
+
+def GET_NAME(address, freq, code, source='', Series=None, Table=None, check_exist=False, DF_KEY=None):
+    suffix = '.'+freq
+    if source == 'Bureau Of Labor Statistics' and address.find('DSCO') < 0:
+        group = re.sub(r'[a-z]+\.', "", Series['datasets'].loc[address, 'DATA TYPE'])
+    if address.find('ln/') >= 0 and freq == 'Q':
+        name = code.replace('-','').strip()[:-1]+suffix
+    elif address.find('cu/') >= 0 or address.find('cw/') >= 0:
+        if bool(re.match(r'0', str(Table[group+'_code'][code]))):
+            name = re.sub(r'0', "", code, 1).replace('-','').strip()+suffix
+        else:
+            name = code.replace('-','').strip()+suffix
+    elif address.find('pc/') >= 0:
+        name = code.replace(str(Table[group+'_code'][code]), '', 1).replace('-','').strip()+suffix
+    elif address.find('bd/') >= 0:
+        name = code.strip()[:3]+code.strip()[13]+code.strip()[16:19]+code.strip()[20:26]+suffix
+    elif address.find('jt/') >= 0:
+        name = code.strip()[:6]+code.strip()[7:11]+code.strip()[17:21]+suffix
+    elif address.find('in/') >= 0:
+        name = code.strip()[:-2]+suffix
+    elif address.find('ml/') >= 0:
+        name = code.strip()[:3]+code.strip()[8]+code.strip()[10:]+suffix
+    elif address.find('ESMS') >= 0:
+        name = re.sub(r'[0-9]+[A-Z]+$', "", code.replace('-','').strip())+suffix
+    elif address.find('MCPI') >= 0:
+        name = re.sub(r'[A-Z]+$', "", code.replace('-','').strip())+suffix
+    elif address.find('FRB') >= 0:
+        name = code.replace('DF_BA_N','').replace('1111A4T8','11A4T8').replace('.','').replace('-','').strip()+suffix
+        if len(name) > 17:
+            name = name.replace('_','')
+    else:
+        name = code.replace('-','').strip()+suffix
+    
+    if check_exist == True:
+        if name in DF_KEY.index:
+            return True
+        else:
+            return False
+    else:
+        return name
 
 def NEW_LABEL(key, label, Series, Table, cat_idx=None, item=None):
     normal = ['li/', 'ce/', 'pr/', 'jt/']
@@ -146,36 +202,514 @@ def EXCHANGE(address, Series, label, Display={}, Sort={}):
     
     return Series
 
-def US_WEBDRIVER(chrome, address, fname, sname, header=None, index_col=None, skiprows=None, usecols=None, names=None, csv=True):
+def ATTRIBUTES(address, file_name, Table, key=None):
+    string_keys = ['prefix','middle','suffix','subword','datasets','website']
+    string_keys2 = ['password','key_text']
+    if key == None:
+        try:
+            skip = None
+            if str(Table['skip'][file_name]) != 'nan':
+                skip = list(range(int(Table['skip'][file_name])))
+        except KeyError:
+            skip = None
+        try:
+            excel = ''
+            if str(Table['excel'][file_name]) != 'nan':
+                excel = Table['excel'][file_name]
+        except KeyError:
+            excel = ''
+        try:
+            head = None
+            if address.find('FTD') >= 0:
+                if str(Table['head'][file_name]) != 'nan' and file_name != 'exh12':
+                    head = list(range(int(Table['head'][file_name])))
+            elif str(Table['head'][file_name]) != 'nan':
+                head = list(range(int(Table['head'][file_name])))
+        except KeyError:
+            head = None
+        try:
+            if address.find('BOC') >= 0 and address.find('FTD') < 0:
+                index = None
+            else:
+                index = 0
+            if str(Table['index'][file_name]) != 'nan':
+                if str(Table['index'][file_name]) == 'None':
+                    index = None
+                elif address.find('BOC') >= 0 and address.find('FTD') < 0 and Table['index'][file_name] == 0:
+                    index = 0
+                else:
+                    index = list(range(int(Table['index'][file_name])))
+        except KeyError:
+            index = 0
+        try:
+            use = None
+            if str(Table['usecols'][file_name]) != 'nan':
+                if address.find('PETR') >= 0 or address.find('IRS') >= 0:
+                    use = lambda x: re.sub(r'[0-9]+$', "", str(x).strip()) in re.split(r', ', str(Table['usecols'][file_name]))
+                else:
+                    use = [int(item) for item in re.split(r', ', str(Table['usecols'][file_name]))]
+            elif address.find('FTD') >= 0 and str(Table['not_use'][file_name]) != 'nan':
+                use = lambda x: str(x) not in re.split(r', ', str(Table['not_use'][file_name]))
+        except KeyError:
+            use = None
+        try:
+            nm = None
+            if str(Table['names'][file_name]) != 'nan':
+                if address.find('FTD') >= 0:
+                    ns = []
+                    for m in range(len(re.split(r'; ', str(Table['names'][file_name])))):
+                        ns.append(re.split(r', ', re.split(r'; ', str(Table['names'][file_name]))[m]))
+                    nm = pd.MultiIndex.from_product(ns)
+                else:
+                    nm = [item for item in re.split(r', ', str(Table['names'][file_name]))]
+        except KeyError:
+            nm = None
+        try:
+            output = Table['output'][file_name]
+        except KeyError:
+            output = False
+        try:
+            trans = Table['transpose'][file_name]
+        except KeyError:
+            trans = False
+    
+        return skip, excel, head, index, use, nm, output, trans
+    elif key in string_keys:
+        try:
+            part = None
+            if str(Table[key][file_name]) != 'nan':
+                part = str(Table[key][file_name])
+        except KeyError:
+            part = None
+        return part
+    elif key in string_keys2:
+        try:
+            part = ''
+            if str(Table[key][file_name]) != 'nan':
+                part = str(Table[key][file_name])
+        except KeyError:
+            part = ''
+        return part
+    elif key == 'tables':
+        try:
+            tables = [int(t) if str(t).isnumeric() else t for t in re.split(r', ', str(Table['tables'][file_name]))]
+        except KeyError:
+            tables = [0]
+        return tables
+    elif key == 'multi':
+        try:
+            multi = None
+            if str(Table['head'][file_name]) != 'nan' and file_name == 'exh12':
+                multi = int(Table['head'][file_name])
+        except KeyError:
+            multi = None
+        return multi
+    elif key == 'final_name' or key == 'ft900_name':
+        try:
+            part = None
+            if str(Table[key][file_name]) != 'nan':
+                part = re.split(r', ', str(Table[key][file_name]))
+        except KeyError:
+            part = None
+        return part
+    #return skip, excel, head, index, use, trans, prefix, suffix, nm, output, tables
 
+def US_WEBDRIVER(chrome, address, sname, header=None, index_col=None, skiprows=None, tables=None, usecols=None, names=None, csv=True, Zip=False, encode=ENCODING):
+
+    destination = data_path+address
     chrome.execute_script("window.open()")
     chrome.switch_to.window(chrome.window_handles[-1])
     chrome.get('chrome://downloads')
-    time.sleep(5)
+    time.sleep(3)
+    try:
+        if chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content #tag')").text == '已刪除':
+            ERROR('The file was not properly downloaded')
+    except JavascriptException:
+        ERROR('The file was not properly downloaded')
     excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
-    new_file_name = sname+re.sub(r'.+?(\..+)$', r"\1", excel_file)
+    new_file_name = sname+re.sub(r'.+?(\.[csvxlszip]+)$', r"\1", excel_file)
     chrome.close()
     chrome.switch_to.window(chrome.window_handles[0])
+    US_t = pd.DataFrame()
     while True:
-        try:            
-            if csv == True:
-                US_t = readFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+        try:
+            file_path = (Path.home() / "Downloads" / excel_file).as_posix()
+            if Zip == True:
+                US_zip = new_file_name
+                if os.path.isfile((Path.home() / "Downloads" / excel_file)) == False:
+                    sys.stdout.write("\rWaiting for Download...")
+                    sys.stdout.flush()
+                    raise FileNotFoundError
             else:
-                US_t = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                if csv == True:
+                    US_t = readFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                else:
+                    if tables != None and len(tables) == 1:
+                        US_t = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=tables[0], acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                        if str(sname).find('crushed_stone') >= 0 and US_t.empty:
+                            US_t = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=['T1A','T1B'], acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                    else:
+                        US_t = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=tables, acceptNoFile=False, usecols_=usecols, names_=names, wait=True)
+                if type(US_t) != dict and US_t.empty == True and Zip == False:
+                    break
         except:
             time.sleep(1)
         else:
+            sys.stdout.write('\nDownload Complete\n\n')
             if os.path.isfile((Path.home() / "Downloads" / new_file_name)) and excel_file != new_file_name:
                 os.remove((Path.home() / "Downloads" / new_file_name))
             os.rename((Path.home() / "Downloads" / excel_file), (Path.home() / "Downloads" / new_file_name))
-            if os.path.isfile(data_path+address+new_file_name):
-                if os.path.isfile(data_path+address+'old/'+new_file_name):
-                    os.remove(data_path+address+'old/'+new_file_name)
-                shutil.move(data_path+address+new_file_name, data_path+address+'old/'+new_file_name)
-            shutil.move((Path.home() / "Downloads" / new_file_name), data_path+address+new_file_name)
+            if os.path.isfile(destination+new_file_name):
+                if datetime.fromtimestamp(os.path.getmtime(destination+new_file_name)).strftime('%Y-%m') ==\
+                     datetime.fromtimestamp(os.path.getmtime((Path.home() / "Downloads" / new_file_name))).strftime('%Y-%m'):
+                    os.remove(destination+new_file_name)
+                else:
+                    if os.path.isfile(destination+'old/'+new_file_name):
+                        os.remove(destination+'old/'+new_file_name)
+                    shutil.move(destination+new_file_name, destination+'old/'+new_file_name)
+            shutil.move((Path.home() / "Downloads" / new_file_name), destination+new_file_name)
             break
+    if type(US_t) != dict and US_t.empty == True and Zip == False:
+        ERROR('Empty DataFrame')
 
-    return US_t
+    if Zip == True:
+        return US_zip
+    else:
+        return US_t
+
+def US_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=False, driver=None):
+    
+    link_list = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
+    link_found = False
+    for link in link_list:
+        if (text_match == True and link.text.find(keyword) >= 0) or (text_match == False and (link.get_attribute(get_attribute).find(keyword) >= 0 or link.get_attribute(get_attribute).find(keyword.title()) >= 0)):
+            while True:
+                try:
+                    link.click()
+                except (ElementClickInterceptedException, StaleElementReferenceException):
+                    if fname.find('bea.gov') >= 0:
+                        driver.refresh()
+                        time.sleep(5)
+                    else:
+                        raise ElementClickInterceptedException
+                else:
+                    link_found = True
+                    break
+            break
+    link_meassage = None
+    if link_found == False:
+        if text_match == True:
+            key_string = link.text
+        else:
+            key_string = link.get_attribute(get_attribute)
+        link_meassage = 'Link Not Found in key string: '+key_string+', key = '+keyword
+    return link_found, link_meassage
+
+def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, header=None, index_col=None, skiprows=None, csv=False, excel='x', usecols=None, names=None, encode=ENCODING, Zip=False, file_name=None, output=False):
+    
+    link_found = False
+    link_message = None
+    logging.info('Downloading file: '+str(sname)+'\n')
+    chrome.get(fname)
+
+    y = 0
+    height = chrome.execute_script("return document.documentElement.scrollHeight")
+    while True:
+        if link_found == True:
+            break
+        try:
+            chrome.execute_script("window.scrollTo(0,"+str(y)+")")
+            if address.find('BEA') >= 0:
+                time.sleep(2)
+                if address.find('ITAS') >= 0 or address.find('NIIP') >= 0 or address.find('DIRI') >= 0:
+                    target = WebDriverWait(chrome, 5).until(EC.visibility_of_element_located((By.ID, 'xmlWraper')))
+                    link_found, link_meassage = US_WEB_LINK(target, fname, keyword=Table.at[(address,file_name), 'subject'], text_match=True, driver=chrome)
+                    time.sleep(2)
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='download all data for tables', text_match=True, driver=chrome)
+                    time.sleep(2)
+                    chrome.switch_to.window(chrome.window_handles[-1])
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='All International', text_match=True, driver=chrome)
+                    time.sleep(2)
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.zip', driver=chrome)
+                    WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="Begin Download"]'))).click()
+                    link_found = True
+                    chrome.close()
+                    chrome.switch_to.window(chrome.window_handles[0])
+                else:
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='categories=flatfiles', driver=chrome)
+                    time.sleep(2)
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.zip', driver=chrome)
+            elif address.find('STL') >= 0 or file_name == 'UIWC' or file_name == 'UIIT' or file_name == 'BEOL' or file_name == 'TRPT':
+                email = open(data_path+'email.txt','r',encoding='ANSI').read()
+                password = open(data_path+'password.txt','r',encoding='ANSI').read()
+                try:
+                    WebDriverWait(chrome, 5).until(EC.visibility_of_element_located((By.ID, 'eml'))).send_keys(email)
+                    WebDriverWait(chrome, 5).until(EC.visibility_of_element_located((By.ID, 'pw'))).send_keys(password)
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/input[@type="submit"]'))).click()
+                except TimeoutException:
+                    time.sleep(0)
+                WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.ID, 'content-table')))
+                link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname).replace('_xls',''), text_match=True)
+                time.sleep(2)
+                link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='download')
+                WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/input[@name="download_data"]'))).click()
+                link_found = True
+            elif address.find('DOT') >= 0:
+                if address.find('MTST') >= 0:
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/label[@data-test-id="preset-label-all"]'))).click()
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.csv.zip')
+                elif address.find('TICS') >= 0:
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.csv')
+                    while len(chrome.window_handles) > 1:
+                        time.sleep(0)
+            elif address.find('RCM') >= 0:
+                link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname))
+            elif address.find('IRS') >= 0:
+                target = chrome.find_element_by_xpath('.//table[contains(., "Selected Income and Tax Items for Selected Years")]')
+                link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='xls')
+            elif address.find('FRB') >= 0:
+                if address.find('G19') >= 0:
+                    chrome.find_element_by_xpath('.//td[contains(., "Consumer Credit Outstanding - All")]/input').click()
+                    chrome.find_element_by_id('btnToDownload').click()
+                elif address.find('H6') >= 0 or address.find('H15') >= 0:
+                    chrome.find_element_by_id('FormatSelect_cbDownload').click()
+                chrome.find_element_by_id('btnDownloadFile').click()
+                link_found = True
+            elif address.find('BTS') >= 0:
+                if sname == 'dl201':
+                    menu = Select(chrome.find_element_by_xpath('.//select[@name="menu"]'))
+                    for op in range(len(menu.options)):
+                        if menu.options[op].text[-4:].isnumeric():
+                            dex = op
+                            break
+                    menu.select_by_index(op)
+                    chrome.find_element_by_xpath('.//input[@value="Go"]').click()
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.cfm')
+                    US_temp = pd.read_html(chrome.page_source, skiprows=skiprows, header=header, index_col=index_col)[0]
+                elif str(sname).find('table') == 0:
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname))
+                elif str(sname).find('TVT') == 0:
+                    REG = {'Rural':'page7','Urban':'page8'}
+                    region = str(sname)[-5:]
+                    try:
+                        target = chrome.find_element_by_id('collapse'+str(date.today().year))
+                    except NoSuchElementException:
+                        target = chrome.find_element_by_id('collapse'+str(date.today().year-1))
+                    target2 = target.find_element_by_xpath('.//th[@class="txtleft"]')
+                    link_found, link_meassage = US_WEB_LINK(target2, fname, keyword='tvt')
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=REG[region])
+                    st_year = chrome.find_element_by_xpath('.//table/caption').text[-4:]
+                    if st_year.isnumeric() == False:
+                        ERROR('Starting Year Not Found')
+                    US_temp = pd.concat([pd.read_html(chrome.page_source, skiprows=skiprows, header=header, index_col=index_col)[i] for i in range(len(pd.read_html(chrome.page_source)))])
+                    new_index = []
+                    for ind in range(US_temp.shape[0]):
+                        new_index.append(st_year+str(US_temp.index[ind]))
+                        if str(US_temp.index[ind]).find('Year') >= 0:
+                            st_year = str(int(st_year)+1)
+                    US_temp.index = new_index
+                    US_temp = US_temp[[US_temp.columns[i] for i in usecols]]
+                    for col in US_temp.columns:
+                        if str(col)[-2:] != '.1':
+                            ERROR('Incorrect column selected: '+str(col))
+                    US_temp.columns = names
+                elif sname == 'Cargo Revenue Ton-Miles':
+                    carrier = Select(chrome.find_element_by_id("Carrier"))
+                    carrier.select_by_value("0:All")
+                    search = BeautifulSoup(chrome.page_source, "html.parser")
+                    result = search.find_all("table", class_="largeTABLE")
+                    US_temp = pd.read_html(str(result[2]), skiprows=skiprows, header=header, index_col=index_col)[0]
+                else:
+                    carrier = Select(chrome.find_element_by_id("CarrierList"))
+                    if str(sname).find('US') >= 0:
+                        carrier.select_by_value("AllUS")
+                    else:
+                        carrier.select_by_value("All")
+                    airport = Select(chrome.find_element_by_id("AirportList"))
+                    airport.select_by_value("All")
+                    chrome.find_element_by_id("Link_"+re.sub(r'_.+', "", sname)).click()
+                    search = BeautifulSoup(chrome.page_source, "html.parser")
+                    result = search.find(id="GridView1")
+                    US_temp = pd.read_html(str(result), header=header, index_col=index_col)[0]
+                link_found = True
+            elif address.find('CBS') >= 0:
+                if address.find('NFIB') >= 0:
+                    chrome.execute_script("document.getElementById('indicators1').setAttribute('style', 'display: block;')")
+                    indicator = Select(chrome.find_element_by_id('indicators1'))
+                    sname_temp = sname
+                    sname = 'Most Important Reason for Higher Earnings'
+                    while True:
+                        try:
+                            ActionChains(chrome).click(indicator.select_by_visible_text(sname)).send_keys(Keys.ENTER).perform()
+                        except NoSuchElementException:
+                            ERROR('Item "'+sname+'" Not Found in address: '+fname)
+                        chrome.execute_script("document.getElementById('grid').setAttribute('style', 'display: block;')")
+                        if sname_temp == '':
+                            print('Loading...')
+                            time.sleep(20)
+                            break
+                        else:
+                            time.sleep(3)
+                            sname = sname_temp
+                            sname_temp = ''
+                    while True:
+                        try:
+                            pd.read_html(chrome.page_source)
+                        except ValueError:
+                            time.sleep(2)
+                        else:
+                            break
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-page="2"]'))).click()
+                    try:
+                        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="k-link" and @data-page="1"]'))).click()
+                    except TimeoutException:
+                        time.sleep(1)
+                    WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="k-button k-button-icontext k-grid-excel"]'))).click()
+                elif address.find('OECD') >= 0:
+                    chrome.implicitly_wait(3)
+                    chart = chrome.find_element_by_xpath('.//div[@class="ddp-chart indicator-main-chart normal compact-header"]')
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="dropdown-button light highlighted-locations-dropdown-button"]'))).click()
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/li[@data-id="USA"]'))).click()
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="_HIGHLIGHTED"]'))).click()
+                    if chart.get_attribute("data-show-baseline") == 'true':
+                        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/input[@class="baseline-comparison-checkbox"]'))).click()
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="close-btn"]'))).click()
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@class="dropdown single-subject-dropdown"]'))).click()
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-value="AMPLITUD"]'))).click()
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@class="dropdown measures"]'))).click()
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-value="LTRENDIDX"]'))).click()
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-value="M"]'))).click()
+                    if chart.get_attribute("data-use-latest-data") == 'true':
+                        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/input[@class="use-latest-data-checkbox"]'))).click()
+                    start = chrome.find_element_by_xpath('.//div[@class="noUi-handle noUi-handle-lower"]')
+                    end = chrome.find_element_by_xpath('.//div[@class="noUi-handle noUi-handle-upper"]')
+                    start_loc = 0
+                    end_loc = 0
+                    print('Loading...')
+                    while True:
+                        chrome.execute_script("window.scrollTo(0,"+str(y)+")")
+                        if chrome.find_element_by_xpath('.//div[@class="noUi-origin noUi-background"]').get_attribute("style").find('100%') < 0:
+                            ActionChains(chrome).drag_and_drop_by_offset(end,end_loc,0).release(end).perform()
+                            end_loc+=20
+                        ActionChains(chrome).drag_and_drop_by_offset(start,start_loc,0).release(start).perform()
+                        start_loc-=20
+                        try:
+                            if chrome.find_element_by_xpath('.//div[@class="noUi-origin noUi-connect noUi-dragable"]').get_attribute("style").find(' 0%') >= 0 \
+                            and chrome.find_element_by_xpath('.//div[@class="noUi-origin noUi-background"]').get_attribute("style").find('100%') >= 0:
+                                break
+                        except NoSuchElementException:
+                            y+=500
+                            if y > height:
+                                ERROR('Dragging Failed.')
+                            continue
+                    chrome.execute_script("window.scrollTo(0,0)")
+                    while True:
+                        try:
+                            WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="dropdown-button dark chart-button download-btn"]'))).click()
+                            time.sleep(3)
+                            WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="download-selection-button"]'))).click()
+                            time.sleep(3)
+                        except:
+                            time.sleep(5)
+                        else:
+                            break
+                link_found = True
+            elif address.find('DOA') >= 0:
+                WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="source_desc"]/option[text()="'+Table.loc[sname, 'Program']+'"]'))).click()
+                WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="sector_desc"]/option[text()="'+Table.loc[sname, 'Sector']+'"]'))).click()
+                WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="group_desc"]/option[text()="'+Table.loc[sname, 'Group']+'"]'))).click()
+                WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="commodity_desc"]/option[text()="'+Table.loc[sname, 'Commodity']+'"]'))).click()
+                for item in re.split(r', ', str(Table.loc[sname, 'Data Items'])):
+                    WebDriverWait(chrome, 15).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="statisticcat_desc"]/option[text()="'+Table.loc[sname, 'Category']+', '+item+'"]'))).click()
+                if sname == 'PPITW':
+                    WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.ID, 'short_desc'))).click()
+                    chrome.find_element_by_id("short_desc").send_keys(Keys.CONTROL, 'a')
+                else:
+                    for item in re.split(r', ', str(Table.loc[sname, 'Data Items'])):
+                        WebDriverWait(chrome, 15).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="short_desc"]/option[text()="'+Table.loc[sname, 'Commodity']+' - '+Table.loc[sname, 'Category']+', '+item+'"]'))).click()
+                WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="domain_desc"]/option[text()="TOTAL"]'))).click()
+                WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="agg_level_desc"]/option[text()="NATIONAL"]'))).click()
+                WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="state_name"]/option[text()="US TOTAL"]'))).click()
+                chrome.find_element_by_id("year").send_keys(Keys.CONTROL, 'a')
+                WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="freq_desc"]/option[text()="MONTHLY"]'))).click()
+                WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.ID, 'reference_period_desc'))).click()
+                chrome.find_element_by_id("reference_period_desc").send_keys(Keys.CONTROL, 'a')
+                time.sleep(3)
+                WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.ID, 'submit001'))).click()
+                WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/a[@href="javascript:download();"]'))).click()
+                link_found = True
+            elif address.find('DOL') >= 0:
+                chrome.find_element_by_xpath("//input[@aria-label='Select US total']").click()
+                start_year = Select(chrome.find_element_by_name("strtyear"))
+                start_year.select_by_value("1971")
+                start_month = Select(chrome.find_element_by_name("strtmonth"))
+                start_month.select_by_value("01/01")
+                end_year = Select(chrome.find_element_by_name("endyear"))
+                end_year.select_by_value(str(datetime.today().year))
+                end_month = Select(chrome.find_element_by_name("endmonth"))
+                end_month.select_by_value("12/31")
+                chrome.find_element_by_name("submit").click()
+                US_t = pd.read_html(chrome.page_source, skiprows=skiprows, header=header, index_col=index_col)[0]
+                US_temp = US_t[[US_t.columns[i] for i in usecols]]
+                for col in range(len(US_temp.columns)):
+                    if str(US_temp.columns[col]).find(names[col]) < 0:
+                        ERROR('Incorrect column selected: '+str(US_temp.columns[col]))
+                US_temp.columns = names
+                link_found = True
+            elif address.find('EIA') >= 0:
+                if str(sname).find('weekprod') >= 0:
+                    target = chrome.find_element_by_xpath('.//table[contains(., "'+file_name+'")]')
+                    link_found, link_meassage = US_WEB_LINK(target, fname, keyword='weekprod')
+                elif str(sname).find('crushed_stone') >= 0:
+                    target = chrome.find_element_by_xpath('.//li[contains(., "XLSX Format")]')
+                    link_found, link_meassage = US_WEB_LINK(target, fname, keyword='xlsx')
+                elif str(sname).find('electricity') >= 0:
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/span[text()="Download"]'))).click()
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'csv_table'))).click()
+                    link_found = True
+                elif str(sname).find('Coal') >= 0:
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/span[text()="Download"]'))).click()
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'XLS'))).click()
+                    link_found = True
+                elif str(sname).find('Gasoline') >= 0:
+                    target = chrome.find_element_by_xpath('.//ul[contains(., "U.S. city average")]')
+                    link_found, link_meassage = US_WEB_LINK(target, fname, keyword='xls')
+                else:
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.xls')
+            elif address.find('BOC') >= 0:
+                if address.find('FTD') >= 0:
+                    if file_name != None:
+                        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=file_name)
+                    else:
+                        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.xls')
+                else:
+                    if address.find('POPP') >= 0:
+                        target = chrome.find_element_by_xpath('.//div[@name="pagelist"]')
+                        link_found, link_meassage = US_WEB_LINK(target, fname, keyword='popproj.html')
+                    elif address.find('CBRT') >= 0:
+                        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='women-fertility.html')
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.')
+            if link_found == False:
+                raise FileNotFoundError
+        except (FileNotFoundError, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException):
+            y+=500
+            if y > height and link_found == False:
+                print(y, height)
+                if link_message != None:
+                    ERROR(link_message)
+                else:
+                    ERROR('Download File Not Found.')
+        except Exception as e:
+            ERROR(str(e))
+        else:
+            break
+    time.sleep(3)
+    if output == True:
+        US_temp.to_excel(data_path+address+sname+'.xls'+excel, sheet_name=sname)
+    else:
+        US_temp = US_WEBDRIVER(chrome, address, sname, header=header, index_col=index_col, skiprows=skiprows, tables=tables, usecols=usecols, names=names, csv=csv, Zip=Zip, encode=encode)
+
+    return US_temp
 
 def MERGE(merge_file, DB_TABLE, DB_CODE, freq):
     i = 0
@@ -227,17 +761,19 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         repeated_standard = 'start'
     else:
         repeated_standard = 'last'
-    #print('Reading file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    #logging.info('Reading file: '+NAME+'key'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     #KEY_DATA_t = readExcelFile(data_path+NAME+'key'+suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
-    print('Reading file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
-    if type(DATA_BASE_t) != dict:
+    if KEY_DATA_t.empty == False and type(DATA_BASE_t) != dict:
+        ERROR(NAME+'database'+suf+'.xlsx Not Found.')
+    elif type(DATA_BASE_t) != dict:
         DATA_BASE_t = {}
     
-    print('Concating file: '+NAME+'key'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating file: '+NAME+'key'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     KEY_DATA_t = pd.concat([KEY_DATA_t, df_key], ignore_index=True)
     
-    print('Concating file: '+NAME+'database'+suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     for f in FREQNAME:
         for d in DB_name_dict[f]:
             sys.stdout.write("\rConcating sheet: "+str(d))
@@ -248,7 +784,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                 DATA_BASE_t[d] = DB_dict[f][d]
         sys.stdout.write("\n")
 
-    print('Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
     KEY_DATA_t = KEY_DATA_t.sort_values(by=['freq', 'name', 'db_table', 'snl'], ignore_index=True)
     
     repeated = 0
@@ -300,19 +836,19 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         DATA_BASE_t[KEY_DATA_t.iloc[target]['db_table']] = DATA_BASE_t[KEY_DATA_t.iloc[target]['db_table']].drop(columns = KEY_DATA_t.iloc[target]['db_code'])
         #rp_idx.append([KEY_DATA_t.iloc[target]['name'], KEY_DATA_t.iloc[target]['form_c']])
     sys.stdout.write("\n")
-    #print('Dropping repeated database column(s)')
+    #logging.info('Dropping repeated database column(s)')
     #pd.DataFrame(rp_idx, columns = ['name', 'fname']).to_excel(data_path+"repeated.xlsx", sheet_name='repeated')
     KEY_DATA_t = KEY_DATA_t.drop(repeated_index)
     KEY_DATA_t.reset_index(drop=True, inplace=True)
     #print(KEY_DATA_t)
-    print('Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
     for s in range(KEY_DATA_t.shape[0]):
         sys.stdout.write("\rSetting new snls: "+str(s+1))
         sys.stdout.flush()
         KEY_DATA_t.loc[s, 'snl'] = s+1
     sys.stdout.write("\n")
     #if repeated > 0:
-    print('Setting new files, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Setting new files, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     
     start_table_dict = {}
     start_code_dict = {}
@@ -350,7 +886,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             DB_dict[f] = DB_new_dict[f]
             DB_name_dict[f] = DB_name_new_dict[f]
 
-    print('Concating new files: '+NAME+'database, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Concating new files: '+NAME+'database, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     DATA_BASE_dict = {}
     for f in FREQNAME:
         if not DB_name_dict[f]:
@@ -364,18 +900,19 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         sys.stdout.write("\n")
     
     #print(KEY_DATA_t)
-    print('Time: ', int(time.time() - tStart),'s'+'\n')
+    print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 
     return KEY_DATA_t, DATA_BASE_dict
 
 def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf):
     updated = 0
     tStart = time.time()
-    print('Updating file: ', int(time.time() - tStart),'s'+'\n')
-    print('Reading original database: '+NAME+'database'+orig_suf+', Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Updating file: '+str(int(time.time() - tStart))+' s'+'\n')
+    logging.info('Reading original database: '+NAME+'database'+orig_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
-    print('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: ', int(time.time() - tStart),'s'+'\n')
+    logging.info('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
     updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    CAT = ['desc_e', 'desc_c', 'unit', 'type', 'form_e', 'form_c']
 
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
@@ -384,18 +921,23 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
         sys.stdout.flush()
 
         if ind in original_file.index:
-            original_file.loc[ind, 'desc_e'] = updated_file.loc[ind, 'desc_e']
+            for c in CAT:
+                original_file.loc[ind, c] = updated_file.loc[ind, c]
             if updated_file.loc[ind, 'last'] == 'Nan':
                 continue
             elif (original_file.loc[ind, 'last'] == 'Nan' and updated_file.loc[ind, 'last'] != 'Nan') or updated_file.loc[ind, 'last'] > original_file.loc[ind, 'last']:
                 updated+=1
             if updated_file.loc[ind, 'last'] != 'Nan':
                 original_file.loc[ind, 'last'] = updated_file.loc[ind, 'last']
+            if updated_file.loc[ind, 'start'] != 'Nan' and (original_file.loc[ind, 'start'] == 'Nan' or updated_file.loc[ind, 'start'] < original_file.loc[ind, 'start']):
+                original_file.loc[ind, 'start'] = updated_file.loc[ind, 'start']
             for period in updated_database[updated_file.loc[ind, 'db_table']].index:
                 if updated_file.loc[ind, 'db_table'][3] == 'W' and type(period) != str:
                     period = period.strftime('%Y-%m-%d')
                 if str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) != 'nan':
                     original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]
+                elif period >= updated_file.loc[ind, 'start'] and str(updated_database[updated_file.loc[ind, 'db_table']].loc[period, updated_file.loc[ind, 'db_code']]) == 'nan':
+                    original_database[original_file.loc[ind, 'db_table']].loc[period, original_file.loc[ind, 'db_code']] = ''
         else:
             ERROR('Updated file index does not belongs to the original file index list: '+ind)
     sys.stdout.write("\n\n")
@@ -403,11 +945,11 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
         original_database[key] = original_database[key].sort_index(axis=0)
     original_file = original_file.reset_index()
     original_file = original_file.reindex(key_list, axis='columns')
-    print('updated:', updated, '\n')
+    logging.info('updated: '+str(updated)+'\n')
 
     return original_file, original_database
 
-def US_NOTE(LINE, sname=None, LABEL=[], address='', other=False, fname=None):
+def US_NOTE(LINE, sname=None, LABEL=[], address='', other=False, fname=None, getfootnote=True):
     note = []
     footnote = []
     FOOT = ['nan', 'Legend / Footnotes:']
@@ -555,38 +1097,39 @@ def US_NOTE(LINE, sname=None, LABEL=[], address='', other=False, fname=None):
                 foot = re.split(r'[\s=:]+', re.sub(r'\.$', "", str(LINE[n])), 1)
             if len(foot) == 2 and foot[0].isnumeric() == False and foot[1] != '00:00:00':
                 footnote.append(foot)
-    return note, footnote
+    if getfootnote:
+        return note, footnote
+    else:
+        return note, []
 
-def US_HISTORYDATA(US_temp, name, MONTH=None, QUARTER=None, make_idx=False, summ=False):
+def US_HISTORYDATA(US_temp, name, address, freq, MONTH=None, QUARTER=None, make_idx=False, summ=False, find_unknown=False, DF_KEY=None):
     nU = US_temp.shape[0]
     
     US_t = pd.DataFrame()
-    new_item_t = []
     new_item = 0
-    if make_idx == True:
-        new_index_t = ['Index']
-    else:
-        new_index_t = []
-    new_dataframe = []
+    firstfound = False
+    code = ''
     for new in range(nU):
         sys.stdout.write("\rLoading...("+str(round((new+1)*100/nU, 1))+"%)*")
         sys.stdout.flush()
         if str(US_temp.iloc[new][name]).replace('.0','').isnumeric() == False and summ == False:
             continue
-        if new == 0 and make_idx == True:
-            new_item_t.append(US_temp.iloc[new]['code'].replace('"',''))
-        elif (str(US_temp.iloc[new][name]).replace('.0','').isnumeric() == False or str(US_temp.iloc[new][name]) < str(US_temp.iloc[new-1][name])) and summ == False:
+        if (firstfound == False or (make_idx == True and code != US_temp.iloc[new]['code'].replace('"','').replace('.',''))) and summ == False:
+            if firstfound == True:
+                new_dataframe.append(new_item_t)
+                US_new = pd.DataFrame(new_dataframe, columns=new_index_t)
+                US_t = pd.concat([US_t, US_new], ignore_index=True)
             new_dataframe = []
             new_item_t = []
             if make_idx == True:
                 new_index_t = ['Index']
-                new_code = re.split(r'\.', US_temp.iloc[new]['code'].replace('"',''))
-                code = ''
-                for n in new_code:
-                    code = code+n
+                code = US_temp.iloc[new]['code'].replace('"','').replace('.','')
                 new_item_t.append(code)
             else:
                 new_index_t = []
+            firstfound = True
+        if find_unknown == True and GET_NAME(address, freq, code, check_exist=True, DF_KEY=DF_KEY) == True:
+            continue
         if MONTH != None:
             if summ == True:
                 if bool(re.search(r'[0-9]+[a-z\s\*]+$', str(US_temp.iloc[new][name]))):
@@ -611,17 +1154,12 @@ def US_HISTORYDATA(US_temp, name, MONTH=None, QUARTER=None, make_idx=False, summ
                 if US_temp.iloc[new].index[ind][1] in QUARTER:
                     new_index_t.append(str(int(US_temp.iloc[new][name]))+'-'+QUARTER[US_temp.iloc[new].index[ind][1]])
                     new_item_t.append(US_temp.iloc[new].loc[US_temp.iloc[new].index[ind]])
-        if new == nU - 1:
-            if summ == True:
-                new_item_t.append(new_item)
-            new_dataframe.append(new_item_t)
-            US_new = pd.DataFrame(new_dataframe, columns=new_index_t)
-            US_t = pd.concat([US_t, US_new], ignore_index=True)
-        elif (str(US_temp.iloc[new+1][name]).replace('.0','').isnumeric() == False or str(US_temp.iloc[new][name]) > str(US_temp.iloc[new+1][name])) and summ == False:
-            new_dataframe.append(new_item_t)
-            US_new = pd.DataFrame(new_dataframe, columns=new_index_t)
-            US_t = pd.concat([US_t, US_new], ignore_index=True)
     sys.stdout.write("\n\n")
+    if summ == True:
+        new_item_t.append(new_item)
+    new_dataframe.append(new_item_t)
+    US_new = pd.DataFrame(new_dataframe, columns=new_index_t)
+    US_t = pd.concat([US_t, US_new], ignore_index=True)
     if make_idx == True:
         US_t = US_t.set_index('Index', drop=False)
 
@@ -710,11 +1248,17 @@ def US_country(US_temp, Series, prefix, middle, freq, name, bal=False):
 
     return US_t, new_code_t, new_label_t, new_order_t
 
-def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_series=None, MONTH=None, password='', header=None, index_col=None, skiprows=None, freq=None, x='', transpose=True, HIES=False, usecols=None, names=None, multi=None, subword=None, prefix=None, middle=None, suffix=None, chrome=None, key_text=''):
+def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_series=None, MONTH=None, password='', header=None, index_col=None, skiprows=None, freq=None, x='', transpose=True, HIES=False, usecols=None, names=None, multi=None, subword=None, prefix=None, middle=None, suffix=None, chrome=None, key_text='', Zip_table=None, website=None, find_unknown=False, DF_KEY=None):
     note = []
     footnote = []
     if datasets != None:
-        with open(data_path+address+datasets+'.csv','r',encoding='ANSI') as f:
+        Zip_path = data_path+address+datasets+'.zip'
+        if PRESENT(Zip_path):
+            zf = zipfile.ZipFile(Zip_path,'r')
+        else:
+            zipname = US_WEB(chrome, address, Zip_table.at[(address,datasets), 'website'], Zip_table.at[(address,datasets), 'Zipname'], Table=Zip_table, Zip=True)
+            zf = zipfile.ZipFile(Zip_path,'r')
+        with io.TextIOWrapper(zf.open(datasets+'.csv')) as f:
             lines = f.readlines()
         Series = {}
         Series['ERROR TYPES'] = pd.DataFrame()
@@ -727,21 +1271,21 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                         if lines[m+1].replace('\n','').replace(',','') == '' or m == len(lines)-1:
                             et_tail = m
                             break
-                    Series['ERROR TYPES'] = readFile(data_path+address+datasets+'.csv', header_ = 0, index_col_ = 0, skiprows_ = list(range(et_head)), nrows_ = et_tail - et_head)
+                    Series['ERROR TYPES'] = readFile(zf.open(datasets+'.csv'), header_ = 0, index_col_ = 0, skiprows_ = list(range(et_head)), nrows_ = et_tail - et_head)
                 elif bool(re.match(r'GEO LEVELS$', lines[l].replace('\n','').replace(',','').strip('"'))) and fname == None:
                     geo_head = l+1
                     for m in range(l+2, len(lines)):
                         if lines[m+1].replace('\n','').replace(',','') == '' or m == len(lines)-1:
                             geo_tail = m
                             break
-                    Series['GEO LEVELS'] = readFile(data_path+address+datasets+'.csv', header_ = 0, index_col_ = 0, skiprows_ = list(range(geo_head)), nrows_ = geo_tail - geo_head)
+                    Series['GEO LEVELS'] = readFile(zf.open(datasets+'.csv'), header_ = 0, index_col_ = 0, skiprows_ = list(range(geo_head)), nrows_ = geo_tail - geo_head)
                 elif bool(re.match(r'TIME PERIODS$', lines[l].replace('\n','').replace(',','').strip('"'))) and fname == None:
                     per_head = l+1
                     for m in range(l+2, len(lines)):
                         if lines[m+1].replace('\n','').replace(',','') == '' or m == len(lines)-1:
                             per_tail = m
                             break
-                    Series['TIME PERIODS'] = readFile(data_path+address+datasets+'.csv', header_ = 0, index_col_ = 0, skiprows_ = list(range(per_head)), nrows_ = per_tail - per_head)
+                    Series['TIME PERIODS'] = readFile(zf.open(datasets+'.csv'), header_ = 0, index_col_ = 0, skiprows_ = list(range(per_head)), nrows_ = per_tail - per_head)
                 elif bool(re.match(r'NOTES$', lines[l].replace('\n','').replace(',','').strip('"'))):
                     note_head = False
                     note_tail = False
@@ -778,7 +1322,7 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                         if m == len(lines)-1:
                             data_tail = m
                             break
-                    US_temp = readFile(data_path+address+datasets+'.csv', header_ = 0, skiprows_ = list(range(data_head)), nrows_ = data_tail - data_head, acceptNoFile=False)
+                    US_temp = readFile(zf.open(datasets+'.csv'), header_ = 0, skiprows_ = list(range(data_head)), nrows_ = data_tail - data_head, acceptNoFile=False)
             l+=1
         
     if HIES == True:
@@ -794,6 +1338,7 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
         new_index_t = ['Index', 'Label', 'order']
         new_dataframe = []
         firstfound = False
+        code = ''
         for i in range(US_temp.shape[0]):
             sys.stdout.write("\rLoading...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
             sys.stdout.flush()
@@ -804,13 +1349,7 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                 str(DIY_series['CATEGORIES'].loc[US_temp.iloc[i]['cat_idx'], 'cat_code']).find(password) >= 0 or \
                 (Series['GEO LEVELS'].shape[0] > 1 and str(DIY_series['GEO LEVELS'].loc[US_temp.iloc[i]['geo_idx'], 'geo_code']).find(password) >= 0)):
                 continue 
-            if i == 0:
-                new_code = True
-            elif US_temp.iloc[i]['per_idx'] < US_temp.iloc[i-1]['per_idx']:
-                new_code = True
-            else:
-                new_code = False
-            if new_code == True:
+            if firstfound == False or US_temp.iloc[i]['per_idx'] < US_temp.iloc[i-1]['per_idx']:
                 if firstfound == True:
                     new_dataframe.append(new_item_t)
                     US_new = pd.DataFrame(new_dataframe, columns=new_index_t)
@@ -836,6 +1375,8 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                 code = prefix+middle+suffix
                 new_item_t.extend([code, lab, order])
                 firstfound = True
+            if find_unknown == True and GET_NAME(address, freq, code, check_exist=True, DF_KEY=DF_KEY) == True:
+                continue
             new_item_t.append(US_temp.iloc[i]['val'])
             period_index = Series['TIME PERIODS'].loc[US_temp.iloc[i]['per_idx'], 'per_name']
             if freq == 'M':
@@ -858,24 +1399,25 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
         US_t = US_t.sort_values(by='order')
         label = US_t['Label']
     elif HIES == False:
-        if fname.find('http') >= 0:
-            chrome.get(fname)
-            y = 0
-            while True:
-                try:
-                    chrome.execute_script("window.scrollTo(0,"+str(y)+")")
-                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="'+key_text+'"]'))).click()
-                except:
-                    y+=500
-                else:
-                    break
-            time.sleep(5)
-            US_t = US_WEBDRIVER(chrome, address, fname, sname, header, index_col, skiprows, usecols, names, csv=False)
+        US_t = pd.DataFrame()
+        file_name = fname
+        sheet_name = sname
+        if address.find('FTD') >= 0:
+            file_name = str(sname)
+            sheet_name = 0
+        file_path = data_path+address+file_name+'.xls'+x
+        if PRESENT(file_path):
+            US_t = readExcelFile(data_path+address+file_name+'.xls'+x, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=sheet_name, acceptNoFile=False, usecols_=usecols, names_=names)
         else:
-            US_t = readExcelFile(data_path+address+fname+'.xls'+x, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=sname, acceptNoFile=False, usecols_=usecols, names_=names)
+            if fname.find('http') >= 0:
+                US_t = US_WEB(chrome, address, fname, sname, freq=freq, header=header, index_col=index_col, skiprows=skiprows, excel=x, usecols=usecols, names=names)
+            elif website != None and address.find('POPT') < 0:
+                US_t = US_WEB(chrome, address, website, fname, freq=freq, tables=[sname], header=header, index_col=index_col, skiprows=skiprows, excel=x, usecols=usecols, names=names)
+        fname = file_name
+        sname = sheet_name
         if type(US_t) != dict and US_t.empty == True:
             ERROR('Sheet Not Found: '+data_path+address+fname+'.xls'+x+', sheet name: '+str(sname))
-        if sname != 'shipment' and address.find('FTD') < 0:
+        if transpose != False and address.find('FTD') < 0:
             US_t = US_t[~US_t.index.duplicated()]
         if multi != None:
             US_t.columns = [US_t.iloc[i].fillna(method='pad') for i in range(multi)]
@@ -912,10 +1454,50 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
         new_label = []
         
         if address.find('CBRT') >= 0:
+            year = re.sub(r'.*?([0-9]{4}).*', r"\1", str(readExcelFile(data_path+address+fname+'.xlsx', sheet_name_=0).iloc[2].iloc[0]))
+            if year.isnumeric() == False:
+                ERROR('The data year was not correctly captured in file'+str(fname)+': '+year)
+            US_his = readExcelFile(data_path+address+'Central Birth Rate.xlsx', header_=[0], index_col_=0, sheet_name_=0)
+            US_his.columns = [int(col) if str(col).isnumeric() else col for col in US_his.columns]
+            new_columns = []
+            for col in US_t.columns:
+                if str(col).find('Children ever born per 1,000 women') >= 0:
+                    new_columns.append('ANRBFT')
+                else:
+                    new_columns.append(None)
+            US_t.columns = new_columns
+            US_t = US_t.loc[:, US_t.columns.dropna()]
+            if US_t.empty or len(US_t.columns) > 1:
+                ERROR('Incorrect columns were chosen: '+str(fname))
+            fix = ''
+            done = []
+            subject_found = False
+            for ind in range(US_t.shape[0]):
+                if str(US_t.index[ind]).find('All Marital Statuses') >= 0:
+                    subject_found = True
+                elif subject_found == True and bool(re.search(r'[0-9]{2} to [0-9]{2} years', str(US_t.index[ind]))):
+                    fix = re.sub(r'.*?([0-9]{2}) to ([0-9]{2}) years.*', r"\1\2", str(US_t.index[ind]))
+                    try:
+                        if fix in done:
+                            raise IndexError
+                        US_his.loc['ANRBFT'+fix, int(year)] = US_t.iloc[ind]['ANRBFT']
+                    except IndexError:
+                        ERROR('Attribute of birth year was not correctly captured in file'+str(fname)+'in line'+str(ind))
+                    else:
+                        done.append(fix)
+                        if len(done) >= 9:
+                            break
+                        fix = ''
+            if len(done) < 9:
+                ERROR('Not all suffixes were found in file'+str(fname)+': '+str(done))
+            US_his.columns = [str(col) for col in US_his.columns]
+            US_his = US_his.sort_index(axis=1)
+            US_his.columns = [int(col) if str(col).isnumeric() else col for col in US_his.columns]
+            US_his.to_excel(data_path+address+'Central Birth Rate.xlsx', sheet_name='CBRT')
+            US_t = US_his
             US_t = US_t.rename(columns={'Label':'old_label'})
             for ind in range(US_t.shape[0]):
                 new_label.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES'].index == suffix]['dt_desc'].item()+', '+US_t.iloc[ind]['old_label'])
-            US_t = US_t.iloc[:, ::-1]
         elif address.find('CONS') >= 0:
             for ind in range(1,US_t.shape[0]+1):
                 US_t.loc[ind, 'Date'] = str(US_t['Date'][ind]).replace('\n\r',' ').replace(subword, '', 1).strip()
@@ -928,7 +1510,7 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                         order = DIY_series['CATEGORIES'].loc[DIY_series['CATEGORIES'].index[dex], 'order']
                         break
                 if middle == '':
-                    new_index.append('nan')
+                    new_index.append(None)
                     new_order.append(10000)
                 else:
                     new_index.append(prefix+middle+suffix)
@@ -953,23 +1535,8 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                 new_columns.append(str(US_t.columns[col][0])+'-'+str(US_t.columns[col][1]).replace('M',''))
             US_t.columns = new_columns
         elif address.find('FTD') >= 0:
-            US_tem = US_t.copy()
-            US_t = pd.DataFrame()
-            datatype = [None]
-            AMV = [None]
-            if fname == 'exh14_Y' or fname == 'exh15' or fname == 'UGDSSITC' or fname == 'UGDSSITC_Y' or fname == 'exh17_Y' or fname == 'exh18' or fname == 'UAMVCSB' or fname == 'UAMVCSB_Y':
-                datatype = ['EX', 'IM']
-            if fname == 'exh17_Y' or fname == 'exh18' or fname == 'UAMVCSB' or fname == 'UAMVCSB_Y':
-                AMV = ['AMV', 'PSC', 'TBV', 'PAR']
-            for data in datatype:
-                for auto in AMV:
-                    if data != None and auto != None:
-                        print(data, auto)
-                    US_temp, new_index_t, new_label_t, new_order_t = US_FTD(copy.deepcopy(US_tem), fname, DIY_series, prefix, middle, suffix, freq, transpose, data, auto)
-                    US_t = pd.concat([US_t, US_temp])
-                    new_index.extend(new_index_t)
-                    new_label.extend(new_label_t)
-                    new_order.extend(new_order_t)
+            US_temp = US_t.copy()
+            US_t, new_index, new_label, new_order = US_FTD(copy.deepcopy(US_temp), fname, DIY_series, prefix, middle, suffix, freq, transpose)
         elif address.find('HOUS') >= 0 and address.find('SHIP') < 0 and address.find('NAHB') < 0:
             geography = ''
             for ind in range(US_t.shape[0]):
@@ -983,7 +1550,7 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                         suffix = 'US'+str(DIY_series['DATA TYPES'].index[0])
                         if freq == 'Q' and str(US_t.index[ind][1]).find('First Quarter') >= 0:
                             QUARTER = {'First Quarter':'Q1','Second Quarter':'Q2','Third Quarter':'Q3','Fourth Quarter':'Q4'}
-                            US_t = US_HISTORYDATA(US_t.T.reset_index(col_fill='index'), name=('index','index'), QUARTER=QUARTER)
+                            US_t = US_HISTORYDATA(US_t.T.reset_index(col_fill='index'), name=('index','index'), address=address, freq=freq, QUARTER=QUARTER)
                             new_index.append(prefix+middle+suffix)
                             break
                     elif freq == 'A' and str(US_t.index[ind][1]) in list(DIY_series['GEO LEVELS']['name']):
@@ -1009,8 +1576,8 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                     new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == US_t.index[ind][1]]['order'].item())
                     suffix = str(DIY_series['GEO LEVELS'].loc[DIY_series['GEO LEVELS']['name'] == geography].index.item()) + str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == US_t.index[ind][1]].index.item())
                 if suffix == '' and freq != 'Q':
-                    new_index.append('nan')
-                    new_label.append('nan')
+                    new_index.append(None)
+                    new_label.append(None)
                     new_order.append(10000)
                 elif freq != 'Q':
                     new_index.append(prefix+middle+suffix)
@@ -1028,8 +1595,8 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                     new_label.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES'].index == suffix]['dt_desc'].item())
                     new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES'].index == suffix]['order'].item())
                 if suffix == '':
-                    new_index.append('nan')
-                    new_label.append('nan')
+                    new_index.append(None)
+                    new_label.append(None)
                     new_order.append(10000)
                 else:
                     new_index.append(prefix+middle+suffix)
@@ -1041,8 +1608,8 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                     new_label.append(DIY_series['CATEGORIES'].loc[DIY_series['CATEGORIES'].index == int(middle[:3])]['cat_desc'].item())
                     new_order.append(DIY_series['CATEGORIES'].loc[DIY_series['CATEGORIES'].index == int(middle[:3])]['order'].item())
                 else:
-                    new_index.append('nan')
-                    new_label.append('nan')
+                    new_index.append(None)
+                    new_label.append(None)
                     new_order.append(10000)
             US_t = US_t.iloc[:, ::-1]
         elif address.find('NAHB') >= 0:
@@ -1050,7 +1617,7 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
             new_label.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES'].index == suffix[-3:]]['dt_desc'].item())
             new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES'].index == suffix[-3:]]['order'].item())
             US_t.columns = MONTH
-            US_t = US_HISTORYDATA(US_t.reset_index(), name='index', MONTH=MONTH)
+            US_t = US_HISTORYDATA(US_t.reset_index(), name='index', address=address, freq=freq, MONTH=MONTH)
         elif address.find('POPT') >= 0:
             for ind in range(US_t.shape[0]):
                 if str(US_t.index[ind]) != 'nan':
@@ -1068,8 +1635,8 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                     new_label.append(DIY_series['DATA TYPES'].loc[suffix, 'dt_desc']+', '+str(US_t.index[ind]))
                     new_order.append(DIY_series['DATA TYPES'].loc[suffix, 'order'])
                 else:
-                    new_index.append('nan')
-                    new_label.append('nan')
+                    new_index.append(None)
+                    new_label.append(None)
                     new_order.append(10000)
         elif address.find('SHIP') >= 0:
             new_columns = []
@@ -1120,7 +1687,7 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                         new_columns.append(year)
                         year = ''
                     else:
-                        print(new_columns)
+                        logging.info(new_columns)
                         ERROR('Year not found')
                 else:
                     new_columns.append(None)
@@ -1132,18 +1699,60 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
                 if str(US_t.index[ind]).strip() == 'Not Seasonally':
                     new_label.append(str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES'].index == suffix[-3:]]['dt_desc'].item()))
                     new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES'].index == suffix[-3:]]['order'].item())
-                    #US_t = US_HISTORYDATA(US_t.loc[US_t.index[ind]].T.reset_index(), name='Period', MONTH=month, summ=True)
+                    #US_t = US_HISTORYDATA(US_t.loc[US_t.index[ind]].T.reset_index(), name='Period', address=address, freq=freq, MONTH=month, summ=True)
                     new_index.append(prefix+middle+suffix)
                     break
         elif address.find('URIN') >= 0:
+            year = re.sub(r'.*?([0-9]{4}).*', r"\1", str(readExcelFile(data_path+address+fname+'.xlsx', sheet_name_=0).iloc[1].iloc[0]))
+            if year.isnumeric() == False:
+                ERROR('The data year was not correctly captured in file'+str(fname)+': '+year)
+            US_his = readExcelFile(data_path+address+'Unrelated Individuals.xlsx', header_=[0], index_col_=0, sheet_name_=0)
+            US_his.columns = [int(col) if str(col).isnumeric() else col for col in US_his.columns]
+            new_columns = []
+            for col in US_t.columns:
+                if str(US_t[col]).replace('\\n','').find('Unrelated individuals') >= 0 and str(US_t[col]).replace('\\n','').find('Allincomelevels') >= 0:
+                    new_columns.append('ANINDIV')
+                else:
+                    new_columns.append(None)
+            US_t.columns = new_columns
+            US_t = US_t.loc[:, US_t.columns.dropna()]
+            if US_t.empty or len(US_t.columns) > 1:
+                ERROR('Incorrect columns were chosen: '+str(fname))
+            suffix = ''
+            done = []
+            for ind in range(US_t.shape[0]):
+                if str(US_t.index[ind]).find('Both Sexes') >= 0:
+                    suffix = 'TT'
+                elif str(US_t.index[ind]).find('Male') >= 0:
+                    suffix = 'MT'
+                elif str(US_t.index[ind]).find('Female') >= 0:
+                    suffix = 'FT'
+                if str(US_t.index[ind]).find('Total') >= 0:
+                    try:
+                        if suffix in done:
+                            raise IndexError
+                        US_his.loc['ANINDIV'+suffix, int(year)] = US_t.iloc[ind]['ANINDIV']
+                    except IndexError:
+                        ERROR('Attribute of sex was not correctly captured in file'+str(fname)+'in line'+str(ind))
+                    else:
+                        done.append(suffix)
+                        if len(done) >= 3:
+                            break
+                        suffix = ''
+            if len(done) < 3:
+                ERROR('Not all suffixes were found in file '+str(fname)+': '+str(done))
+            US_his.columns = [str(col) for col in US_his.columns]
+            US_his = US_his.sort_index(axis=1)
+            US_his.columns = [int(col) if str(col).isnumeric() else col for col in US_his.columns]
+            US_his.to_excel(data_path+address+'Unrelated Individuals.xlsx', sheet_name='URIN')
+            US_t = US_his
             US_t = US_t.rename(columns={'Label':'old_label'})
             new_label = list(US_t['old_label'])
-            US_t = US_t.iloc[:, ::-1]
         
         if address.find('CBRT') < 0 and address.find('URIN') < 0:
             for item in new_order:
                 if type(item) == pd.core.series.Series:
-                    print(item)
+                    logging.info(item)
                     ERROR('Order type incorrect: '+str(item.index[0]))
             US_t.insert(loc=0, column='Index', value=new_index)
             US_t.insert(loc=1, column='order', value=new_order)
@@ -1154,311 +1763,78 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
         elif address.find('HOUS') >= 0 or address.find('MRTS') >= 0 or address.find('APEP') >= 0 or address.find('DSCO') >= 0 or address.find('FTD') >= 0:
             for item in new_label:
                 if type(item) == pd.core.series.Series:
-                    print(item)
+                    logging.info(item)
                     ERROR('Label type incorrect: '+str(item.index[0]))
             US_t.insert(loc=1, column='Label', value=new_label)
         if address.find('DSCO') >= 0:
             US_t.insert(loc=3, column='start', value=new_start)
             US_t.insert(loc=4, column='last', value=new_last)
         US_t = US_t.sort_values(by=['order','Label'])
+        US_t = US_t.loc[US_t.index.dropna()]
         label = US_t['Label']
         if address.find('MRTS') >= 0 and freq == 'Q':
             label = pd.Series(['Retail Trade and Food Services','Retail Trade'], index=['U44X7200SMR','U4400000SMR']).append(label)
-        
+    
     return US_t, label, note, footnote
 
-def HIES_OLD(prefix, middle, data_path, address, fname=None, sname=None, DIY_series=None):
-    note = []
-    footnote = []
-    QUARTER = {'1st Qtr':'Q1','2nd Qtr':'Q2','3rd Qtr':'Q3','4th Qtr':'Q4'}
-    QUARTER2 = {'First':'Q1','Second':'Q2','Third':'Q3','Fourth':'Q4'}
-
-    HIES = readExcelFile(data_path+address+fname+'.xlsx', sheet_name_=sname, acceptNoFile=False)  
-    note2, footnote2 = US_NOTE(HIES[0], sname, address=address)
-    note = note + note2
-    footnote = footnote + footnote2
-    tables = {}
-    for h in range(HIES.shape[0]):
-        sys.stdout.write("\rLoading...("+str(round((h+1)*100/HIES.shape[0], 1))+"%)*")
-        sys.stdout.flush()
-        if fname == 'histtab8' and str(HIES.iloc[h][1])[:4].isnumeric() and str(HIES.iloc[h][0]) == 'nan':
-            table_head = h+1
-            for i in range(h+2, HIES.shape[0]):
-                if str(HIES.iloc[i][0]).find('Renter') >= 0:
-                    table_tail = i
-                    break
-            tables[str(HIES.iloc[h][1])[:4]] = readExcelFile(data_path+address+fname+'.xlsx', header_ = 0, index_col_ = 0, skiprows_ = list(range(table_head)), nrows_ = table_tail - table_head, sheet_name_=sname, usecols_=list(range(5)))
-            if tables[str(HIES.iloc[h][1])[:4]].empty == True:
-                ERROR('Sheet Not Found: '+data_path+address+fname+'.xlsx'+', sheet name: '+sname)
-            index = []
-            for dex in tables[str(HIES.iloc[h][1])[:4]].columns:
-                index.append(str(HIES.iloc[h][1])[:4]+'-'+QUARTER[dex])
-            tables[str(HIES.iloc[h][1])[:4]].columns = index
-        elif fname == 'histtab10' and bool(re.search(r'[Qq]uarter', str(HIES.iloc[h][1]))) == True and str(HIES.iloc[h][0]) == 'nan':
-            quarter = str(HIES.iloc[h][1])[:re.search(r'[Qq]uarter', str(HIES.iloc[h][1])).start()-1]
-            if bool(re.search(r'r[0-9]$', str(HIES.iloc[h][1]))):
-                date = str(HIES.iloc[h][1])[-6:-2]+'-'+QUARTER2[quarter]
-            else:
-                date = str(HIES.iloc[h][1])[-4:]+'-'+QUARTER2[quarter]
-            table_head = h+2
-            for i in range(h+3, HIES.shape[0]):
-                if str(HIES.iloc[i][0]).find('Renter') >= 0:
-                    table_tail = i
-                    break
-            tables[date] = readExcelFile(data_path+address+fname+'.xlsx', header_ = 0, index_col_ = 0, skiprows_ = list(range(table_head)), nrows_ = table_tail - table_head, sheet_name_=sname, usecols_=list(range(5)))
-            if tables[date].empty == True:
-                ERROR('Sheet Not Found: '+data_path+address+fname+'.xlsx'+', sheet name: '+sname)
-            tables[date].index.names = ['index']
-            index = []
-            for dex in tables[date].index:
-                new_dex = re.sub(r"[^A-Za-z\s\-',]+", "", str(dex))
-                if new_dex == 'Rented or Sold':
-                    new_dex = 'Rented or sold'
-                index.append(new_dex)
-            tables[date].index = index
-            if 'Rented, not yet occupied' in tables[date].index:
-                new_row = [0, 0, 0, 0]
-                drop_dex = []
-                for d in range(tables[date].shape[0]):
-                    if tables[date].index[d].find('not yet occupied') >= 0:
-                        drop_dex.append(tables[date].index[d])
-                        for e in range(len(tables[date].iloc[d])):
-                            new_row[e] = new_row[e] + tables[date].iloc[d][e]
-                for drop in drop_dex:
-                    tables[date] = tables[date].drop(index=drop)
-                new_df = pd.DataFrame([new_row], index=['Rented or sold'], columns=tables[date].columns)
-                tables[date] = pd.concat([tables[date], new_df])
-            tables[date] = tables[date][~tables[date].index.duplicated()]
-            region = []
-            for dex in tables[date].columns:
-                if bool(re.search(r'\.[0-9]+$', dex)):
-                    dex = re.sub(r'\.[0-9]+$', "", dex)
-                region.append(dex)
-            new_table = pd.concat([pd.Series(list(tables[date][dex]), index=tables[date].index) for dex in tables[date].columns], keys=region)
-            tables[date] = new_table
-    sys.stdout.write("\n\n")
-    
-    US_t = pd.DataFrame()
-    for key in tables:
-        tables[key] = tables[key][~tables[key].index.duplicated()]
-        US_t = pd.concat([US_t, tables[key]], axis=1)
-    if fname == 'histtab10':
-        US_t.columns = list(tables)
-    
-    new_index = []
-    new_label = []
-    new_order = []
-    geography = ''
-    for ind in range(US_t.shape[0]):
-        suffix = ''
-        if fname == 'histtab8':
-            dex = re.sub(r"[^A-Za-z\s\-']+", "", str(US_t.index[ind]))
-            if dex in list(DIY_series['DATA TYPES']['name']):
-                new_label.append(str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['dt_desc'].item()))
-                new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['order'].item())
-                suffix = 'US'+str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex].index.item())
-        elif fname == 'histtab10':
-            if US_t.index[ind][0] in list(DIY_series['GEO LEVELS']['name']) and US_t.index[ind][1] != 'nan':
-                geography = US_t.index[ind][0]
-                dex = US_t.index[ind][1]
-                new_label.append(str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['dt_desc'].item()))
-                new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['order'].item())
-                suffix = str(DIY_series['GEO LEVELS'].loc[DIY_series['GEO LEVELS']['name'] == geography].index.item()) + str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex].index.item())
-        if suffix == '':
-            new_index.append('nan')
-            new_label.append('nan')
-            new_order.append(10000)
-        else:
-            new_index.append(prefix+middle+suffix)
-    US_t.insert(loc=0, column='Index', value=new_index)
-    US_t = US_t.set_index('Index', drop=False)
-    US_t.insert(loc=1, column='Label', value=new_label)
-    US_t.insert(loc=2, column='order', value=new_order)
-    US_t = US_t.sort_values(by='order')
-    label = US_t['Label']
-
-    return US_t, label, note, footnote
-
-def US_IHS(US_temp, Series, freq):
-    #AREMOS = pd.DataFrame()
-    note = []
-    footnote = [['NSA','Not Seasonally Adjusted'],['SAAR','Seasonally Adjusted Annual Rate'],[' - United States',''],['Total,','United States Total,'],['North East','Northeast'],['Mid West','Midwest']]
-    TYPE = ['Northeast','Midwest','South','West']
-    FORMC = {'NSA':'Not Seasonally Adjusted','SAAR':'Seasonally Adjusted Annual Rate'}
-    UNIT = {'Fixed':'Composite Index','Pending Home Sales Index':'Index',"Month's Supply":'Percentage','Single Family Home':'Thousands of Housing Units','Prices':'U.S. Dollars','Mortgage Rate':'Percentage','Monthly Payment as a Percent of Income':'Percentage','Housing Affordability':'U.S. Dollars','First Time Buyer Index':'Composite Index'}
-
-    new_index = []
-    description = []
-    unit = []
-    new_type = []
-    form_e = []
-    form_c = []
-    for i in range(US_temp.shape[0]):
-        sys.stdout.write("\rLoading...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
-        sys.stdout.flush()
-        found = False
-        key = str(US_temp.index[i])
-        if freq == 'Q':
-            key = key.replace('.Q','')
-        for j in range(Series.shape[0]):
-            if key.replace('.HIST','') == Series.iloc[j]['code']:
-                found = True
-                unit_found = False
-                type_found = False
-                form_cf = False
-                if freq == 'Q':
-                    new_index.append(Series.iloc[j]['code'])
-                else:
-                    new_index.append(Series.iloc[j]['code'][:-2])
-                uni = Series.iloc[j]['unit']
-                for uni in UNIT:
-                    if US_temp.iloc[i]['Short Label'].find(uni) >= 0:
-                        unit_found = True
-                        unit.append(UNIT[uni])
-                        break
-                if unit_found == False:
-                    unit.append('Housing Units')
-                loc1 = US_temp.iloc[i]['Short Label'].find(',')+2
-                loc2 = US_temp.iloc[i]['Short Label'].find(',',loc1)
-                if loc2 < 0:
-                    loc2 = US_temp.iloc[i]['Short Label'].find('-',loc1)-1
-                form_e.append(US_temp.iloc[i]['Short Label'][loc1:loc2])
-                description.append(US_temp.iloc[i]['Short Label'][loc2+2:].replace("'s",""))
-                for adj in FORMC:
-                    if US_temp.iloc[i]['Short Label'].find(adj) >= 0:
-                        form_cf = True
-                        form_c.append(FORMC[adj])
-                        break
-                if form_cf == False:
-                    if freq == 'A':
-                        form_c.append('Annual')
-                    elif Series.iloc[j]['code'].find('NS') > 0:
-                        form_c.append('Not Seasonally Adjusted')
-                    else:
-                        form_c.append('Seasonally Adjusted Annual Rate')
-                for typ in TYPE:
-                    if US_temp.iloc[i]['Short Label'].find(typ) >= 0:
-                        type_found = True
-                        if US_temp.iloc[i]['Short Label'].find('Mid West') >= 0:
-                            new_type.append('Midwest')
-                        else:
-                            new_type.append(typ)
-                        break
-                if type_found == False:
-                    if US_temp.iloc[i]['Short Label'].find('North East') >= 0:
-                        new_type.append('Northeast')
-                    else:
-                        new_type.append('United States Total')
-                #AREMOS = AREMOS.append(Series.iloc[j])
-                break
-        if found == False:
-            new_index.append('nan')
-            description.append('nan')
-            unit.append('nan')
-            new_type.append('nan')
-            form_e.append('nan')
-            form_c.append('nan')
-    sys.stdout.write("\n\n")
-
-    US_temp.insert(loc=0, column='Index', value=new_index)
-    US_temp.insert(loc=1, column='Label', value=description)
-    US_temp.insert(loc=2, column='unit', value=unit)
-    US_temp.insert(loc=3, column='type', value=new_type)
-    US_temp.insert(loc=4, column='form_e', value=form_e)
-    US_temp.insert(loc=5, column='form_c', value=form_c)
-    US_temp = US_temp.set_index('Index', drop=False)
-    label = US_temp['Label']
-
-    #AREMOS.to_excel(out_path+"NAR_series"+str(AREMOS.shape[0])+".xlsx", sheet_name='NAR_series')
-    return US_temp, label, note, footnote
-
-def US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base, address, start=None, key='main', key2='main', lab_base='series_title', find_unknown=False):
+def US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base, address, DF_KEY, start=None, key='main', key2='main', lab_base='series_title', find_unknown=False, Series=None):
     MONTH = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER']
-    SEMI = ['S01','S02']
-    MON = ['M01','M02','M03','M04','M05','M06','M07','M08','M09','M10','M11','M12']
     note = []
     footnote = []
-    US_temp = US_temp.sort_values(by=['series_id','year','period'], ignore_index=True)
+    ID = list(set(US_temp['series_id']))
+    ID.sort()
     
     US_t = pd.DataFrame()
-    new_item_t = []
-    new_index_t = []
     new_code_t = []
     new_label_t = []
     new_unit_t = []
-    new_dataframe = []
     new_start_t = []
     new_last_t = []
-    firstfound = False
-    code = ''
-    for i in range(US_temp.shape[0]):
-        sys.stdout.write("\rLoading...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
+    for code in ID:
+        sys.stdout.write("\rLoading...("+str(round((ID.index(code)+1)*100/len(ID), 1))+"%), code = "+code)
         sys.stdout.flush()
-        if (freq == 'M' and US_temp.iloc[i]['period'] not in MON) or (freq == 'A' and US_temp.iloc[i]['period'] not in YEAR[key]) or (freq == 'S' and US_temp.iloc[i]['period'] not in SEMI)\
-            or (freq == 'Q' and US_temp.iloc[i]['period'] not in QUAR[key2]):
+        if find_unknown == True and GET_NAME(address, freq, code, source='Bureau Of Labor Statistics', Series=Series, Table=Table, check_exist=True, DF_KEY=DF_KEY) == True:
             continue
-        if US_temp.iloc[i]['series_id'] != code:
-            if firstfound == True:
-                new_dataframe.append(new_item_t)
-                US_new = pd.DataFrame(new_dataframe, columns=new_index_t)
-                if US_new.empty == False:
-                    new_code_t.append(code)
-                    new_label_t.append(lab)
-                    new_unit_t.append(unit)
-                    new_start_t.append(str(Table['begin_year'][code])+'-'+str(Table['begin_period'][code]))
-                    new_last_t.append(str(Table['end_year'][code])+'-'+str(Table['end_period'][code]))
-                    US_t = pd.concat([US_t, US_new], ignore_index=True)
-                new_dataframe = []
-                new_item_t = []
-                new_index_t = []
-            code = US_temp.iloc[i]['series_id']
-            lab = Table[lab_base][code]
-            month = ''
-            if address.find('ln/') < 0 and address.find('ce/') < 0 and address.find('ec/') < 0 and address.find('bd/') < 0 and address.find('jt/') < 0 and address.find('in/') < 0 and address.find('ml/') < 0:
-                if bool(re.search(r'=\s*100', str(Table[index_base][code]))) and bool(re.match(r'[A-Za-z]+', str(Table[index_base][code]))):
-                    for m in MONTH:
-                        if str(Table[index_base][code]).find(m) >= 0 or str(Table[index_base][code]).find(m.capitalize()) >= 0:
-                            month = str(datetime.strptime(m,'%B').month).rjust(2,'0')
-                            unit = 'Index base: '+re.sub(r'[A-Za-z]+\s*', "", re.sub(r'(\s*=\s*100)', "."+month+r"\1", str(Table[index_base][code])))
-                elif bool(re.search(r'=\s*100', str(Table[index_base][code]))):
-                    unit = 'Index base: '+str(Table[index_base][code])
-                elif (address.find('pr/') >= 0 or address.find('mp/') >= 0) and str(Table[index_base][code]).isnumeric():
-                    unit = 'Index base: '+str(Table[index_base][code])+' = 100'
-                elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
-                    unit = Table['duration_code'][code]
-                else:
-                    if str(Table[index_base][code])[-2:] != '00':
-                        month = '.'+str(Table[index_base][code])[-2:]
-                    unit = 'Index base: '+str(Table[index_base][code])[:4]+month+' = 100'
-                if Table[index_base][code] == 0:
-                    unit = 'Index base'
+        if address.find('bd/') >= 0 and Table['state_code'][code] != 0:
+            continue
+        lab = Table[lab_base][code]
+        month = ''
+        if address.find('ln/') < 0 and address.find('ce/') < 0 and address.find('ec/') < 0 and address.find('bd/') < 0 and address.find('jt/') < 0 and address.find('in/') < 0 and address.find('ml/') < 0:
+            if bool(re.search(r'=\s*100', str(Table[index_base][code]))) and bool(re.match(r'[A-Za-z]+', str(Table[index_base][code]))):
+                for m in MONTH:
+                    if str(Table[index_base][code]).find(m) >= 0 or str(Table[index_base][code]).find(m.capitalize()) >= 0:
+                        month = str(datetime.strptime(m,'%B').month).rjust(2,'0')
+                        unit = 'Index base: '+re.sub(r'[A-Za-z]+\s*', "", re.sub(r'(\s*=\s*100)', "."+month+r"\1", str(Table[index_base][code])))
+            elif bool(re.search(r'=\s*100', str(Table[index_base][code]))):
+                unit = 'Index base: '+str(Table[index_base][code])
+            elif (address.find('pr/') >= 0 or address.find('mp/') >= 0) and str(Table[index_base][code]).isnumeric():
+                unit = 'Index base: '+str(Table[index_base][code])+' = 100'
+            elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
+                unit = Table['duration_code'][code]
             else:
-                unit = Table[index_base][code]
-            firstfound = True
-        if address.find('bd/') >= 0 and code != '':
-            if Table['state_code'][code] != 0:
-                continue
-        if start != None and find_unknown == False:
-            if US_temp.iloc[i]['year'] < start:
-                continue
-        new_item_t.append(US_temp.iloc[i]['value'])
+                if str(Table[index_base][code])[-2:] != '00':
+                    month = '.'+str(Table[index_base][code])[-2:]
+                unit = 'Index base: '+str(Table[index_base][code])[:4]+month+' = 100'
+            if Table[index_base][code] == 0:
+                unit = 'Index base'
+        else:
+            unit = Table[index_base][code]
+        US_code = US_temp.loc[US_temp['series_id'] == code].set_index(['year','period'])['value']
         if freq == 'M' or freq == 'S':
-            period_index = str(US_temp.iloc[i]['year'])+'-'+str(US_temp.iloc[i]['period']).replace('M','').replace('S0','S')
+            US_code.index = [str(dex[0])+'-'+str(dex[1]).replace('M','').replace('S0','S') for dex in US_code.index]
         elif freq == 'A':
-            period_index = US_temp.iloc[i]['year']
+            US_code.index = [dex[0] for dex in US_code.index]
         elif freq == 'Q':
-            period_index = str(US_temp.iloc[i]['year'])+'-'+QUAR[key2][str(US_temp.iloc[i]['period'])]
-        new_index_t.append(period_index)  
+            US_code.index = [str(dex[0])+'-'+QUAR[key2][str(dex[1])] for dex in US_code.index]
+        US_new = pd.DataFrame(US_code).T
+        if US_new.empty == False:
+            new_code_t.append(code)
+            new_label_t.append(lab)
+            new_unit_t.append(unit)
+            new_start_t.append(str(Table['begin_year'][code])+'-'+str(Table['begin_period'][code]))
+            new_last_t.append(str(Table['end_year'][code])+'-'+str(Table['end_period'][code]))
+            US_t = pd.concat([US_t, US_new], ignore_index=True)
     sys.stdout.write("\n\n")
-    new_dataframe.append(new_item_t)
-    US_new = pd.DataFrame(new_dataframe, columns=new_index_t)
-    if US_new.empty == False:
-        new_code_t.append(code)
-        new_label_t.append(lab)
-        new_unit_t.append(unit)
-        new_start_t.append(str(Table['begin_year'][code])+'-'+str(Table['begin_period'][code]))
-        new_last_t.append(str(Table['end_year'][code])+'-'+str(Table['end_period'][code]))
-        US_t = pd.concat([US_t, US_new], ignore_index=True)
     US_t = US_t.sort_index(axis=1)
     US_t.insert(loc=0, column='Index', value=new_code_t)
     US_t.insert(loc=1, column='Label', value=new_label_t)
@@ -1470,7 +1846,7 @@ def US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base, address, start=None, ke
 
     return US_t, label, note, footnote
 
-def US_POPP(US_temp, data_path, address, datasets, DIY_series, password=''):
+def US_POPP(US_temp, data_path, address, datasets, DIY_series, password='', find_unknown=False, DF_KEY=None):
     note = []
     footnote = []
     SUM = {'LT5':[0,4], 'LT18':[0,17], 'GE65':[65,120], 'GE16':[16,120], 'GE18':[18,120],\
@@ -1552,6 +1928,8 @@ def US_POPP(US_temp, data_path, address, datasets, DIY_series, password=''):
                 new_item_t.extend([code, lab, order])
                 firstfound = True
                 column = US_temp.columns[j][:YEAR]
+            if find_unknown == True and GET_NAME(address, freq='A', code=code, check_exist=True, DF_KEY=DF_KEY) == True:
+                continue
             new_item_t.append(US_temp.iloc[i][US_temp.columns[j]])
             new_index_t.append(US_temp.columns[j][YEAR])   
     sys.stdout.write("\n\n")
@@ -1565,13 +1943,17 @@ def US_POPP(US_temp, data_path, address, datasets, DIY_series, password=''):
 
     return US_t, label, note, footnote
 
-def US_FAMI(prefix, middle, data_path, address, fname, sname, DIY_series, x=''):
+def US_FAMI(prefix, middle, data_path, address, fname, sname, DIY_series, x='', chrome=None, website=None):
     note = []
     footnote = []
     formnote = {}
     found = {'Both Sexes':False,'Male':False,'Female':False}
 
-    US_temp = readExcelFile(data_path+address+fname+'.xls'+x, sheet_name_=sname, acceptNoFile=False) 
+    file_path = data_path+address+fname+'.xls'+x
+    if PRESENT(file_path):
+        US_temp = readExcelFile(file_path, sheet_name_=sname, acceptNoFile=False)
+    else:
+        US_temp = US_WEB(chrome, address, website, fname, tables=[sname], excel=x)
     tables = {}
     for h in range(US_temp.shape[0]):
         sys.stdout.write("\rLoading...("+str(round((h+1)*100/US_temp.shape[0], 1))+"%)*")
@@ -1904,7 +2286,7 @@ def US_STL(US_temp, address, DIY_series, TRPT_series=None):
     
     return US_t, label, note, footnote
 
-def US_DOT(Series, US_temp, fname, key, gross=False, other=False, suffix=''):
+def US_DOT(Series, US_temp, fname, key, gross=False, other=False, suffix='', find_unknown=False, DF_KEY=None):
     note = []
     footnote = []
     SUFFIX = []
@@ -1935,6 +2317,8 @@ def US_DOT(Series, US_temp, fname, key, gross=False, other=False, suffix=''):
     for i in range(US_temp.shape[0]):
         sys.stdout.write("\rLoading...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
         sys.stdout.flush()
+        if find_unknown == True and GET_NAME(address='DOT', freq='M', code=code, check_exist=True, DF_KEY=DF_KEY) == True:
+            continue
         if US_temp.iloc[i]['Data Type Code']+str(US_temp.iloc[i]['Table Number'])+str(US_temp.iloc[i]['Line Code Number'])+US_temp.iloc[i]['Record Type Code']+suffix != code:
             if firstfound == True:
                 new_dataframe.append(new_item_t)
@@ -1977,9 +2361,6 @@ def US_DOT(Series, US_temp, fname, key, gross=False, other=False, suffix=''):
             if len(level_list) < level_num:
                 level_list.extend([0 for l in range(level_num - len(level_list))])
             firstfound = True
-        if re.sub(r'(Total)\s*\-\-.+', r"\1", re.sub(r'(Total)\s*\-\-\s*(Receipts)$', r"\1 \2", re.sub(r'(Total)\s*\-\-\s*(O[nf]+\-Budget)$', r"\1 \2", re.sub(r':$', "", US_temp.iloc[i]['Classification Description'])))).find(lab) < 0:
-            ERROR('The code '+code+' pairs to multiple descriptions. Please check the uniqueness of the code.')
-        #key = Series.loc[fname, 'Key']
         if US_temp.iloc[i]['Classification Description'] == 'Allowances':
             new_item_t.append(US_temp.iloc[i][Series.loc[fname, 'Other_Key']])
         else:
@@ -2012,11 +2393,11 @@ def US_DOT(Series, US_temp, fname, key, gross=False, other=False, suffix=''):
     US_t.insert(loc=3, column='level_code', value=new_level_code_t)
     US_t = US_t.set_index('Index', drop=False)
     if (fname == 'MTS_OutlyAgcy_all_years' or fname == 'MTS_RcptSrc_all_years') and gross == False and other == False:
-        print('Dealing with Gross Amount: '+'\n')
-        US_g = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Gross_Key'], gross=True, suffix=Series.loc[fname, 'Gross_Suffix'])
+        logging.info('Dealing with Gross Amount: '+'\n')
+        US_g = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Gross_Key'], gross=True, suffix=Series.loc[fname, 'Gross_Suffix'], find_unknown=find_unknown, DF_KEY=DF_KEY)
         US_t = pd.concat([US_t, US_g], ignore_index=True)
-        print('Dealing with Other Amount: '+'\n')
-        US_o = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Other_Key'], other=True, suffix=Series.loc[fname, 'Other_Suffix'])
+        logging.info('Dealing with Other Amount: '+'\n')
+        US_o = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Other_Key'], other=True, suffix=Series.loc[fname, 'Other_Suffix'], find_unknown=find_unknown, DF_KEY=DF_KEY)
         US_t = pd.concat([US_t, US_o], ignore_index=True)
     US_t = US_t.sort_values(by=list(range(level_num)))
     label = US_t['Label']
@@ -2032,8 +2413,6 @@ def US_FTD(US_t, fname, Series, prefix, middle, suffix, freq, trans, datatype=No
     PASS = ['nan', '(-)', 'Balance of Payment', 'Net Adjustments', 'Total, Census Basis', 'Total Census Basis', 'Item', 'Residual', 'Unnamed', 'Selected commodities', 'Country', 'TOTAL']
     MONTH = ['January','February','March','April','May','June','July','August','September','October','November','December']
     YEAR = ['Jan.-Dec.']
-    TYPE = {'EX': 'Exports', 'IM': 'Imports'}
-    EPYT = {'IM': 'Exports', 'EX': 'Imports'}
     new_columns = []
     new_index = []
     new_label = []
@@ -2051,9 +2430,11 @@ def US_FTD(US_t, fname, Series, prefix, middle, suffix, freq, trans, datatype=No
             elif freq == 'A' and fname.find('SA') >= 0 and str(US_t.columns[ind]).strip().isnumeric():
                 new_columns.append(year)
             else:
-                new_columns.append('nan')
+                new_columns.append(None)
         US_t.columns = new_columns
-    if fname == 'exh1' or fname == 'exhibit_history' or fname == 'exh2' or fname == 'ABOP3' or fname == 'exh9' or fname == 'petro' or fname == 'exh11' or fname == 'realpetr':    
+        US_t = US_t.loc[:, US_t.columns.dropna()]
+        US_t = US_t.loc[:, ~US_t.columns.duplicated()]
+    if fname == 'exhibit_history' or fname == 'petro' or fname == 'realpetr':
         US_t.index = pd.MultiIndex.from_arrays([US_t.index.get_level_values(0), US_t.index.get_level_values(1).str.replace(r'\s*Census Basis.*', '', regex=True)])
         for ind in range(US_t.shape[0]):
             middle = ''
@@ -2070,12 +2451,12 @@ def US_FTD(US_t, fname, Series, prefix, middle, suffix, freq, trans, datatype=No
                 if re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][1])) not in PASS:
                     ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][1])))
                 else:
-                    new_index.append('nan')
-                    new_label.append('nan')
+                    new_index.append(None)
+                    new_label.append(None)
                     new_order.append(10000)
             else:
                 new_index.append(prefix+middle+suf)
-    elif fname == 'exh3' or fname == 'ASRVEXBOP' or fname == 'exh4' or fname == 'ASRVIMBOP' or fname == 'exh10' or fname == 'realexp' or fname == 'realimp' or fname == 'exh13' or fname == 'NSAEXP' or fname == 'NSAIMP' or fname == 'SAEXP' or fname == 'SAIMP':
+    elif fname == 'realexp' or fname == 'realimp' or fname == 'NSAEXP' or fname == 'NSAIMP' or fname == 'SAEXP' or fname == 'SAIMP':
         for ind in range(US_t.shape[0]):
             middle = ''
             for item in list(Series['CATEGORIES']['name']):
@@ -2087,204 +2468,11 @@ def US_FTD(US_t, fname, Series, prefix, middle, suffix, freq, trans, datatype=No
                 if re.sub(r'\s+\([0-9]+\)\s*$|:\s*[0-9]+\s*$', "", str(US_t.index[ind])) not in PASS:
                     ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind])))
                 else:
-                    new_index.append('nan')
-                    new_label.append('nan')
+                    new_index.append(None)
+                    new_label.append(None)
                     new_order.append(10000)
             else:
                 new_index.append(prefix+middle+suffix)
-    elif fname == 'exh5' or fname == 'AGDSCSB' or fname == 'exh12' or fname == 'UGDSCSB':
-        US_t = US_t.rename(index={'Unnamed: 2_level_0': 'Balance'})
-        add_value = []
-        for ind in range(US_t.shape[1]):
-            TBOP = str(US_t.loc[('Balance', 'Total Balance of Payments Basis'), US_t.columns[ind]])
-            TCSB = str(US_t.loc[('Balance', 'Total Census Basis'), US_t.columns[ind]])
-            if US_t.columns[ind] == 'nan':
-                add_value.append('nan')
-            elif TBOP != 'nan' and TCSB != 'nan' and TBOP.strip() != '' and TCSB.strip() != '':
-                add_value.append(US_t.loc[('Balance', 'Total Balance of Payments Basis'), US_t.columns[ind]]-US_t.loc[('Balance', 'Total Census Basis'), US_t.columns[ind]])
-            else:
-                add_value.append('nan')
-        US_new = pd.DataFrame([add_value], columns=US_t.columns, index=[('Balance', 'Net Adjustments')])
-        US_t = pd.concat([US_t, US_new])
-        if fname == 'exh12' or fname == 'UGDSCSB':
-            US_t.index = pd.MultiIndex.from_arrays([US_t.index.get_level_values(0), US_t.index.get_level_values(1).str.replace(r'\s*Total Balance of Payments Basis.*', 'BOP', regex=True)])
-        suf = ''    
-        for ind in range(US_t.shape[0]):
-            suffix = ''
-            if str(US_t.index[ind][0]) in list(Series['DATA TYPES']['dt_desc']):
-                suf = Series['DATA TYPES'].loc[Series['DATA TYPES']['dt_desc'] == US_t.index[ind][0]].index[0]
-            for item in list(Series['GEO LEVELS']['name']):
-                if re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][1])) in re.split(r'//', item):
-                    suffix = suf+Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item].index[0]
-                    break
-            if suffix == '' and str(US_t.index[ind][1]) != 'Total Balance of Payments Basis':
-                ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][1])))
-            elif suffix == '' and str(US_t.index[ind][1]) == 'Total Balance of Payments Basis':
-                new_index.append('nan')
-                new_label.append('nan')
-                new_order.append(10000)
-            else:
-                new_index.append(prefix+middle+suffix)
-                new_label.append(Series['DATA TYPES'].loc[suffix[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc'])
-                new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
-    elif fname == 'exh7' or fname == 'AGDSEXCSB' or fname == 'exh6_Y' or  fname == 'AGDSEXCSB_Y' or fname == 'exh8' or fname == 'AGDSIMCSB' or fname == 'exh7_Y' or fname == 'AGDSIMCSB_Y'\
-         or fname == 'exh14_Y' or fname == 'exh15' or fname == 'UGDSSITC' or fname == 'UGDSSITC_Y':
-        US_new = pd.DataFrame()
-        for date in US_t:
-            sys.stdout.write("\rLoading...("+str(round((list(US_t.keys()).index(date)+1)*100/len(US_t.keys()), 1))+"%)*")
-            sys.stdout.flush()
-            typeCorrect = False
-            if (fname == 'exh7' or date == '7' or fname == 'exh8' or date == '8') and fname.find('_Y') < 0:
-                US_t[date].columns = [re.sub(r'\s+\([A-Z]+\)\s*', "", str(US_t[date].iloc[1].iloc[m])+'-'+\
-                    str(datetime.strptime(re.sub(r'\s+\([A-Z]+\)\s*', "", str(US_t[date].iloc[0].iloc[m])).strip(),'%B').month).rjust(2,'0')) for m in range(US_t[date].shape[1])]
-            elif fname == 'exh6_Y' or fname == 'exh7_Y' or ((date == '6' or date == '7') and fname.find('_Y') >= 0):
-                US_t[date].columns = [int(re.sub(r'\s*Annual\s*', "", str(US_t[date].columns[y]).strip())) for y in range(US_t[date].shape[1])]
-            elif fname == 'exh14_Y' or date == '14':
-                cols = [int(US_t[date].iloc[0].iloc[m]) for m in range(0, 6, 2)]
-                if datatype == 'EX':
-                    US_t[date] = US_t[date][[1, 3, 5]]
-                elif datatype == 'IM':
-                    US_t[date] = US_t[date][[2, 4, 6]]
-                US_t[date].columns = cols
-            elif fname == 'exh15' or date == '15':
-                US_t[date] = US_t[date].drop(US_t[date].index[[0]])
-                if str(US_t[date].iloc[0].iloc[2]).isnumeric():
-                    cols = [str(US_t[date].iloc[0].iloc[0])+'-'+str(datetime.strptime(str(US_t[date].iloc[1].iloc[0]).strip(),'%B').month).rjust(2,'0')]+[str(US_t[date].iloc[0].iloc[2])+'-'+str(datetime.strptime(str(US_t[date].iloc[1].iloc[2]).strip(),'%B').month).rjust(2,'0')]
-                else:
-                    cols = [str(US_t[date].iloc[0].iloc[0])+'-'+str(datetime.strptime(str(US_t[date].iloc[1].iloc[m]).strip(),'%B').month).rjust(2,'0') for m in [0, 2]]
-                if datatype == 'EX':
-                    if TYPE[datatype] in list(US_t[date][3]) and EPYT[datatype] not in list(US_t[date][4]):
-                        typeCorrect = True
-                    US_t[date] = US_t[date][[1, 4]]
-                elif datatype == 'IM':
-                    if TYPE[datatype] in list(US_t[date][5]) and EPYT[datatype] not in list(US_t[date][6]):
-                        typeCorrect = True
-                    US_t[date] = US_t[date][[2, 6]]
-                US_t[date].columns = cols
-            elif fname == 'UGDSSITC_Y':
-                if re.split(r',', date)[0] < '2010':
-                    if datatype == 'EX':
-                        US_t[date] = US_t[date][[1]]
-                    elif datatype == 'IM':
-                        US_t[date] = US_t[date][[2]]
-                    US_t[date].columns = [int(date)]
-                else:
-                    dropcols = []
-                    for yr in range(0, US_t[date].shape[1], 2):
-                        if str(US_t[date].iloc[0].iloc[yr]) not in re.split(r',', date):
-                            dropcols.extend([yr+1, yr+2])
-                    US_t[date] = US_t[date].drop(columns=dropcols)
-                    if datatype == 'EX':
-                        US_t[date] = US_t[date][[US_t[date].columns[m] for m in range(0, US_t[date].shape[1], 2)]]
-                    elif datatype == 'IM':
-                        US_t[date] = US_t[date][[US_t[date].columns[m] for m in range(1, US_t[date].shape[1], 2)]]
-                    US_t[date].columns = reversed([int(year) for year in re.split(r',', date)])
-            elif fname.find('_Y') >= 0:
-                for col in US_t[date].columns:
-                    if col.find(date) < 0:
-                        US_t[date] = US_t[date].drop(columns=[col])
-                US_t[date].columns = [int(date)]
-            elif fname == 'UGDSSITC' and date.find('M') < 0:
-                if datatype == 'EX':
-                    if TYPE[datatype] in list(US_t[date][3]) and EPYT[datatype] not in list(US_t[date][4]):
-                        typeCorrect = True
-                    US_t[date] = US_t[date][[4]]
-                elif datatype == 'IM':
-                    if TYPE[datatype] in list(US_t[date][5]) and EPYT[datatype] not in list(US_t[date][6]):
-                        typeCorrect = True
-                    US_t[date] = US_t[date][[6]]
-                US_t[date].columns = [date]
-            elif date.find('M') >= 0:
-                if bool(re.search(r'M[0-9]$', date)):
-                    US_t[date] = US_t[date].drop(US_t[date].index[[0]])
-                cols = [date[:4]+'-'+str(datetime.strptime(str(US_t[date].iloc[0].iloc[m]).strip(),'%B').month).rjust(2,'0') for m in range(0, US_t[date].shape[1], 2)]
-                if datatype == 'EX':
-                    US_t[date] = US_t[date][[m for m in range(1, US_t[date].shape[1]+1, 2)]]
-                elif datatype == 'IM':
-                    US_t[date] = US_t[date][[m for m in range(2, US_t[date].shape[1]+1, 2)]]
-                US_t[date].columns = cols
-            else:
-                US_t[date] = US_t[date].drop(columns=[1])
-                US_t[date].columns = [date]
-            US_t[date] = US_t[date].sort_index(axis=1)
-            if datatype != None:
-                for col in range(US_t[date].shape[1]):
-                    if TYPE[datatype] not in list(US_t[date][US_t[date].columns[col]]) and typeCorrect == False:
-                        print(US_t[date])
-                        ERROR('Incorrect columns were chosen: '+date+' '+TYPE[datatype])
-            new_ind = []
-            REX = False
-            for ind in range(US_t[date].shape[0]):
-                found = False
-                if REX == True and datatype == 'EX':
-                    for item in reversed(list(Series['CATEGORIES']['name'])):
-                        if re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip()+', Re-exports' in re.split(r'//', item.strip()):
-                            found = True
-                            new_ind.append(Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item]['cat_desc'].item())
-                            break
-                elif REX == True and datatype == 'IM':
-                    found = True
-                    new_ind.append('nan')
-                else:
-                    for item in list(Series['CATEGORIES']['name']):
-                        if re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip() in re.split(r'//', item.strip()):
-                            if re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip() == 'Total':
-                                new_ind.append('nan')
-                            else:
-                                new_ind.append(Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item]['cat_desc'].item())
-                            found = True
-                            break
-                        elif re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip().capitalize() == 'Re-exports' and datatype == 'EX':
-                            found = True
-                            REX = True
-                            new_ind.append('Re-exports')
-                            break
-                        elif re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip().capitalize() == 'Re-exports' and datatype == 'IM':
-                            found = True
-                            REX = True
-                            new_ind.append('nan')
-                            break
-                if found == False:
-                    to_pass = False
-                    if str(US_t[date].iloc[ind].iloc[0]) == 'nan':
-                        to_pass = True
-                    for pas in PASS:
-                        if str(US_t[date].index[ind]).strip().find(pas) >= 0 or str(US_t[date].index[ind]) == ' ':
-                            to_pass = True
-                            break
-                    if to_pass == False:
-                        if REX == True:
-                            print('\nRe-exports')
-                        ERROR('Category item code not found: '+date+'-"'+str(US_t[date].index[ind])+'"')
-                    new_ind.append('nan')    
-            US_t[date].index = new_ind
-            US_t[date] = US_t[date][~US_t[date].index.duplicated()]
-            US_new = pd.concat([US_new, US_t[date]], axis=1)
-        sys.stdout.write("\n\n")
-        US_t = US_new
-        fix = suffix
-        for ind in range(US_t.shape[0]):
-            middle = ''
-            description = str(US_t.index[ind])
-            if description.find('Re-exports') >= 0:
-                if description == 'Re-exports':
-                    description = 'Goods'
-                description = description.replace(', Re-exports', '')
-                suffix = 'RE'+fix
-            elif datatype != None:
-                suffix = datatype+fix
-            for item in list(Series['CATEGORIES']['cat_desc']):
-                if description in re.split(r'//', item.strip()):
-                    middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['cat_desc'] == item].index[0]
-                    new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suffix[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc'])
-                    new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
-            if middle == '':
-                new_index.append('nan')
-                new_label.append('nan')
-                new_order.append(10000)
-                #ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind])))
-            else:
-                new_index.append(prefix+str(middle)+suffix)
     elif fname == 'country' or fname == 'ctyseasonal':
         US_t = US_t.reset_index()
         if fname == 'country':
@@ -2292,204 +2480,11 @@ def US_FTD(US_t, fname, Series, prefix, middle, suffix, freq, trans, datatype=No
         elif fname == 'ctyseasonal':
             US_t = US_t.sort_values(by=['cty_desc','year'])
             US_t, new_index, new_label, new_order = US_country(US_t, Series, prefix, middle, freq, name='cty_desc')
-    elif fname == 'exh16' or fname == 'UATPCSB':
-        for ind in range(US_t.shape[0]):
-            suf = ''
-            if str(US_t.index[ind]) in list(Series['DATA TYPES']['dt_desc']):
-                suf = Series['DATA TYPES'].loc[Series['DATA TYPES']['dt_desc'] == US_t.index[ind]].index[0]
-                new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suf, 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix, 'geo_desc'])
-                new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
-                new_index.append(prefix+middle+suf+suffix)
-            else:
-                if str(US_t.index[ind]) not in PASS:
-                    ERROR('Item index not found in '+fname+': '+str(US_t.index[ind]))
-                else:
-                    new_index.append('nan')
-                    new_label.append('nan')
-                    new_order.append(10000)
-    elif fname == 'exh17' or fname == 'UPPCO':
-        if 'Imports' in list(US_t.iloc[0]):
-            new_cols = []
-            ImportsFound = False
-            for ind in range(US_t.shape[1]):
-                if US_t.iloc[0].iloc[ind] == 'Imports':
-                    ImportsFound = True
-                if ImportsFound == True:
-                    new_cols.append(US_t.columns[ind])
-                else:
-                    new_cols.append('drop')
-            US_t.columns = new_cols
-            US_t = US_t.drop(columns=['drop'])
-        product = ''
-        for ind in range(US_t.shape[0]):
-            middle = ''
-            if str(US_t.index[ind][0]).find('Unnamed') < 0:
-                product = re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][0]))
-            for item in range(Series['CATEGORIES'].shape[0]):
-                if Series['CATEGORIES'].iloc[item]['name'] == product and Series['CATEGORIES'].iloc[item]['cat_desc'] == re.sub(r'\s+\([a-z\s]+\)\s*$', "", str(US_t.index[ind][1])):
-                    middle = Series['CATEGORIES'].index[item]
-                    new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc'])
-                    new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
-                    break
-            if middle == '':
-                to_pass = False
-                for pas in PASS:
-                    if str(US_t.index[ind][0]).find(pas) >= 0 and str(US_t.index[ind][1]).find(pas) >= 0:
-                        to_pass = True
-                        break
-                if to_pass == False:
-                    ERROR('Item index not found in '+fname+': '+product+', '+re.sub(r'\s+\([a-z\s]+\)\s*$', "", str(US_t.index[ind][1])))
-                else:
-                    new_index.append('nan')
-                    new_label.append('nan')
-                    new_order.append(10000)
-            else:
-                new_index.append(prefix+middle+suffix)
-    elif fname == 'exh17_Y' or fname == 'exh18' or fname == 'UAMVCSB' or fname == 'UAMVCSB_Y':
-        US_new = pd.DataFrame()
-        for date in US_t:
-            sys.stdout.write("\rLoading...("+str(round((list(US_t.keys()).index(date)+1)*100/len(US_t.keys()), 1))+"%)*")
-            sys.stdout.flush()
-            typeCorrect = False
-            new_rows = []
-            typeFound = True
-            for ind in range(US_t[date].shape[0]):
-                if str(US_t[date].iloc[ind].iloc[0]).capitalize() == TYPE[datatype]:
-                    typeFound = True
-                elif str(US_t[date].iloc[ind].iloc[0]).capitalize() == EPYT[datatype]:
-                    typeFound = False
-                if typeFound == True:
-                    new_rows.append(US_t[date].index[ind])
-                elif bool(re.search(r'M[0-9]$', date)) and str(US_t[date].iloc[ind].iloc[0]) in MONTH:
-                    new_rows.append(US_t[date].index[ind])
-                else:
-                    new_rows.append('drop')
-            US_t[date].index = new_rows
-            US_t[date] = US_t[date].drop(index=['drop'])
-            if (TYPE[datatype] in list(US_t[date][1]) or TYPE[datatype].upper() in list(US_t[date][1])) and (EPYT[datatype] not in list(US_t[date][1]) and EPYT[datatype].upper() not in list(US_t[date][1])):
-                typeCorrect = True
-            dropcols = []
-            cols = []
-            if date.find('M') < 0 and fname.find('_Y') < 0:
-                if US_t[date].shape[1]%3 != 0:
-                    time_range = 2
-                else:
-                    time_range = 3
-                for auto in range(0, US_t[date].shape[1], time_range):
-                    if str(US_t[date].iloc[0].iloc[auto]) == 'Total' and AMV == 'AMV':
-                        continue
-                    elif str(US_t[date].iloc[0].iloc[auto]) not in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
-                        for a in range(1,time_range+1):
-                            dropcols.extend([auto+a])
-            else:
-                if bool(re.search(r'M[0-9]$', date)):
-                    US_t[date] = US_t[date].drop(US_t[date].index[[0]]) 
-                for auto in range(US_t[date].shape[1]):
-                    if fname == 'exh17_Y' or date == '17':
-                        if str(US_t[date].iloc[1].iloc[auto]).isnumeric():
-                            cols.append(int(US_t[date].iloc[1].iloc[auto]))
-                    auto_found = False
-                    for item in range(US_t[date].shape[0]):
-                        if date.find('M') >= 0 and str(US_t[date].iloc[item].iloc[auto]).strip() in MONTH:
-                            cols.append(str(US_t[date].iloc[item].iloc[auto]).strip())
-                        if str(US_t[date].iloc[item].iloc[auto]) == 'Total' and AMV == 'AMV':
-                            auto_found = True
-                        elif str(US_t[date].iloc[item].iloc[auto]) in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
-                            auto_found = True
-                    if auto_found == False:
-                        dropcols.append(auto+1)
-            US_t[date] = US_t[date].drop(columns=dropcols)
-            if (fname == 'exh18' or date == '18') and fname.find('_Y') < 0:
-                for mnth in range(US_t[date].shape[1]):
-                    if re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0] in MONTH and re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[1].isnumeric():
-                        cols.append(re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[1]+'-'+str(datetime.strptime(re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0].strip(),'%B').month).rjust(2,'0'))
-                    else:
-                        cols.append('drop')
-                US_t[date].columns = cols
-                if 'drop' in US_t[date].columns:
-                    US_t[date] = US_t[date].drop(columns=['drop'])
-            elif (fname == 'exh17_Y' or date == '17') and fname.find('_Y') >= 0:
-                US_t[date].columns = cols
-            elif fname == 'UAMVCSB' and date.find('M') < 0:
-                for mnth in range(US_t[date].shape[1]):
-                    if re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0].strip() not in MONTH:
-                        cols.append('drop')
-                    elif re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[1]+'-'+str(datetime.strptime(re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0].strip(),'%B').month).rjust(2,'0') == date:
-                        cols.append(date)
-                    else:
-                        cols.append('drop')
-                US_t[date].columns = cols
-                US_t[date] = US_t[date].drop(columns=['drop'])
-            elif date.find('M') >= 0:
-                cols = [date[:4]+'-'+str(datetime.strptime(item,'%B').month).rjust(2,'0') for item in cols]
-                US_t[date].columns = cols
-            elif fname == 'UAMVCSB_Y':
-                if date >= '2010':
-                    US_t[date] = US_t[date][[US_t[date].columns[2]]]
-                US_t[date].columns = [int(date)]
-            US_t[date] = US_t[date].sort_index(axis=1)
-            if TYPE[datatype] not in list(US_t[date][US_t[date].columns[0]]) and typeCorrect == False:
-                print(US_t[date])
-                ERROR('Incorrect indexes were chosen: '+date+' '+TYPE[datatype])
-            for col in range(US_t[date].shape[1]):
-                if freq == 'M' and date.find('M') < 0 and fname != 'exh18' and date != '18':
-                    if datetime.strptime(US_t[date].columns[col],'%Y-%m').strftime('%B')+'\n'+date[:4] not in list(US_t[date][US_t[date].columns[col]]):
-                        print(US_t[date][US_t[date].columns[col]])
-                        ERROR('Incorrect month was chosen: '+date+' '+datetime.strptime(US_t[date].columns[col],'%Y-%m').strftime('%B'))
-                if freq == 'A' or date.find('M') >= 0:
-                    ItemCorrect = False
-                    for item in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
-                        if (AMV == 'AMV' and 'Total' in list(US_t[date][US_t[date].columns[col]])) or (item in list(US_t[date][US_t[date].columns[col]])):
-                            ItemCorrect = True
-                            break
-                    if ItemCorrect == False:
-                        print(US_t[date][US_t[date].columns[col]])
-                        ERROR('Incorrect column was chosen: '+date+' '+str(Series['CATEGORIES'].loc[AMV, 'cat_desc']))
-            new_ind = []
-            for ind in range(US_t[date].shape[0]):
-                found = False
-                for item in list(Series['GEO LEVELS']['name']):
-                    if str(US_t[date].index[ind]).strip() in re.split(r'//', item.strip()):
-                        new_ind.append(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item]['geo_desc'].item())
-                        found = True
-                        break
-                if found == False:
-                    to_pass = False
-                    if str(US_t[date].iloc[ind].iloc[0]) == 'nan':
-                        to_pass = True
-                    for pas in PASS:
-                        if str(US_t[date].index[ind]).strip().find(pas) >= 0 or str(US_t[date].index[ind]).strip() == '':
-                            to_pass = True
-                            break
-                    if to_pass == False:
-                        ERROR('Country code not found: '+date+'-"'+str(US_t[date].index[ind])+'"')
-                    new_ind.append('nan')    
-            US_t[date].index = new_ind
-            US_t[date] = US_t[date][~US_t[date].index.duplicated()]
-            US_new = pd.concat([US_new, US_t[date]], axis=1)
-        sys.stdout.write("\n\n")
-        US_t = US_new
-        middle = AMV
-        suf = datatype
-        for ind in range(US_t.shape[0]):
-            fix = ''
-            for item in list(Series['GEO LEVELS']['geo_desc']):
-                if str(US_t.index[ind]) in re.split(r'//', item.strip()):
-                    fix = Series['GEO LEVELS'].loc[Series['GEO LEVELS']['geo_desc'] == item].index[0]
-                    new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suf, 'dt_desc']+',  '+Series['GEO LEVELS'].loc[fix, 'geo_desc'])
-                    new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
-            if fix == '':
-                new_index.append('nan')
-                new_label.append('nan')
-                new_order.append(10000)
-                #ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind])))
-            else:
-                new_index.append(prefix+middle+suf+fix)
     US_t = US_t.sort_index(axis=1)
     
     return US_t, new_index, new_label, new_order
 
-def US_TICS(US_temp, Series, data_path, address, fname, start=None, find_unknown=False):
+def US_TICS(US_temp, Series, data_path, address, fname, start=None, US_present=pd.DataFrame(), US_his=pd.DataFrame(), find_unknown=False, DF_KEY=None):
     note = []
     footnote = []
     
@@ -2498,62 +2493,71 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, find_unknown
     new_index_t = []
     new_code_t = []
     new_label_t = []
-    if fname == 'mfhhis01':
-        note, footnote = US_NOTE(US_temp.index, fname=fname)
-        tables = {}
+    if fname.find('mfhhis01') >= 0:
         Note_suf = {}
-        prefix = 'H'
-        print('Item: '+Series['DATA TYPES'].loc[prefix, 'dt_desc'].strip())
-        for g in range(US_temp.shape[0]):
-            sys.stdout.write("\rLoading...("+str(round((g+1)*100/US_temp.shape[0], 1))+"%)*")
-            sys.stdout.flush()
-            if str(US_temp.index[g]) == 'Country':
-                key = str(US_temp.iloc[g][0])[:4]
-                table_head = g
-                for i in range(g+1, US_temp.shape[0]):
-                    if str(US_temp.index[i]).find('T-Bonds & Notes') >= 0:
-                        table_tail = i
+        if US_his.empty == False:
+            note, footnote = US_NOTE(US_temp.index, fname=fname)
+            DOWNLOAD = {'present': US_present,'revised': US_temp}
+            tables = {}
+            prefix = 'H'
+            for US_key in DOWNLOAD:
+                #logging.info('Item: '+Series['DATA TYPES'].loc[prefix, 'dt_desc'].strip())
+                for g in range(DOWNLOAD[US_key].shape[0]):
+                    if str(DOWNLOAD[US_key].index[g]) == 'Country':
+                        key = US_key
+                        table_head = g
+                        for i in range(g+1, DOWNLOAD[US_key].shape[0]):
+                            if str(DOWNLOAD[US_key].index[i]).find('T-Bonds & Notes') >= 0:
+                                table_tail = i
+                                break
+                        if key == 'present':
+                            tables[key] = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', header=[0,1], index_col=0, widths=[30]+[8]*13, skiprows=list(range(table_head)), nrows=table_tail-table_head)
+                            tables[key].to_csv(data_path+address+fname.replace('his01_historical','')+'.csv')
+                        else:
+                            tables[key] = readFile(data_path+address+fname.replace('_historical','')+'.csv', header_=[0,1], index_col_=0, skiprows_=list(range(table_head)), nrows_=table_tail-table_head)
+                        if tables[key].empty == True:
+                            ERROR('Table Not Found: '+key)
+                        cols = []
+                        for col in tables[key].columns:
+                            try:
+                                cols.append(col[1]+'-'+str(datetime.strptime(col[0].strip(),'%b').month).rjust(2,'0'))
+                            except ValueError:
+                                cols.append(None)
+                        tables[key].columns = cols
+                        tables[key] = tables[key].loc[:,tables[key].columns.dropna()]
+                        inds = []
+                        GRAND = ['For. Official', 'Treasury Bills' , 'T-Bonds & Notes']
+                        for dex in tables[key].index:
+                            middle = ''
+                            suffix = ''
+                            if str(dex).strip() == 'nan' or str(dex).strip() == 'Of which:':
+                                inds.append(None)
+                                continue
+                            elif str(dex).strip() in GRAND:
+                                middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == str(dex).strip()].index[0]
+                                suffix = str(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == 'Grand Total'].index[0])
+                            else:
+                                middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == 'Major Foreign Holders'].index[0]
+                                suf_key = re.sub(r'[0-9]+/', "", str(dex).strip()).strip()
+                                for item in list(Series['GEO LEVELS']['name']):
+                                    if suf_key in re.split(r'//', item.strip()):
+                                        suffix = str(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item].index[0])
+                            if middle == '' or suffix == '':
+                                ERROR('Item code of '+str(dex).strip()+' not found in table: '+key)
+                            inds.append(prefix+middle+suffix)
+                            if bool(re.search(r'[0-9]+/', str(dex))) and suffix not in Note_suf:
+                                Note_suf[suffix] = re.findall(r'[0-9]+/',str(dex))
+                        tables[key].index = inds
                         break
-                tables[key] = readFile(data_path+address+fname+'.csv', header_ = [0, 1], index_col_ = 0, skiprows_ = list(range(table_head)), nrows_ = table_tail - table_head)
-                if tables[key].empty == True:
-                    ERROR('Table Not Found: '+key)
-                cols = []
-                for col in tables[key].columns:
-                    try:
-                        cols.append(col[1]+'-'+str(datetime.strptime(col[0].strip(),'%b').month).rjust(2,'0'))
-                    except ValueError:
-                        cols.append(None)
-                tables[key].columns = cols
-                tables[key] = tables[key].loc[:,tables[key].columns.dropna()]
-                inds = []
-                GRAND = ['For. Official', 'Treasury Bills' , 'T-Bonds & Notes']
-                for dex in tables[key].index:
-                    middle = ''
-                    suffix = ''
-                    if str(dex).strip() == 'nan' or str(dex).strip() == 'Of which:':
-                        inds.append(None)
-                        continue
-                    elif str(dex).strip() in GRAND:
-                        middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == str(dex).strip()].index[0]
-                        suffix = str(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == 'Grand Total'].index[0])
-                    else:
-                        middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == 'Major Foreign Holders'].index[0]
-                        suf_key = re.sub(r'[0-9]+/', "", str(dex).strip()).strip()
-                        for item in list(Series['GEO LEVELS']['name']):
-                            if suf_key in re.split(r'//', item.strip()):
-                                suffix = str(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item].index[0])
-                    if middle == '' or suffix == '':
-                        ERROR('Item code of '+str(dex).strip()+' not found in table: '+key)
-                    inds.append(prefix+middle+suffix)
-                    if bool(re.search(r'[0-9]+/', str(dex))) and suffix not in Note_suf:
-                        Note_suf[suffix] = re.findall(r'[0-9]+/',str(dex))
-                tables[key].index = inds
-        sys.stdout.write("\n\n")
-        US_t = pd.DataFrame()
-        for key in tables:
-            tables[key] = tables[key][~tables[key].index.duplicated()]
-            US_t = pd.concat([US_t, tables[key]], axis=1)
-        US_t = US_t.loc[US_t.index.dropna()]
+            for key in tables:
+                tables[key] = tables[key][~tables[key].index.duplicated()]
+                US_his = pd.concat([tables[key], US_his], axis=1)
+                US_his = US_his.loc[:, ~US_his.columns.duplicated()]
+            US_his = US_his.loc[US_his.index.dropna()].sort_index(axis=1)
+            US_his.to_csv(data_path+address+fname+'.csv')
+            US_t = US_his
+        else:
+            US_t = US_temp
         new_code_t = list(US_t.index)
         new_label_t = [re.sub(r'(within the), ', r"\1", Series['CATEGORIES'].loc[code[1:4], 'cat_desc'].strip()+',  '+Series['GEO LEVELS'].loc[int(code[4:]), 'geo_desc'].strip()) for code in new_code_t]
         for lab in range(len(new_label_t)):
@@ -2563,6 +2567,7 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, find_unknown
     elif fname == 's1_globl':
         new_dataframe = []
         firstfound = False
+        code = ''
         for h in range(US_temp.shape[1]):
             prefix = ''
             middle = ''
@@ -2577,10 +2582,12 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, find_unknown
                     break
             if middle == '':
                 ERROR('Item code not found: '+str(US_temp.columns[h]))
-            print('Item: '+Series['DATA TYPES'].loc[prefix, 'dt_desc'].strip()+', '+Series['CATEGORIES'].loc[middle, 'cat_desc'].strip())
+            logging.info('Item: '+Series['DATA TYPES'].loc[prefix, 'dt_desc'].strip()+', '+Series['CATEGORIES'].loc[middle, 'cat_desc'].strip())
             for i in range(US_temp.shape[0]):
                 sys.stdout.write("\rLoading...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
                 sys.stdout.flush()
+                if find_unknown == True and GET_NAME(address, freq='M', code=code, check_exist=True, DF_KEY=DF_KEY) == True:
+                    continue
                 if US_temp.index[i][1].isnumeric() == False:
                     continue
                 if US_temp.index[i][1] != suffix:
@@ -2600,9 +2607,9 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, find_unknown
                     code = prefix+middle+suffix
                     lab = Series['CATEGORIES'].loc[middle, 'cat_desc'].strip()+',  '+Series['GEO LEVELS'].loc[int(suffix), 'geo_desc'].strip()
                     firstfound = True
-                if start != None and find_unknown == False:
+                """if start != None and find_unknown == False:
                     if US_temp.index[i][2] < start:
-                        continue
+                        continue"""
                 new_item_t.append(US_temp.iloc[i].iloc[h].replace(',',''))
                 new_index_t.append(US_temp.index[i][2])  
             sys.stdout.write("\n\n")
@@ -2621,61 +2628,33 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, find_unknown
 
     return US_t, label, note, footnote
 
-def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=None, skiprows=None, freq=None, x='', usecols=None, transpose=True, suffix=None, names=None, TRPT=None, chrome=None):
+def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=None, skiprows=None, freq=None, x='', usecols=None, transpose=True, suffix=None, names=None, TRPT=None, chrome=None, zf=None, output=False):
     MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
     YEAR = ['Year']
     SEMI = {'1st Half':'1','2nd Half':'2'}
     QUAR = {'Q1':'1','Q2':'2','Q3':'3','Q4':'4'}
-    REGION = {'Page 7':'R','Page 8':'U'}
+    REGION = {'Rural':'R','Urban':'U'}
+    FREQ = {'M':'Monthly','Q':'Quarterly','S':'Semiannual','A':'Annual'}
 
-    if address.find('BTS') >= 0:
-        if fname.find('http') >= 0 and sname != 'Summary Table of Cargo Revenue Ton-Miles':
-            chrome.get(fname)
-            carrier = Select(chrome.find_element_by_id("CarrierList"))
-            if sname.find('US') >= 0:
-                carrier.select_by_value("AllUS")
+    if fname == 'TRPT':
+        US_t = readExcelFile(zf.open(fname+'.xls'), header_ =header, index_col_=index_col, sheet_name_=sname)
+    else:
+        file_path = data_path+address+sname+'.xls'+x
+        if PRESENT(file_path):
+            if output == True:
+                US_t = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=None, sheet_name_=0)
             else:
-                carrier.select_by_value("All")
-            airport = Select(chrome.find_element_by_id("AirportList"))
-            airport.select_by_value("All")
-            chrome.find_element_by_id("Link_"+re.sub(r'_.+', "", sname)).click()
-            search = BeautifulSoup(chrome.page_source, "html.parser")
-            result = search.find(id="GridView1")
-            US_t = pd.read_html(str(result), header=header, index_col=index_col)[0]
-        elif fname.find('http') >= 0 and sname == 'Summary Table of Cargo Revenue Ton-Miles':
-            chrome.get(fname)
-            carrier = Select(chrome.find_element_by_id("Carrier"))
-            carrier.select_by_value("0:All")
-            search = BeautifulSoup(chrome.page_source, "html.parser")
-            result = search.find_all("table", class_="largeTABLE")
-            US_t = pd.read_html(str(result[2]), skiprows=[0,1], header=header, index_col=index_col)[0]
+                US_t = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0)
         else:
-            US_t = readExcelFile(data_path+address+fname+'.xls'+x, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=sname, acceptNoFile=False, usecols_=usecols, names_=names)
-    elif address.find('DOL') >= 0:
-        chrome.get(fname)
-        chrome.find_element_by_xpath("//input[@aria-label='Select US total']").click()
-        start_year = Select(chrome.find_element_by_name("strtyear"))
-        start_year.select_by_value("1971")
-        start_month = Select(chrome.find_element_by_name("strtmonth"))
-        start_month.select_by_value("01/01")
-        end_year = Select(chrome.find_element_by_name("endyear"))
-        end_year.select_by_value(str(datetime.today().year))
-        end_month = Select(chrome.find_element_by_name("endmonth"))
-        end_month.select_by_value("12/31")
-        chrome.find_element_by_name("submit").click()
-        US_t = pd.read_html(chrome.page_source, header=[3], index_col=index_col)[0]
-        US_t = US_t[US_t.columns[0:6]]
+            US_t = US_WEB(chrome, address, fname, sname, freq=freq, header=header, index_col=index_col, skiprows=skiprows, excel=x, usecols=usecols, names=names, output=output)
+        if str(sname).find('TVT') >= 0:
+            US_his = readExcelFile(file_path.replace('TVT','TVT_historical').replace('.xlsx',' - '+FREQ[freq]+'.xlsx'), header_=[0], index_col_=0, sheet_name_=0)
+        elif sname == 'Cargo Revenue Ton-Miles':
+            US_his = readExcelFile(file_path.replace('Cargo Revenue Ton-Miles','CRTM_historical').replace('.xlsx',' - '+FREQ[freq]+'.xlsx'), header_=[0], index_col_=[0,1], sheet_name_=0)
+
     if type(US_t) != dict and US_t.empty == True:
-        ERROR('Sheet Not Found: '+data_path+address+fname+'.xls'+x+', sheet name: '+str(sname))      
-    if fname.find('TVT') >= 0:
-        for col in range(US_t.shape[1]):
-            if 'F' not in list(US_t[US_t.columns[col]]):
-                ERROR('Incorrect column selected: '+str(US_t.columns[col]))
-    elif address.find('UIWC') >= 0:
-        for col in US_t.columns:
-            if str(col).find(names[list(US_t.columns).index(col)+1]) < 0:
-                ERROR('Incorrect column selected: '+str(col))
-    elif fname == 'dl201':
+        ERROR('Sheet Not Found: '+fname+', sheet name: '+str(sname))
+    if sname == 'dl201':
         drop_index = []
         for dex in range(US_t.shape[0]):
             if str(US_t.index[dex]).strip() != 'Total':
@@ -2690,7 +2669,10 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
             note_line.append(US_t.index[dex][0])
         else:
             note_line.append(US_t.index[dex])
-    note, footnote = US_NOTE(note_line, sname, address=address)
+    if sname == 'dl201' or sname == 'Cargo Revenue Ton-Miles' or str(sname).find('table') >= 0:
+        note, footnote = US_NOTE(note_line, sname, address=address, getfootnote=False)
+    else:
+        note, footnote = US_NOTE(note_line, sname, address=address)
     if transpose == True:
         US_t = US_t.T
     
@@ -2705,6 +2687,14 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
         unit = Series['DATA TYPES'].loc[suffix, 'dt_unit']
     if suffix.find('SAT') >= 0:
         note = []
+        chrome.get(fname)
+        if str(sname).find('US') >= 0:
+            Select(chrome.find_element_by_id("CarrierList")).select_by_value("AllUS")
+        else:
+            Select(chrome.find_element_by_id("CarrierList")).select_by_value("All")
+        Select(chrome.find_element_by_id("AirportList")).select_by_value("All")
+        chrome.find_element_by_id("Link_"+re.sub(r'_.+', "", sname)).click()
+        search = BeautifulSoup(chrome.page_source, "html.parser")
         unit_t = search.find(id="LblHeader").text
         #unit_t = str(readExcelFile(data_path+address+fname+'.xls'+x, usecols_=[0], sheet_name_=sname).iloc[0][0]).strip()
         if bool(re.search(r'.+?\(.+?\(.+?\)\).*', unit_t)):
@@ -2718,16 +2708,22 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
     new_note = []
     new_unit = []
     END = False
-    if fname == 'Summary Table of Cargo Revenue Ton-Miles' or sname == 'Summary Table of Cargo Revenue Ton-Miles':
-        footnote = []
+    if sname == 'Cargo Revenue Ton-Miles':
+        US_t.index = pd.MultiIndex.from_tuples([[re.sub(r'[^A-Za-z\s]+', "", str(dex[0])).strip(), re.sub(r'[^A-Za-z\s]+', "", str(dex[1])).strip()] if str(dex[0]).find('Unnamed') < 0 else [None,None] for dex in US_t.index])
         for ind in range(US_t.shape[1]):
             if freq == 'A' and str(US_t.columns[ind][0]).find('Total') >= 0:
                 new_columns.append(int(str(US_t.columns[ind][0]).replace('Total', '').strip()))
             elif freq == 'M' and str(US_t.columns[ind][0]).isnumeric():
                 new_columns.append(str(US_t.columns[ind][0])+'-'+str(datetime.strptime(str(US_t.columns[ind][1]).strip(),'%B').month).rjust(2,'0'))
             else:
-                new_columns.append('nan')
+                new_columns.append(None)
         US_t.columns = new_columns
+        US_t = US_t.loc[:, ~US_t.columns.duplicated()]
+        US_t = US_t.loc[US_t.index.dropna(), US_t.columns.dropna()]
+        US_t = pd.concat([US_t, US_his], axis=1)
+        US_t = US_t.loc[:, ~US_t.columns.duplicated()].sort_index(axis=1)
+        US_t = US_t.applymap(lambda x: float(x))
+        US_t.to_excel(file_path.replace('Cargo Revenue Ton-Miles','CRTM_historical').replace('.xlsx',' - '+FREQ[freq]+'.xlsx'), sheet_name='CRTM')
     if suffix.find('SAT') >= 0:
         suf = suffix
         for ind in range(US_t.shape[1]):
@@ -2739,25 +2735,27 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
                 new_columns.append('nan')
         US_t.columns = new_columns
         US_t = US_t.loc[:, ~US_t.columns.duplicated()]
-    elif fname.find('TVT') >= 0:
-        region = REGION[sname]
+    elif str(sname).find('TVT') >= 0:
+        region = REGION[str(sname)[-5:]]
         suffix = suffix+region
-        year = 0
         for ind in range(US_t.shape[1]):
-            if bool(re.match(r'Year\s*\-\s*[0-9]{4}.*', str(US_t.columns[ind]).strip())):
-                year = re.sub(r'Year\s*\-\s*([0-9]{4}).*', r'\1', str(US_t.columns[ind]).strip())
-            if freq == 'A' and str(US_t.columns[ind]).strip() in YEAR:
+            year = str(US_t.columns[ind]).strip()[:4]
+            if freq == 'A' and str(US_t.columns[ind]).strip()[4:] in YEAR:
                 new_columns.append(year)
-            elif freq == 'S' and str(US_t.columns[ind]).strip() in SEMI:
-                new_columns.append(year+'-S'+SEMI[str(US_t.columns[ind]).strip()])
-            elif freq == 'Q' and str(US_t.columns[ind]).strip() in QUAR:
-                new_columns.append(year+'-Q'+QUAR[str(US_t.columns[ind]).strip()])
-            elif freq == 'M' and str(US_t.columns[ind]).strip() in MONTH:
-                new_columns.append(year+'-'+str(datetime.strptime(str(US_t.columns[ind]).strip(),'%b').month).rjust(2,'0'))
+            elif freq == 'S' and str(US_t.columns[ind]).strip()[4:] in SEMI:
+                new_columns.append(year+'-S'+SEMI[str(US_t.columns[ind]).strip()[4:]])
+            elif freq == 'Q' and str(US_t.columns[ind]).strip()[4:] in QUAR:
+                new_columns.append(year+'-Q'+QUAR[str(US_t.columns[ind]).strip()[4:]])
+            elif freq == 'M' and str(US_t.columns[ind]).strip()[4:] in MONTH:
+                new_columns.append(year+'-'+str(datetime.strptime(str(US_t.columns[ind]).strip()[4:],'%b').month).rjust(2,'0'))
             else:
-                new_columns.append('nan')
+                new_columns.append(None)
         US_t.columns = new_columns
         US_t = US_t.loc[:, ~US_t.columns.duplicated()]
+        US_t = US_t.loc[:, US_t.columns.dropna()]
+        US_t = pd.concat([US_t, US_his], axis=1)
+        US_t = US_t.loc[:, ~US_t.columns.duplicated()].sort_index(axis=1)
+        US_t.to_excel(file_path.replace('TVT','TVT_historical').replace('.xlsx',' - '+FREQ[freq]+'.xlsx'), sheet_name=region)
     elif address.find('UIWC') >= 0:
         for ind in range(US_t.shape[1]):
             try:
@@ -2767,12 +2765,10 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
         US_t.columns = new_columns
         US_t = US_t.loc[:, ~US_t.columns.duplicated()]
     for ind in range(US_t.shape[0]):
-        if fname.find('table') >= 0 or fname.find('TVT') >= 0 or fname == 'dl201' or address.find('UIWC') >= 0:
+        if str(sname).find('table') >= 0 or str(sname).find('TVT') >= 0 or sname == 'dl201' or address.find('UIWC') >= 0:
             index_key = str(US_t.index[ind])
-        elif fname == 'Summary Table of Cargo Revenue Ton-Miles' or sname == 'Summary Table of Cargo Revenue Ton-Miles':
+        elif sname == 'Cargo Revenue Ton-Miles':
             index_key = str(US_t.index[ind][1])
-            if index_key.find('Unnamed') >= 0:
-                index_key = str(US_t.index[ind][0])
         elif suffix.find('SAT') >= 0:
             index_key = sname
             for item in list(Series['GEO LEVELS']['name']):
@@ -2802,7 +2798,7 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
                 continue
             else:
                 middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item].index[0]
-                if fname.find('TVT') >= 0:
+                if str(sname).find('TVT') >= 0:
                     new_label.append(Series['GEO LEVELS'].loc[region, 'geo_desc']+',  '+Series['CATEGORIES'].loc[middle, 'cat_desc'])
                 elif suffix.find('SAT') >= 0:
                     new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['GEO LEVELS'].loc[region, 'geo_desc'])
@@ -2825,10 +2821,10 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
                 new_note.append(None)
         else:
             new_index.append(prefix+middle+suffix)
-            if fname.find('TVT') >= 0 or suffix.find('SAT') >= 0 or fname == 'dl201' or address.find('UIWC') >= 0:
+            if str(sname).find('TVT') >= 0 or suffix.find('SAT') >= 0 or sname == 'dl201' or address.find('UIWC') >= 0:
                 new_note.append('')
-            elif fname == 'Summary Table of Cargo Revenue Ton-Miles' or sname == 'Summary Table of Cargo Revenue Ton-Miles':
-                new_note.append(re.sub(r'.+?(/[a-z,]+/)*$', r'\1', index_key))
+            elif sname == 'Cargo Revenue Ton-Miles':
+                new_note.append(index_key[:3].upper())
             elif index_key.find('total') >= 0:
                 new_note.append(re.search(r'([a-z],\s*)*[a-z],\s', index_key).group().strip(', '))
             elif index_key.find('Intercity/Amtrak') >= 0:
@@ -2951,162 +2947,44 @@ def US_RCM(US_t, fname, Series):
 
     return US_t, label, note, footnote
 
-def US_CBS(address, fname, sname, Series, US_t=pd.DataFrame(), chrome=None):
+def US_CBS(address, fname, sname, Series, US_t, transpose=True):
     note = []
     footnote = []
     PASS = ['0. No Reply','10. N/A']
-    sname_temp = ''
-
-    if US_t.empty == True and address.find('NFIB') >= 0:
-        chrome.get(fname)
-        chrome.execute_script("document.getElementById('indicators1').setAttribute('style', 'display: block;')")
-        indicator = Select(chrome.find_element_by_id('indicators1'))
-        sname_temp = sname
-        sname = 'Most Important Reason for Higher Earnings'
-        while True:
-            try:
-                ActionChains(chrome).click(indicator.select_by_visible_text(sname)).send_keys(Keys.ENTER).perform()
-            except NoSuchElementException:
-                ERROR('Item "'+sname+'" Not Found in address: '+fname)
-            chrome.execute_script("document.getElementById('grid').setAttribute('style', 'display: block;')")
-            if sname_temp == '':
-                print('Loading...')
-                time.sleep(20)
-                break
-            else:
-                time.sleep(3)
-                sname = sname_temp
-                sname_temp = ''
-        while True:
-            try:
-                pd.read_html(chrome.page_source)
-            except ValueError:
-                time.sleep(2)
-            else:
-                break
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-page="2"]'))).click()
-        try:
-            WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="k-link" and @data-page="1"]'))).click()
-        except TimeoutException:
-            time.sleep(1)
-        US_t = pd.read_html(chrome.page_source)[1]
-        US_t.columns = pd.read_html(chrome.page_source)[0].columns
-        if sname == 'Amount of Capital Expenditures Made':
-            US_t = US_t[[US_t.columns[0],US_t.columns[2],US_t.columns[4]]]
-        else:
-            US_t = US_t.set_index(US_t.columns[0])
-        i = 2
-        while(chrome.find_element_by_class_name("k-state-selected").text != chrome.find_element_by_xpath('.//a[@title="Go to the last page"]').get_attribute("data-page")):
-            WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-page="'+str(i)+'"]'))).click()
-            US_temp = pd.read_html(chrome.page_source)[1]
-            US_temp.columns = pd.read_html(chrome.page_source)[0].columns
-            if sname == 'Amount of Capital Expenditures Made':
-                US_temp = US_temp[[US_temp.columns[0],US_temp.columns[2],US_temp.columns[4]]]
-                US_t = pd.concat([US_t, US_temp], ignore_index=True)
-            else:
-                US_temp = US_temp.set_index(US_temp.columns[0])
-                US_t = pd.concat([US_t, US_temp])
-            i+=1
-        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="k-button k-button-icontext k-grid-excel"]'))).click()
-        chrome.execute_script("window.open()")
-        chrome.switch_to.window(chrome.window_handles[-1])
-        chrome.get('chrome://downloads')
-        time.sleep(1)
-        excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
-        chrome.close()
-        chrome.switch_to.window(chrome.window_handles[0])
-        if sname != 'Amount of Capital Expenditures Made':
-            US_t = US_t.T
-            US_copy = US_t.copy()
-            US_excel = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_ =0, index_col_=0, sheet_name_=0).T
-        else:
-            US_copy = US_t.copy()
-            US_excel = readExcelFile((Path.home() / "Downloads" / excel_file).as_posix(), header_ =0, sheet_name_=0, usecols_=[0,2,4])
-            US_temp = US_t.sort_values(by=['Answer','Date'], ignore_index=True)
-            US_t = pd.DataFrame()
-            new_dataframe = []
-            new_item_t = []
-            new_index_t = []
-            firstfound = False
-            code = ''
-            for i in range(US_temp.shape[0]):
-                if US_temp.iloc[i]['Answer'] != code:
-                    if firstfound == True:
-                        new_dataframe.append(new_item_t)
-                        US_new = pd.DataFrame(new_dataframe, index=[code], columns=new_index_t)
-                        if US_new.empty == False:
-                            US_t = pd.concat([US_t, US_new])
-                        new_dataframe = []
-                        new_item_t = []
-                        new_index_t = []
-                    code = US_temp.iloc[i]['Answer']
-                    firstfound = True
-                new_item_t.append(US_temp.iloc[i]['Percent'])
-                new_index_t.append(US_temp.iloc[i]['Date'])  
-            new_dataframe.append(new_item_t)
-            US_new = pd.DataFrame(new_dataframe, index=[code], columns=new_index_t)
-            if US_new.empty == False:
-                US_t = pd.concat([US_t, US_new])
-        if US_copy.equals(US_excel) == False:
-            ERROR('Not equal: '+sname)
-        try:
-            (Path.home() / "Downloads" / excel_file).unlink()
-        except FileNotFoundError:
-            time.sleep(1)
-        sys.stdout.write("\n")
-    elif US_t.empty == True and address.find('OECD') >= 0:
-        chrome.get(fname)
-        chrome.implicitly_wait(3)
-        chart = chrome.find_element_by_xpath('.//div[@class="ddp-chart indicator-main-chart normal compact-header"]')
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="dropdown-button light highlighted-locations-dropdown-button"]'))).click()
-        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/li[@data-id="USA"]'))).click()
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="_HIGHLIGHTED"]'))).click()
-        if chart.get_attribute("data-show-baseline") == 'true':
-            WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/input[@class="baseline-comparison-checkbox"]'))).click()
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="close-btn"]'))).click()
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@class="dropdown single-subject-dropdown"]'))).click()
-        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-value="AMPLITUD"]'))).click()
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@class="dropdown measures"]'))).click()
-        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-value="LTRENDIDX"]'))).click()
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-value="M"]'))).click()
-        if chart.get_attribute("data-use-latest-data") == 'true':
-            WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/input[@class="use-latest-data-checkbox"]'))).click()
-        start = chrome.find_element_by_xpath('.//div[@class="noUi-handle noUi-handle-lower"]')
-        end = chrome.find_element_by_xpath('.//div[@class="noUi-handle noUi-handle-upper"]')
-        start_loc = 0
-        end_loc = 0
-        print('Loading...')
-        while True:
-            if chrome.find_element_by_xpath('.//div[@class="noUi-origin noUi-background"]').get_attribute("style").find('100%') < 0:
-                ActionChains(chrome).drag_and_drop_by_offset(end,end_loc,0).release(end).perform()
-                end_loc+=20
-            ActionChains(chrome).drag_and_drop_by_offset(start,start_loc,0).release(start).perform()
-            start_loc-=20
-            try:
-                if chrome.find_element_by_xpath('.//div[@class="noUi-origin noUi-connect noUi-dragable"]').get_attribute("style").find(' 0%') >= 0 \
-                and chrome.find_element_by_xpath('.//div[@class="noUi-origin noUi-background"]').get_attribute("style").find('100%') >= 0:
-                    break
-            except NoSuchElementException:
-                continue
-        chrome.execute_script("window.scrollTo(0,0)")
-        while True:
-            try:
-                WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="dropdown-button dark chart-button download-btn"]'))).click()
-                time.sleep(3)
-                WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[@class="download-selection-button"]'))).click()
-                time.sleep(3)
-            except:
-                time.sleep(5)
-            else:
-                break
-        US_t = US_WEBDRIVER(chrome, address, fname, sname, header=0, index_col=0, usecols=[5,6], csv=True).T
-        sys.stdout.write("\n")
+    if transpose == True:
+        US_t = US_t.T
+    if sname == 'Amount of Capital Expenditures Made':
+        US_temp = US_t.sort_values(by=['Answer','Date'], ignore_index=True)
+        US_t = pd.DataFrame()
+        new_dataframe = []
+        new_item_t = []
+        new_index_t = []
+        firstfound = False
+        code = ''
+        for i in range(US_temp.shape[0]):
+            if US_temp.iloc[i]['Answer'] != code:
+                if firstfound == True:
+                    new_dataframe.append(new_item_t)
+                    US_new = pd.DataFrame(new_dataframe, index=[code], columns=new_index_t)
+                    if US_new.empty == False:
+                        US_t = pd.concat([US_t, US_new])
+                    new_dataframe = []
+                    new_item_t = []
+                    new_index_t = []
+                code = US_temp.iloc[i]['Answer']
+                firstfound = True
+            new_item_t.append(US_temp.iloc[i]['Percent'])
+            new_index_t.append(US_temp.iloc[i]['Date'])  
+        new_dataframe.append(new_item_t)
+        US_new = pd.DataFrame(new_dataframe, index=[code], columns=new_index_t)
+        if US_new.empty == False:
+            US_t = pd.concat([US_t, US_new])
 
     new_index = []
     new_label = []
     new_unit = []
     new_cols = []
-    if fname != 'Consumer Confidence Index' and sname != 'Consumer Confidence Index':
+    if sname != 'Consumer Confidence Index':
         for col in range(US_t.shape[1]):
             new_cols.append(datetime.strptime(str(US_t.columns[col]).strip(), '%Y/%m/%d').strftime('%Y-%m'))
         US_t.columns = new_cols
@@ -3152,34 +3030,6 @@ def US_DOA(US_temp, Series, Table, address, fname, sname, chrome):
     note = []
     footnote = []
 
-    if US_temp.empty == True:
-        chrome.get(fname)
-        print('Downloading File...')
-        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="source_desc"]/option[text()="'+Table.loc[sname, 'Program']+'"]'))).click()
-        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="sector_desc"]/option[text()="'+Table.loc[sname, 'Sector']+'"]'))).click()
-        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="group_desc"]/option[text()="'+Table.loc[sname, 'Group']+'"]'))).click()
-        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="commodity_desc"]/option[text()="'+Table.loc[sname, 'Commodity']+'"]'))).click()
-        for item in re.split(r', ', str(Table.loc[sname, 'Data Items'])):
-            WebDriverWait(chrome, 15).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="statisticcat_desc"]/option[text()="'+Table.loc[sname, 'Category']+', '+item+'"]'))).click()
-        if sname == 'PPITW':
-            WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.ID, 'short_desc'))).click()
-            chrome.find_element_by_id("short_desc").send_keys(Keys.CONTROL, 'a')
-        else:
-            for item in re.split(r', ', str(Table.loc[sname, 'Data Items'])):
-                WebDriverWait(chrome, 15).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="short_desc"]/option[text()="'+Table.loc[sname, 'Commodity']+' - '+Table.loc[sname, 'Category']+', '+item+'"]'))).click()
-        WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="domain_desc"]/option[text()="TOTAL"]'))).click()
-        WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="agg_level_desc"]/option[text()="NATIONAL"]'))).click()
-        WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="state_name"]/option[text()="US TOTAL"]'))).click()
-        chrome.find_element_by_id("year").send_keys(Keys.CONTROL, 'a')
-        WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/select[@id="freq_desc"]/option[text()="MONTHLY"]'))).click()
-        WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.ID, 'reference_period_desc'))).click()
-        chrome.find_element_by_id("reference_period_desc").send_keys(Keys.CONTROL, 'a')
-        time.sleep(3)
-        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.ID, 'submit001'))).click()
-        WebDriverWait(chrome, 30).until(EC.element_to_be_clickable((By.XPATH, './/a[@href="javascript:download();"]'))).click()
-        US_temp = US_WEBDRIVER(chrome, address, fname, sname, header=0, usecols=[1,2,16,19], csv=True)
-        sys.stdout.write("\n")
-    
     for i in range(US_temp.shape[0]):
         US_temp.loc[i, 'Period'] = MON[US_temp.iloc[i]['Period']]
     US_temp = US_temp.sort_values(by=['Data Item','Year','Period'], ignore_index=True)
@@ -3261,7 +3111,11 @@ def US_DOA(US_temp, Series, Table, address, fname, sname, chrome):
 def US_AISI(data_path, address, fname, steelorbis_year='2019'):
     note = []
     footnote = []
-    IHS = readExcelFile(data_path+address+'Historical Data.xlsx', header_=0, index_col_=0, sheet_name_=0)
+    file_path = data_path+address+'Historical Data.xlsx'
+    IHS = readExcelFile(file_path, header_=0, index_col_=0, sheet_name_=0)
+    if PRESENT(file_path):
+        label = IHS['Label']
+        return IHS, label, note, footnote
 
     US_t = pd.DataFrame()
     new_item_t0 = []
@@ -3302,7 +3156,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
         new_item_t0.append(float(production.replace(',','')))
         new_item_t1.append(float(rate))
         new_index_t.append(date)
-        #print('"'+date+'"', '"'+production+' net tons"','"'+rate+' percent"')
+        #logging.info('"'+date+'" "'+production+' net tons" "'+rate+' percent"')
         delta+=7
     sys.stdout.write("\n\n")
 
@@ -3328,7 +3182,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
                         try:
                             result2 = search2.find("div", class_="table-responsive cofax-article-body").text
                         except AttributeError:
-                            #print('Missing Data: '+res.text)
+                            #logging.info('Missing Data: '+res.text)
                             continue
                         production = re.sub(r'.+?([0-9,]+)\s+[nm]t[\s,\.].+', r"\1", re.sub(r'.+?([0-9,\.]+)\s+(million\s)*net\stons.+', r"\1", result2.replace('\n',''), 1), 1)
                         if bool(re.search(r'([0-9,]+)\s+mt\s', result2.replace('\n',''))):
@@ -3388,7 +3242,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
                                             found = True
                                             break
                                     if found == False:
-                                        #print('Date not found: '+DATE.strftime('%Y-%m-%d'))#2016-12-24, 2015-07-25, 2014-02-15, 2010-10-02
+                                        #logging.info('Date not found: '+DATE.strftime('%Y-%m-%d'))#2016-12-24, 2015-07-25, 2014-02-15, 2010-10-02
                                         checkDate = False
                                         if old_result.find(old_production) >= 0 or old_result.find(str(float(old_production.replace(',',''))/1000000)+' million') >= 0:
                                             if old_result.find(old_production) >= 0:
@@ -3396,7 +3250,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
                                             elif old_result.find(str(float(old_production.replace(',',''))/1000000)+' million') >= 0:
                                                 old_pro = str(float(old_production.replace(',',''))/1000000)+' million'
                                             old_ra = old_rate
-                                            #print(old_result.replace('\n','')[old_result.replace('\n','').find(old_pro)+9:])
+                                            #logging.info(old_result.replace('\n','')[old_result.replace('\n','').find(old_pro)+9:])
                                             old_production = re.sub(r'.+?([0-9,]+)\s+[nm]t[\s,\.].+', r"\1", re.sub(r'.+?([0-9,]+)\s+net\stons.+', r"\1", old_result.replace('\n','')[old_result.replace('\n','').find(old_pro)+9:], 1), 1)
                                             if bool(re.search(r'([0-9,]+)\s+mt\s', old_result.replace('\n',''))):
                                                 old_production = "{:,}".format(int(float(old_production.replace(',',''))*1.10231/1000)*1000)
@@ -3405,7 +3259,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
                                                 float(old_production.replace(',',''))
                                             except ValueError:
                                                 datestrf = DATE.strftime('%Y-%m-%d')
-                                                #print('Date not found: '+datestrf)
+                                                #logging.info('Date not found: '+datestrf)
                                                 delta+=7
                                             else:
                                                 if old_result.find(DATE.strftime('%B %d').replace(' 0',' ')) >= 0 and DATE.strftime('%Y-%m-%d') != '2008-11-08':
@@ -3415,7 +3269,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
                                                     new_item_t0.append(float(old_production.replace(',','')))
                                                     new_item_t1.append(float(old_rate))
                                                     new_index_t.append(datestrf)
-                                                    #print('"'+datestrf+'"', '"'+old_production+' net tons"','"'+old_rate+' percent"')
+                                                    #logging.info('"'+datestrf+'" "'+old_production+' net tons" "'+old_rate+' percent"')
                                                     delta+=7
                                             if checkDate == True and (old_result.find(DATE.strftime('%B %d').replace(' 0',' ')) >= 0 or old_result.find((DATE+timedelta(days=2)).strftime('%B %d').replace(' 0',' ')) >= 0):
                                                 DATEstrf = DATE.strftime('%B %d').replace(' 0',' ')
@@ -3427,11 +3281,11 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
                                                 new_item_t0.append(float(old_production.replace(',','')))
                                                 new_item_t1.append(float(old_rate))
                                                 new_index_t.append(datestrf)
-                                                #print('"'+datestrf+'"', '"'+old_production+' net tons"','"'+old_rate+' percent"')
+                                                #logging.info('"'+datestrf+'" "'+old_production+' net tons" "'+old_rate+' percent"')
                                                 delta+=7
                                         else:
                                             datestrf = DATE.strftime('%Y-%m-%d')
-                                            #print('Date not found: '+datestrf)
+                                            #logging.info('Date not found: '+datestrf)
                                             delta+=7
                                 else:
                                     date = date2
@@ -3440,7 +3294,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
                         new_item_t0.append(float(production.replace(',','')))
                         new_item_t1.append(float(rate))
                         new_index_t.append(datestrf)
-                        #print('"'+datestrf+'"', '"'+production+' net tons"','"'+rate+' percent"')
+                        #logging.info('"'+datestrf+'" "'+production+' net tons" "'+rate+' percent"')
                         delta+=7
                         old_result = result2
                         old_date = date
@@ -3461,7 +3315,7 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
             new_item_t0.append(float(production))
             new_item_t1.append(float(rate))
             new_index_t.append(date)
-            #print('"'+date+'"', '"'+"{:,}".format(production)+' net tons"','"'+str(rate)+' percent"')
+            #logging.info('"'+date+'" "'+"{:,}".format(production)+' net tons" "'+str(rate)+' percent"')
             delta+=7
             if date == '1963-01-05':
                 begin = True
@@ -3478,64 +3332,79 @@ def US_AISI(data_path, address, fname, steelorbis_year='2019'):
     US_t.insert(loc=1, column='Label', value=new_label_t)
     US_t.insert(loc=2, column='unit', value=new_unit_t)
     US_t = US_t.set_index('Index', drop=False)
+    US_t.index = US_t.index.rename('index')
     label = US_t['Label']
 
-    US_t.to_excel(data_path+address+'Historical Data.xlsx', sheet_name='Weekly_Sat')
+    US_t.to_excel(file_path, sheet_name='Weekly_Sat')
     return US_t, label, note, footnote
 
-def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None, index_col=None, skiprows=None, transpose=True, usecols=None, prefix=None, nrows=None, chrome=None):
-    if fname.find('http') >= 0:
-        US_t = {}
-        revised_year = str(datetime.today().year-1)
-        original_year = str(datetime.today().year)
-        chrome.get(fname)
-        try:
-            revised = chrome.find_elements_by_xpath('.//table[caption/text()="Revised estimates"]/tbody/tr[td/text()="'+revised_year+'"]/td/a')
-        except:
-            print('Revised estimates data not found.')
-        else:
-            for element in revised:
-                if element.get_attribute('href').find('week') >= 0:
-                    element.click()
-                    sname_r = sname+revised_year+'tot'
-                    US_t[revised_year] = US_WEBDRIVER(chrome, address, fname, sname_r, header=header, index_col=index_col, skiprows=skiprows, usecols=usecols, csv=False)
-                    break
-        try:
-            original = chrome.find_elements_by_xpath('.//table[caption/text()="Original estimates*"]/tbody/tr[td/text()="'+original_year+'"]/td/a')
-        except:
-            print('Revised estimates data not found.')
-        else:
-            for element in original:
-                if element.get_attribute('href').find('week') >= 0:
-                    element.click()
-                    sname_o = sname+'forecast'+original_year+'tot'
-                    US_t[original_year] = US_WEBDRIVER(chrome, address, fname, sname_o, header=header, index_col=index_col, skiprows=skiprows, usecols=usecols, csv=False)
-                    break
-    elif x == 'csv':
-        US_t = readFile(data_path+address+fname+'.csv', header_=header, index_col_=index_col, skiprows_=skiprows, acceptNoFile=False, usecols_=usecols)
+def US_EIAIRS(Series, data_path, address, fname, sname, freq, tables=None, x='', header=None, index_col=None, skiprows=None, transpose=True, usecols=None, prefix=None, chrome=None):
+    US_his = pd.DataFrame()
+    if x == 'csv':
+        csv = True
+        file_path = data_path+address+sname+'.csv'
     else:
-        US_t = readExcelFile(data_path+address+fname+'.xls'+x, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=sname, acceptNoFile=False, usecols_=usecols, nrows_=nrows)
+        csv = False
+        file_path = data_path+address+sname+'.xls'+x
+    if PRESENT(file_path):
+        if csv == True:
+            US_t = readFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, usecols_=usecols)
+        else:
+            if len(tables) == 1:
+                US_t = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=tables[0], usecols_=usecols)
+            else:
+                US_t = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=tables, usecols_=usecols)
+            if str(sname).find('weekprod') >= 0:
+                US_his = US_t
+                US_t = {}
+    else:
+        if str(sname).find('weekprod') < 0:
+            sname_t = sname
+            if str(sname).find('crushed_stone') >= 0:
+                sname_t = sname.replace('_historical_data','_present_data')
+                header = [0,1,2]
+                skiprows = list(range(5))
+                tables = ['T1']
+            US_t = US_WEB(chrome, address, fname, sname_t, freq=freq, header=header, index_col=index_col, skiprows=skiprows, tables=tables, csv=csv, excel=x, usecols=usecols)
+            if str(sname).find('crushed_stone') >= 0:
+                US_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0, usecols_=usecols)
+        else:
+            US_original = US_WEB(chrome, address, fname, sname.replace('_historical','_original'), freq=freq, header=[0], index_col=index_col, skiprows=skiprows, csv=False, excel='', usecols=usecols, file_name='Original estimates')
+            US_revised = US_WEB(chrome, address, fname, sname.replace('_historical','_revised'), freq=freq, header=[0], index_col=index_col, skiprows=skiprows, csv=False, excel='', usecols=usecols, file_name='Revised estimates')
+            US_t = {'Original':US_original,'Revised':US_revised}
+            US_his = readExcelFile(file_path, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=0, usecols_=usecols)
+
     if type(US_t) != dict and US_t.empty == True:
-        ERROR('Sheet Not Found: '+data_path+address+fname+'.xls'+x+', sheet name: '+str(sname))  
-    if fname.find('table') >= 0:
-        note, footnote = US_NOTE(US_t.index, sname, address=address)
+        ERROR('Sheet Not Found: '+file_path+', sheet name: '+str(tables))  
+    if str(sname).find('table') >= 0:
+        note, footnote = US_NOTE(US_t.index, sname, address=address, getfootnote=False)
     else:
         note = []
         footnote = []
     if transpose == True:
-        US_t = US_t.T
+        if type(US_t) == dict:
+            for key in US_t:
+                US_t[key] = US_t[key].T
+        else:
+            US_t = US_t.T
     PASS = ['state','nan']
     new_code_t = []
     new_label_t = []
     new_unit_t = []
     
-    if fname.find('PET') >= 0:
-        US_t.columns = [col+timedelta(days=1) if type(col) == pd._libs.tslibs.timestamps.Timestamp else col for col in US_t.columns]
-        for ind in range(US_t.shape[0]):
-            new_code_t.append(re.sub(r'^(.+?)NUS-Z00.+', r"\1", str(US_t.index[ind][0]).strip().replace('_', '')).strip())
-            new_label_t.append(re.sub(r'^(.+?)\s+\([^\)\(]+\)$', r"\1", str(US_t.index[ind][1]).strip()).strip())
-            new_unit_t.append(re.sub(r'.+?\s+\(([^\)\(]+)\)$', r"\1", str(US_t.index[ind][1]).strip()).strip())
-    elif fname.find('electricity') >= 0:
+    if str(sname).find('PET') >= 0:
+        US_new = pd.DataFrame()
+        if type(US_t) != dict:
+            US_t = {'1':US_t}
+        for key in US_t:
+            US_t[key].columns = [col+timedelta(days=1) if type(col) == pd._libs.tslibs.timestamps.Timestamp else col for col in US_t[key].columns]
+            for ind in range(US_t[key].shape[0]):
+                new_code_t.append(re.sub(r'^(.+?)NUS-Z00.+', r"\1", str(US_t[key].index[ind][0]).strip().replace('_', '')).strip())
+                new_label_t.append(re.sub(r'^(.+?)\s+\([^\)\(]+\)$', r"\1", str(US_t[key].index[ind][1]).strip()).strip())
+                new_unit_t.append(re.sub(r'.+?\s+\(([^\)\(]+)\)$', r"\1", str(US_t[key].index[ind][1]).strip()).strip())
+            US_new = pd.concat([US_new, US_t[key]])
+        US_t = US_new
+    elif str(sname).find('electricity') >= 0:
         for ind in range(US_t.shape[0]):
             if str(US_t.index[ind]).find(':') < 0:
                 new_code_t.append('nan')
@@ -3545,7 +3414,11 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
                 new_code_t.append(prefix+re.sub(r'.+?\-([A-Z]+)\..+$', r"\1", US_t.iloc[ind]['source key']))
                 new_label_t.append(Series['DATA TYPES'].loc[prefix, 'dt_desc']+',  '+re.sub(r'.+?:\s+(.+)$', r"\1", str(US_t.index[ind]).title()).strip())
                 new_unit_t.append(US_t.iloc[ind]['units'].title())
-    elif fname.find('Table') >= 0:
+    elif str(sname).find('Table') >= 0:
+        if freq == 'A':
+            US_t = US_t['Annual Data']
+        elif freq == 'M':
+            US_t = US_t['Monthly Data']
         for ind in range(US_t.shape[0]):
             suffix = ''
             for item in list(Series['CATEGORIES']['name']):
@@ -3569,7 +3442,7 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
                 new_unit_t.append('nan')
             else:
                 new_code_t.append(prefix+suffix)
-    elif fname.find('table') >= 0:
+    elif str(sname).find('table') >= 0:
         US_t.columns = [str(col) for col in US_t.columns]
         for ind in range(US_t.shape[0]):
             suffix = ''
@@ -3600,19 +3473,12 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
                 new_unit_t.append('nan')
             else:
                 new_code_t.append(prefix+suffix)
-    elif (fname.find('weekprod') >= 0 or str(sname).find('weekprod') >= 0) and freq == 'W':
-        US_new = pd.DataFrame()
-        last_week = pd.DataFrame()
-        first_concat = False
-        last_remain = False
+    elif str(sname).find('weekprod') >= 0 and freq == 'W':
         for date in US_t:
             sys.stdout.write("\rLoading...("+str(round((list(US_t.keys()).index(date)+1)*100/len(US_t.keys()), 1))+"%)*")
             sys.stdout.flush()
             
-            if fname.find('histot') >= 0 or fname.find('http') >= 0:
-                year = re.sub(r'.*?([0-9]{4}).*', r"\1", date)
-            else:
-                year = re.sub(r'.*?([0-9]{4}).*', r"\1", fname)
+            year = re.sub(r'.*?([0-9]{4}).*', r"\1", str(US_t[date].columns[0]).replace('\n',''))
             new_ind = []
             for ind in range(US_t[date].shape[0]):
                 found = False
@@ -3631,8 +3497,6 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
                             break
                     if to_pass == False:
                         ERROR('Category item code not found: '+date+'-"'+str(US_t[date].index[ind])+'"')
-                    if str(US_t[date].index[ind]).strip().lower() == 'state':
-                        new_ind.append('Week')
                     else: 
                         new_ind.append(None)    
             US_t[date].index = new_ind
@@ -3640,9 +3504,8 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
             US_t[date] = US_t[date].loc[US_t[date].index.dropna()]
 
             previous_week = ''
-            NO_LAST_REMAIN = False
             if datetime.now().year - int(year) <= 1:
-                for item in list(US_t[date].loc['Week']):
+                for item in US_t[date].columns:
                     try:
                         week_num = int(re.sub(r'.*?[Ww]eek\s+([0-9]+).*', r"\1", str(item).replace('\n', '')))
                     except ValueError:
@@ -3651,62 +3514,33 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
             else:
                 date_range = pd.date_range(start=year+'-01-01',end=year+'-12-31',freq='W-SAT').strftime('%Y-%m-%d')
             if len(date_range) == 53:
-                NO_LAST_REMAIN = True
                 FIT = False
-                for item in list(US_t[date].loc['Week']):
+                for item in US_t[date].columns:
                     if bool(re.search(r'[Ww]eek 53', str(item))):
                         FIT = True
                         break
                 if FIT == False:
-                    if last_remain == False:
-                        ERROR('Length of date range does not meet the week number of year '+year)
-                    first_concat = False
-                    last_week.columns = [0]
-                    US_t[date] = pd.concat([last_week, US_t[date]], axis=1)
-                    last_remain = False
+                    ERROR('Length of date range does not meet the week number of year '+year)
             for col in US_t[date].columns:
                 WEEK = False
-                for item in list(US_t[date][col]):
-                    if type(item) == datetime:
-                        US_t[date].loc[US_t[date].loc[US_t[date][col] == item].index[0], col] = item.strftime('%Y-%m-%d')
-                    if bool(re.search(r'[Ww]eek 0*1[^0-9]*$', str(item))) and first_concat == True:
-                        first_week = pd.concat([last_week, US_t[date][col]], axis=1).sum(axis=1)
-                        last_remain = False
-                    elif bool(re.search(r'[Ww]eek 53', str(item))) and NO_LAST_REMAIN == False:
-                        last_remain = True
-                        last_week = pd.DataFrame(US_t[date][col])
-                        break
-                    elif bool(re.search(r'[Ww]eek', str(item))):
-                        WEEK = True
-                        if str(item).lower() == previous_week:
-                            US_t[date][previous_col] = pd.concat([US_t[date][previous_col], US_t[date][col]], axis=1).sum(axis=1)
-                            WEEK = False
-                            #print(US_t[date][previous_col])
-                        previous_week = str(item).lower()
-                        previous_col = col
-                        break
+                if bool(re.search(r'[Ww]eek', str(col))):
+                    WEEK = True
+                    if str(col).lower() == previous_week:
+                        US_t[date][previous_col] = pd.concat([US_t[date][previous_col], US_t[date][col]], axis=1).sum(axis=1)
+                        WEEK = False
+                    previous_week = str(col).lower()
+                    previous_col = col
                 if WEEK == False:
                     US_t[date] = US_t[date].drop(columns=[col])
-            #print('first_concat',first_concat)
-            #print('last_remain',last_remain)
-            if first_concat == True:
-                if type(first_week) == type(None):
-                    ERROR('Data from end week of last year('+str(int(year)-1)+') has not been concated to data for the first week of this year: '+year+'.')
-                US_t[date] = pd.concat([first_week, US_t[date]], axis=1)
-                first_week = None
-            else:
-                first_week = None
-            if last_remain == False:
-                last_week = pd.DataFrame()
-                first_concat = False
-            else:
-                first_concat = True
             US_t[date].columns = date_range
             US_t[date] = US_t[date].sort_index(axis=1)
-            #print(US_t[date])
-            US_new = pd.concat([US_new, US_t[date]], axis=1)
+            US_his = pd.concat([US_t[date], US_his], axis=1)
+            US_his = US_his.loc[:, ~US_his.columns.duplicated()]
+            US_his = US_his.loc[:, US_his.columns.dropna()]
+            US_his = US_his.sort_index(axis=1)
         sys.stdout.write("\n\n")
-        US_t = US_new
+        US_his.to_excel(file_path, sheet_name=sname)
+        US_t = US_his
         for ind in range(US_t.shape[0]):
             suffix = ''
             description = str(US_t.index[ind])
@@ -3722,8 +3556,34 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
                 new_unit_t.append('nan')
             else:
                 new_code_t.append(prefix+suffix)
-    elif fname.find('crushed') >= 0:
-        US_t.columns = [int(re.sub(r'[a-z]+',"", col)) if type(col) == str else col for col in US_t.columns]
+    elif str(sname).find('crushed') >= 0:
+        if US_his.empty == False:
+            if type(US_t) != dict:
+                US_t = {'T1':US_t}
+            if len(US_t) == 0:
+                ERROR('Download File was not correctly input.')
+            for yr in US_t:
+                US_t[yr] = US_t[yr].dropna(how='all')
+                US_t[yr].index = ['Total' if str(dex).lower().find('total') >= 0 else None for dex in US_t[yr].index]
+                US_t[yr] = US_t[yr].loc[US_t[yr].index.dropna()]
+                year = None
+                category = ''
+                target_column = None
+                for col in US_t[yr].columns:
+                    if str(col[0]).isnumeric():
+                        year = int(col[0])
+                    if str(col[1]).find('Unnamed') < 0:
+                        category = str(col[1]).strip()
+                    if category.find('Quantity') >= 0 and str(col[2]).find('1st–4th') >=0:
+                        target_column = col
+                        break
+                if year == None:
+                    ERROR('Year Not Found in the table.')
+                if target_column == None:
+                    ERROR('The target column Not Found.')
+                US_his.loc['Production', year] = float(US_t[yr].loc['Total', target_column])/1000
+            US_his.to_excel(file_path, sheet_name=sname)
+            US_t = US_his
         for ind in range(US_t.shape[0]):
             new_code_t.append(prefix+'PD')
             new_label_t.append(Series['DATA TYPES'].loc[prefix, 'dt_desc'])
@@ -3771,16 +3631,21 @@ def US_EIAIRS(Series, data_path, address, fname, sname, freq, x='', header=None,
 def US_SEMI(data_path, address, fname, freq, chrome):
     note = []
     footnote = []
+    FREQ = {'M':'Monthly','Q':'Quarterly'}
     
     US_t = pd.DataFrame()
     new_index_t = []
     new_dataframe = []
     if freq == 'M':
-        IHS = readExcelFile(data_path+address+'Historical Data.xlsx', header_=0, index_col_=0, sheet_name_=0)
+        file_path = data_path+address+'Historical Data.xlsx'
+        IHS = readExcelFile(file_path, header_=0, index_col_=0, sheet_name_=0)
+        IHS.columns = [col.strftime('%Y-%m') if type(col) == datetime else col for col in IHS.columns]
+        if PRESENT(file_path):
+            label = IHS['Label']
+            return IHS, label, note, footnote
         new_code_t = list(IHS.index)
         new_label_t = list(IHS['Label'])
         new_unit_t = list(IHS['unit'])
-        IHS.columns = [col.strftime('%Y-%m') if type(col) == datetime else col for col in IHS.columns]
         new_item_t = {'Billings':[], 'Bookings':[], 'BooktoBill':[]}
         latest = True
         Booking_latest = True
@@ -3808,7 +3673,7 @@ def US_SEMI(data_path, address, fname, freq, chrome):
                                     result2 = result2.set_axis(result2.iloc[0], axis='columns').drop(index=['col'])
                                 result2 = result2.loc[result2.index.dropna()]
                             except ValueError:
-                                print('Missing Data:'+res.text.replace('\n',' '))
+                                logging.info('Missing Data:'+res.text.replace('\n',' '))
                                 continue
                             BooktoBill = False
                             for col in range(result2.shape[1]):
@@ -3850,7 +3715,7 @@ def US_SEMI(data_path, address, fname, freq, chrome):
                                             elif str(result2.iloc[ind].index[col]).find('Year-Over-Year') >= 0:
                                                 continue
                                             else:
-                                                print('Unknown Data Exists: '+str(result2.iloc[ind].index[col]))
+                                                logging.info('Unknown Data Exists: '+str(result2.iloc[ind].index[col]))
                                         break
                                 try:
                                     datestrf = datestrp.strftime('%Y-%m')
@@ -3920,11 +3785,15 @@ def US_SEMI(data_path, address, fname, freq, chrome):
         for key in new_item_t:
             new_dataframe.append(new_item_t[key])
     elif freq == 'Q':
-        IHS = readExcelFile(data_path+address+'Historical DataQ.xlsx', header_=0, index_col_=0, sheet_name_=0)
+        file_path = data_path+address+'Historical DataQ.xlsx'
+        IHS = readExcelFile(file_path, header_=0, index_col_=0, sheet_name_=0)
+        IHS.columns = [pd.Timestamp(col).to_period('Q').strftime('%Y-Q%q') if type(col) == datetime else col for col in IHS.columns]
+        if PRESENT(file_path):
+            label = IHS['Label']
+            return IHS, label, note, footnote
         new_code_t = list(IHS.index)
         new_label_t = list(IHS['Label'])
         new_unit_t = list(IHS['unit'])
-        IHS.columns = [pd.Timestamp(col).to_period('Q').strftime('%Y-Q%q') if type(col) == datetime else col for col in IHS.columns]
         new_item_t = []
         chrome.get(fname)
         search = BeautifulSoup(chrome.page_source, "html.parser")
@@ -3932,18 +3801,19 @@ def US_SEMI(data_path, address, fname, freq, chrome):
             result = pd.read_html(chrome.page_source)[0]
             result = result.set_index([result.columns[0]])
         except ValueError:
-            print('Table not found in '+fname)
+            logging.info('Table not found in '+fname)
         for ind in range(result.shape[0]):
             if str(result.index[ind]).isnumeric():
                 for col in range(result.iloc[ind].shape[0]):
                     if bool(re.search(r'Q[1-4]', str(result.iloc[ind].iloc[col]))):
                         date = str(result.index[ind])+'-'+re.sub(r'.*?(Q[1-4]).*', r"\1", str(result.iloc[ind].iloc[col]))
                         shipment = re.sub(r'(Q[1-4])', "", str(result.iloc[ind].iloc[col])).strip()
-                        #print('"'+date+'"', '"'+shipment+' Millions of Square Inches"')
+                        #logging.info('"'+date+'" "'+shipment+' Millions of Square Inches"')
                         new_index_t.append(date)
                         new_item_t.append(float(shipment.replace(',','')))
                     else:
-                        print('Unknown Data Exists: '+str(result.iloc[ind].index[col]))
+                        continue
+                        #logging.info('Unknown Data Exists: year = '+str(result.index[ind])+', column = '+str(result.iloc[ind].index[col]))
         sys.stdout.write("\n\n")
         new_dataframe.append(new_item_t)
     
@@ -3956,8 +3826,1307 @@ def US_SEMI(data_path, address, fname, freq, chrome):
     US_t.insert(loc=1, column='Label', value=new_label_t)
     US_t.insert(loc=2, column='unit', value=new_unit_t)
     US_t = US_t.set_index('Index', drop=False)
+    US_t.index.name = 'index'
     label = US_t['Label']
-    if freq == 'M':
-        US_t.to_excel(data_path+address+'Historical Data.xlsx', sheet_name='Monthly')
+    US_t.to_excel(file_path, sheet_name=FREQ[freq])
     
     return US_t, label, note, footnote
+
+def US_POPT(chrome, website, data_path, address, fname, sname):
+    file_path = data_path+address+fname+' - '+sname+'.txt'
+    if PRESENT(file_path) == False:
+        modified = pd.Series(np.array([datetime.now().strftime('%Y-%m-%d, %H:%M:%S')]))
+        FILE = {'Civilian Population':'c', 'Resident Population':'r', 'Resident population plus Armed Forces overseas':'p'}
+        SHEET = {'Total':'TOT_POP', 'Male':'TOT_MALE', 'Female':'TOT_FEMALE'}
+        try:
+            xl = win32.gencache.EnsureDispatch('Excel.Application')
+        except:
+            xl = win32.DispatchEx('Excel.Application')
+        xl.DisplayAlerts=False
+        xl.Visible = 1
+        US_his = xl.Workbooks.Open(Filename=os.path.realpath(data_path+address+fname+'.xlsx'))
+        Sheet = US_his.Worksheets(sname)
+        Sheet.Activate()
+
+        chrome.get(website)
+        link_list = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
+        target_year = 1900
+        target_link = None
+        for link in link_list:
+            if link.get_attribute('href')[-5:-1].isnumeric() and int(link.get_attribute('href')[-5:-1]) > target_year:
+                target_year = int(link.get_attribute('href')[-5:-1])
+                target_link = link
+        if target_link == None:
+            ERROR('Target Link Not Found in the website.')
+        target_link.click()
+        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='national')
+        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='asrh')
+        link_list2 = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
+        target_number = 0
+        for link in link_list2:
+            suffix_number = re.sub(r'.*?\-file([0-9]+)\.csv.*', r"\1", link.get_attribute('href').lower())
+            if link.get_attribute('href').lower().find(FILE[fname]+'-file') >= 0 and int(suffix_number) > target_number:
+                target_number = int(suffix_number)
+        if target_number == 0:
+            ERROR('Target Number Not Found.')
+        for i in range(2, target_number+1, 2):
+            logging.info('Reading Data: '+FILE[fname]+'-file'+str(i).rjust(2,'0')+'.csv')
+            alldata_path = data_path+address+'historical/'+FILE[fname]+'-file'+str(i).rjust(2,'0')+'.csv'
+            if PRESENT(alldata_path):
+                US_temp = readFile(alldata_path, header_=[0])[['MONTH','YEAR','AGE',SHEET[sname]]]
+            else:
+                US_temp = US_WEB(chrome, address+'historical/', chrome.current_url, FILE[fname]+'-file'+str(i).rjust(2,'0'), header=[0], csv=True, file_name=FILE[fname]+'-file'+str(i).rjust(2,'0'))[['MONTH','YEAR','AGE',SHEET[sname]]]
+            file_year = int(US_temp.iloc[0]['YEAR'])
+            US_temp = US_temp.loc[US_temp['MONTH'] == 7].set_index('AGE')[SHEET[sname]]
+            
+            target_col = None
+            for col in range(2, Sheet.UsedRange.Columns.Count+1):
+                if Sheet.Cells(3, col).Value == file_year:
+                    target_col = col
+                    break
+            if target_col == None:
+                select = Sheet.Range(Sheet.Cells(3,Sheet.UsedRange.Columns.Count), Sheet.Cells(140,Sheet.UsedRange.Columns.Count)).Select()
+                copy = xl.Selection.Copy(Destination=Sheet.Range(Sheet.Cells(3,Sheet.UsedRange.Columns.Count+1), Sheet.Cells(140,Sheet.UsedRange.Columns.Count+1)))
+                target_col = Sheet.UsedRange.Columns.Count
+                Sheet.Cells(3,target_col).Value = file_year
+                clearContents = Sheet.Range(Sheet.Cells(4,target_col), Sheet.Cells(105,target_col)).ClearContents()
+            for ind in range(4, 106):
+                if str(Sheet.Cells(ind, 1).Value) == 'Total Population':
+                    target_index = 999
+                elif str(Sheet.Cells(ind, 1).Value) == 'Under 1 year old':
+                    target_index = 0
+                else:
+                    target_index = int(re.sub(r'(^[0-9]+).*', r"\1", str(Sheet.Cells(ind, 1).Value)))
+                try:
+                    Sheet.Cells(ind, target_col).Value = int(US_temp.loc[target_index])
+                except MemoryError:
+                    print(ind, target_col, Sheet.Cells(ind, target_col).Value)
+                    ERROR('Memory Error: '+str(US_temp.loc[target_index]))
+        US_his.Save()
+        US_his.Close()
+        xl.Quit()
+        modified.to_csv(file_path, header=False, index=False)
+
+def US_FTD_NEW(chrome, data_path, address, fname, Series, prefix, middle, suffix, freq, trans, Zip_table, excel='x', skip=None, head=None, index_col=None, usecols=None, names=None, multi=None, final_name=None, ft900_name=None):
+    
+    note = []
+    footnote = []
+    datatype = ['']
+    AMV = ['']
+    fname_t = fname
+    if final_name != None and ft900_name != None and str(final_name).find('cy') < 0:
+        fname_t = fname+'_'+freq
+    if fname.find('UGDSSITC') >= 0 or fname.find('UAMVCSB') >= 0:
+        datatype = ['EX', 'IM']
+    if fname.find('UAMVCSB') >= 0:
+        AMV = ['AMV', 'PSC', 'TBV', 'PAR']
+    for data in datatype:
+        for auto in AMV:
+            US_t = US_FTD_HISTORICAL(chrome, data_path, address, fname, fname_t, Series, prefix, middle, suffix, freq, trans, Zip_table, excel=excel, skip=skip, head=head, index_col=index_col, usecols=usecols, names=names, multi=multi, datatype=data, AMV=auto, final_name=final_name, ft900_name=ft900_name)
+    
+    US_t = US_t.sort_values(by=['order','Label'])
+    US_t = US_t.loc[US_t.index.dropna()]
+    label = US_t['Label']
+
+    return US_t, label, note, footnote
+
+def US_FTD_HISTORICAL(chrome, data_path, address, fname, fname_t, Series, prefix, middle, suffix, freq, transpose, Zip_table, excel='x', skip=None, head=None, index_col=None, usecols=None, names=None, multi=None, datatype='', AMV='', final_name=None, ft900_name=None, start_year=2020):
+    PASS = ['nan', '(-)', 'Balance of Payment', 'Net Adjustments', 'Total, Census Basis', 'Total Census Basis', 'Item', 'Residual', 'Unnamed', 'Selected commodities', 'Country', 'TOTAL']
+    MONTH = ['January','February','March','April','May','June','July','August','September','October','November','December']
+    YEAR = ['Jan.-Dec.']
+    TYPE = {'EX': 'Exports', 'IM': 'Imports'}
+    EPYT = {'IM': 'Exports', 'EX': 'Imports'}
+    file_path = data_path+address+str(fname_t)+'_historical.xlsx'
+    US_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+    US_his.columns = [int(col) if str(col).isnumeric() else col for col in US_his.columns]
+    if datatype != '' and AMV == '':
+        logging.info('Category: '+TYPE[datatype])
+    elif datatype != '' and AMV != '':
+        logging.info('Category: '+TYPE[datatype]+' of '+AMV)
+    
+    update = True
+    if PRESENT(file_path) == True:
+        update = False
+    else:
+        PERIOD = {'final':range(start_year, datetime.today().year),'ft900':list(range(datetime.today().month, 13))+list(range(1, datetime.today().month))}
+        FNAME = {'final':final_name, 'ft900':ft900_name}
+        last_year_monthly = True
+    
+    if update == True:
+        if fname.find('AGDSEXCSB') >= 0 or fname.find('AGDSIMCSB') >= 0 or fname.find('UGDSSITC') >= 0:
+            suffix_t = suffix
+        for key in ['final','ft900']:
+            if FNAME[key] == None:
+                continue
+            for period in PERIOD[key]:
+                if period >= datetime.today().month:
+                    if last_year_monthly == True:
+                        last_year = True
+                    else:
+                        continue
+                else:
+                    last_year = False
+                if last_year == True:
+                    process_year = datetime.today().year-1
+                else:
+                    process_year = datetime.today().year
+                if key == 'final':
+                    logging.info('Reading file: '+Zip_table.at[(address+key,fname), 'Zipname']+str(period).rjust(2,'0')+'\n')
+                elif key == 'ft900':
+                    logging.info('Reading file: '+Zip_table.at[(address+key,fname), 'Zipname']+'_'+str(process_year)[-2:]+str(period).rjust(2,'0')+'\n')
+                KEYWORD = {'final':'finalxls','ft900':str(process_year)[-2:]+str(period).rjust(2,'0')+'.zip'}
+                REVISION = {'exh14cy':period,'exh14py':period-1,'exh14ppy':period-2,'exh17cy':period,'exh17py':period-1,'exh17ppy':period-2}
+                Zip_path = data_path+re.sub(r'FTD[EC]/', "", address)+'historical_data/'+Zip_table.at[(address+key,fname), 'Zipname']+str(period).rjust(2,'0')+'.zip'
+                if PRESENT(Zip_path):
+                    zf = zipfile.ZipFile(Zip_path,'r')
+                else:
+                    website = re.sub(r'[0-9]{4}pr', str(period)+"pr", Zip_table.at[(address+key,fname), 'website'])
+                    if key == 'final' and rq.get(website).status_code != 200:
+                        if period == datetime.today().year-1:
+                            last_year_monthly = True
+                            logging.info('Process data from monthly data of last year.')
+                        continue
+                    elif key == 'ft900':
+                        keydate = datetime.strptime(str(process_year)[-2:]+str(period).rjust(2,'0'), '%y%m').strftime('%B %Y')
+                        if BeautifulSoup(rq.get(website).text, "html.parser").text.find(keydate) < 0:
+                            continue
+                    zipname = US_WEB(chrome, re.sub(r'FTD[EC]/', "", address)+'historical_data/', website, Zip_table.at[(address+key,fname), 'Zipname']+str(period).rjust(2,'0'), Table=Zip_table, Zip=True, file_name=KEYWORD[key])
+                    zf = zipfile.ZipFile(Zip_path,'r')
+                if key == 'final' and period == datetime.today().year-1 and PRESENT(Zip_path):
+                    last_year_monthly = False
+                for ffname in FNAME[key]:
+                    key_fname = ffname+'.xls'+excel
+                    if key_fname not in zf.namelist():
+                        key_fname = ffname+'.xls'
+                        if key_fname not in zf.namelist():
+                            continue
+                    US_temp = readExcelFile(zf.open(key_fname), skiprows_=skip, header_=head, index_col_=index_col, sheet_name_=0, usecols_=usecols, names_=names)
+                    if fname == 'AGDSCSB' or fname == 'UGDSCSB' or fname == 'UPPCO':
+                        US_temp = readExcelFile(zf.open(key_fname), skiprows_=skip, header_=head, sheet_name_=0, usecols_=usecols, names_=names)
+                        US_temp = US_temp.set_index(US_temp.columns[0])
+                    
+                    new_index = []
+                    new_label = pd.Series(dtype=str)
+                    new_order = pd.Series(dtype=int)
+                    if transpose == True:
+                        US_temp = US_temp.T
+                        new_columns = []
+                        year = 0
+                        for col in US_temp.columns:
+                            if str(col).strip().isnumeric():
+                                year = str(col).strip()
+                            if freq == 'A' and re.sub(r'\s+\([A-Z]+\)\s*$', "", str(col)).replace(' ', '').strip() in YEAR:
+                                new_columns.append(int(year))
+                            elif freq == 'M' and re.sub(r'\s+\([A-Z]+\)\s*$|\s*\.\s*$', "", str(col)).strip() in MONTH:
+                                new_columns.append(year+'-'+str(datetime.strptime(re.sub(r'\s+\([A-Z]+\)\s*$|\s*\.\s*$', "", str(col)).strip(),'%B').month).rjust(2,'0'))
+                            elif freq == 'A' and fname.find('SA') >= 0 and str(col).strip().isnumeric():
+                                new_columns.append(int(year))
+                            else:
+                                new_columns.append(None)
+                        US_temp.columns = new_columns
+                        US_temp = US_temp.loc[:, US_temp.columns.dropna()]
+                        US_temp = US_temp.loc[:, ~US_temp.columns.duplicated()]
+                    if fname == 'ABOP3':
+                        US_temp.index = pd.MultiIndex.from_arrays([US_temp.index.get_level_values(0), US_temp.index.get_level_values(1).str.replace(r'\s*Census Basis.*', '', regex=True)])
+                        US_temp.index = pd.MultiIndex.from_tuples([[str(dex[0]).strip(), re.sub(r'\s+\([0-9]+\)\s*$', "", str(dex[1])).strip()] for dex in US_temp.index])
+                        for dex in US_temp.index:
+                            middle = ''
+                            if dex[0] in list(Series['DATA TYPES']['dt_desc']):
+                                suf = Series['DATA TYPES'].loc[Series['DATA TYPES']['dt_desc'] == dex[0]].index[0]+suffix
+                                for item in list(Series['CATEGORIES']['name']):
+                                    if dex[1] in re.split(r'//', item):
+                                        middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item].index[0]
+                                        new_label.loc[prefix+middle+suf] = Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suf[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix, 'geo_desc']
+                                        new_order.loc[prefix+middle+suf] = Series['CATEGORIES'].loc[middle, 'order']
+                            else:
+                                ERROR('Item index not found in '+fname+': '+dex[0])
+                            if middle == '':
+                                if dex[1] not in PASS:
+                                    ERROR('Item index not found in '+fname+': '+dex[1])
+                                else:
+                                    new_index.append(None)
+                            else:
+                                new_index.append(prefix+middle+suf)
+                        US_temp.index = new_index
+                    elif fname.find('ASRVEXBOP') >= 0 or fname.find('ASRVIMBOP') >= 0:
+                        US_temp.index = [re.sub(r'\(.+\)|:', "", str(dex).replace('\n','')).strip() for dex in US_temp.index]
+                        for dex in US_temp.index:
+                            middle = ''
+                            for item in list(Series['CATEGORIES']['name']):
+                                if dex in re.split(r'//', item):
+                                    middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item].index[0]
+                                    new_label.loc[prefix+middle+suffix] = Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suffix[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc']
+                                    new_order.loc[prefix+middle+suffix] = Series['CATEGORIES'].loc[middle, 'order']
+                            if middle == '':
+                                if dex not in PASS:
+                                    ERROR('Item index not found in '+fname+': '+dex)
+                                else:
+                                    new_index.append(None)
+                            else:
+                                new_index.append(prefix+middle+suffix)
+                        US_temp.index = new_index
+                    elif fname == 'AGDSCSB' or fname == 'UGDSCSB':
+                        new_index_t = []
+                        trade = ''
+                        for dex in US_temp.index:
+                            if str(dex[0]) != 'nan' and str(dex[0]).find('Unnamed') < 0:
+                                trade = str(dex[0]).strip()
+                            new_index_t.append([trade, str(dex[1]).strip()])
+                        US_temp.index = pd.MultiIndex.from_tuples(new_index_t)
+                        add_value = []
+                        for ind in range(US_temp.shape[1]):
+                            TBOP = str(US_temp.loc[('Balance', 'Total Balance of Payments Basis'), US_temp.columns[ind]])
+                            TCSB = str(US_temp.loc[('Balance', 'Total Census Basis'), US_temp.columns[ind]])
+                            if US_temp.columns[ind] == 'nan':
+                                add_value.append(None)
+                            elif TBOP != 'nan' and TCSB != 'nan' and TBOP.strip() != '' and TCSB.strip() != '':
+                                add_value.append(US_temp.loc[('Balance', 'Total Balance of Payments Basis'), US_temp.columns[ind]]-US_temp.loc[('Balance', 'Total Census Basis'), US_temp.columns[ind]])
+                            else:
+                                add_value.append(None)
+                        US_new = pd.DataFrame([add_value], columns=US_temp.columns, index=[('Balance', 'Net Adjustments')])
+                        US_temp = pd.concat([US_temp, US_new])
+                        US_temp.index = pd.MultiIndex.from_arrays([US_temp.index.get_level_values(0), US_temp.index.get_level_values(1).str.replace(r'\s*Total Balance of Payments Basis.*', 'BOP', regex=True)])
+                        US_temp.index = pd.MultiIndex.from_tuples([[str(dex[0]).strip(), re.sub(r'\s+\([0-9]+\)\s*$', "", str(dex[1])).strip()] for dex in US_temp.index])
+                        suf = ''
+                        for dex in US_temp.index:
+                            suffix = ''
+                            if dex[0] in list(Series['DATA TYPES']['dt_desc']):
+                                suf = Series['DATA TYPES'].loc[Series['DATA TYPES']['dt_desc'] == dex[0]].index[0]
+                            for item in list(Series['GEO LEVELS']['name']):
+                                if dex[1] in re.split(r'//', item):
+                                    suffix = suf+Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item].index[0]
+                                    break
+                            if suffix == '' and dex[1] != 'Total Balance of Payments Basis':
+                                ERROR('Item index not found in '+fname+': '+dex[1])
+                            elif suffix == '' and dex[1] == 'Total Balance of Payments Basis':
+                                new_index.append(None)
+                            else:
+                                new_index.append(prefix+middle+suffix)
+                                new_label.loc[prefix+middle+suffix] = Series['DATA TYPES'].loc[suffix[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc']
+                                new_order.loc[prefix+middle+suffix] = Series['CATEGORIES'].loc[middle, 'order']
+                        US_temp.index = new_index
+                    elif fname.find('AGDSEXCSB') >= 0 or fname.find('AGDSIMCSB') >= 0 or fname.find('UGDSSITC') >= 0:
+                        typeCorrect = False
+                        if fname.find('CSB_M') >= 0:
+                            US_temp.columns = [re.sub(r'\s+\([A-Z]+\)\s*', "", str(US_temp.iloc[1].iloc[m])+'-'+\
+                                str(datetime.strptime(re.sub(r'\s+\([A-Z]+\)\s*', "", str(US_temp.iloc[0].iloc[m])).strip(),'%B').month).rjust(2,'0')) for m in range(US_temp.shape[1])]
+                        elif fname.find('CSB_A') >= 0:
+                            US_temp.columns = [int(re.sub(r'\s*Annual\s*', "", str(US_temp.columns[y]).strip())) for y in range(US_temp.shape[1])]
+                        elif fname.find('SITC_A') >= 0:
+                            cols = [int(US_temp.iloc[0].iloc[m]) for m in range(0, 6, 2)]
+                            if datatype == 'EX':
+                                US_temp = US_temp[[1, 3, 5]]
+                            elif datatype == 'IM':
+                                US_temp = US_temp[[2, 4, 6]]
+                            US_temp.columns = cols
+                        elif fname.find('SITC_M') >= 0 and key == 'ft900':
+                            US_temp = US_temp.drop(US_temp.index[[0]])
+                            if str(US_temp.iloc[0].iloc[2]).isnumeric():
+                                cols = [str(US_temp.iloc[0].iloc[0])+'-'+str(datetime.strptime(str(US_temp.iloc[1].iloc[0]).strip(),'%B').month).rjust(2,'0')]+[str(US_temp.iloc[0].iloc[2])+'-'+str(datetime.strptime(str(US_temp.iloc[1].iloc[2]).strip(),'%B').month).rjust(2,'0')]
+                            else:
+                                cols = [str(US_temp.iloc[0].iloc[0])+'-'+str(datetime.strptime(str(US_temp.iloc[1].iloc[m]).strip(),'%B').month).rjust(2,'0') for m in [0, 2]]
+                            if datatype == 'EX':
+                                if TYPE[datatype] in list(US_temp[3]) and EPYT[datatype] not in list(US_temp[4]):
+                                    typeCorrect = True
+                                US_temp = US_temp[[1, 4]]
+                            elif datatype == 'IM':
+                                if TYPE[datatype] in list(US_temp[5]) and EPYT[datatype] not in list(US_temp[6]):
+                                    typeCorrect = True
+                                US_temp = US_temp[[2, 6]]
+                            US_temp.columns = cols
+                        elif fname.find('SITC_M') >= 0 and key == 'final':
+                            cols = [str(REVISION[ffname])+'-'+str(datetime.strptime(str(US_temp.iloc[0].iloc[m]).strip(),'%B').month).rjust(2,'0') for m in range(0, US_temp.shape[1], 2)]
+                            if datatype == 'EX':
+                                US_temp = US_temp[[m for m in range(1, US_temp.shape[1]+1, 2)]]
+                            elif datatype == 'IM':
+                                US_temp = US_temp[[m for m in range(2, US_temp.shape[1]+1, 2)]]
+                            US_temp.columns = cols
+                        US_temp = US_temp.sort_index(axis=1)
+                        if datatype != '':
+                            for col in range(US_temp.shape[1]):
+                                if TYPE[datatype] not in list(US_temp[US_temp.columns[col]]) and typeCorrect == False:
+                                    logging.info(US_temp)
+                                    ERROR('Incorrect columns were chosen: '+str(period).rjust(2,'0')+' '+TYPE[datatype])
+                        US_temp = US_temp.loc[US_temp.index.dropna()]
+                        new_ind = []
+                        REX = False
+                        for dex in US_temp.index:
+                            found = False
+                            if REX == True and datatype == 'EX':
+                                for item in reversed(list(Series['CATEGORIES']['name'])):
+                                    if re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(dex).strip())).strip()+', Re-exports' in re.split(r'//', item.strip()):
+                                        found = True
+                                        new_ind.append(Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item]['cat_desc'].item())
+                                        break
+                            elif REX == True and datatype == 'IM':
+                                found = True
+                                new_ind.append(None)
+                            else:
+                                for item in list(Series['CATEGORIES']['name']):
+                                    if re.sub(r'\s+', " ", re.sub(r'\([0-9]+\)', "", str(dex))).strip() in re.split(r'//', item.strip()):
+                                        if re.sub(r'\s+', " ", re.sub(r'\([0-9]+\)', "", str(dex))).strip() == 'Total':
+                                            new_ind.append(None)
+                                        else:
+                                            new_ind.append(Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item]['cat_desc'].item())
+                                        found = True
+                                        break
+                                    elif re.sub(r'\s+', " ", re.sub(r'\([0-9]+\)', "", str(dex))).strip().capitalize() == 'Re-exports' and datatype == 'EX':
+                                        found = True
+                                        REX = True
+                                        new_ind.append('Re-exports')
+                                        break
+                                    elif re.sub(r'\s+', " ", re.sub(r'\([0-9]+\)', "", str(dex))).strip().capitalize() == 'Re-exports' and datatype == 'IM':
+                                        found = True
+                                        REX = True
+                                        new_ind.append(None)
+                                        break
+                            if found == False:
+                                to_pass = False
+                                if str(US_temp.loc[dex, US_temp.columns[0]]) == 'nan':
+                                    to_pass = True
+                                for pas in PASS:
+                                    if str(dex).strip().find(pas) >= 0 or str(dex) == ' ':
+                                        to_pass = True
+                                        break
+                                if to_pass == False:
+                                    if REX == True:
+                                        logging.info('\nRe-exports')
+                                    ERROR('Category item code not found: '+str(period).rjust(2,'0')+'-"'+str(dex)+'"')
+                                new_ind.append(None)
+                        US_temp.index = new_ind
+                        US_temp = US_temp.loc[US_temp.index.dropna()]
+                        US_temp = US_temp.loc[~US_temp.index.duplicated()]
+                        for dex in US_temp.index:
+                            fix = suffix_t
+                            middle = ''
+                            description = str(dex)
+                            if description.find('Re-exports') >= 0:
+                                if description == 'Re-exports':
+                                    description = 'Goods'
+                                description = description.replace(', Re-exports', '')
+                                suffix = 'RE'+fix
+                            elif datatype != '':
+                                suffix = datatype+fix
+                            for item in list(Series['CATEGORIES']['cat_desc']):
+                                if description in re.split(r'//', item.strip()):
+                                    middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['cat_desc'] == item].index[0]
+                                    new_label.loc[prefix+str(middle)+suffix] = Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suffix[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc']
+                                    new_order.loc[prefix+str(middle)+suffix] = Series['CATEGORIES'].loc[middle, 'order']
+                            if middle == '':
+                                new_index.append(None)
+                            else:
+                                new_index.append(prefix+str(middle)+suffix)
+                        US_temp.index = new_index
+                    elif fname == 'UATPCSB':
+                        for dex in US_temp.index:
+                            suf = ''
+                            if str(dex) in list(Series['DATA TYPES']['dt_desc']):
+                                suf = Series['DATA TYPES'].loc[Series['DATA TYPES']['dt_desc'] == dex].index[0]
+                                new_index.append(prefix+middle+suf+suffix)
+                                new_label.loc[prefix+middle+suf+suffix] = Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suf, 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix, 'geo_desc']
+                                new_order.loc[prefix+middle+suf+suffix] = Series['CATEGORIES'].loc[middle, 'order']
+                            else:
+                                if str(dex) not in PASS:
+                                    ERROR('Item index not found in '+fname+': '+str(dex))
+                                else:
+                                    new_index.append(None)
+                        US_temp.index = new_index
+                    elif fname == 'UPPCO':
+                        new_index_t = []
+                        product = ''
+                        for dex in US_temp.index:
+                            if str(dex[0]) != 'nan' and str(dex[0]).find('Unnamed') < 0:
+                                product = re.sub(r'\([0-9]+\)', "", str(dex[0])).strip().replace('oil','Oil')
+                            if str(dex[1]) != 'nan' and str(dex[1]).find('Unnamed') < 0:
+                                new_index_t.append([product, re.sub(r'\([a-z\s]+\)', "", str(dex[1])).strip().replace('price','Price')])
+                            else:
+                                new_index_t.append([None,None])
+                        US_temp.index = pd.MultiIndex.from_tuples(new_index_t)
+                        US_temp = US_temp.loc[US_temp.index.dropna()]
+                        if 'Imports' in list(US_temp.iloc[0]):
+                            new_cols = []
+                            ImportsFound = False
+                            for ind in range(US_temp.shape[1]):
+                                if US_temp.iloc[0].iloc[ind] == 'Imports':
+                                    ImportsFound = True
+                                if ImportsFound == True:
+                                    new_cols.append(US_temp.columns[ind])
+                                else:
+                                    new_cols.append('drop')
+                            US_temp.columns = new_cols
+                            US_temp = US_temp.drop(columns=['drop'])
+                        for dex in US_temp.index:
+                            middle = ''
+                            for item in range(Series['CATEGORIES'].shape[0]):
+                                if Series['CATEGORIES'].iloc[item]['name'] == dex[0] and Series['CATEGORIES'].iloc[item]['cat_desc'] == dex[1]:
+                                    middle = Series['CATEGORIES'].index[item]
+                                    new_label.loc[prefix+middle+suffix] = Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc']
+                                    new_order.loc[prefix+middle+suffix] = Series['CATEGORIES'].loc[middle, 'order']
+                                    break
+                            if middle == '':
+                                to_pass = False
+                                for pas in PASS:
+                                    if str(dex[0]).find(pas) >= 0 and str(dex[1]).find(pas) >= 0:
+                                        to_pass = True
+                                        break
+                                if to_pass == False:
+                                    ERROR('Item index not found in '+fname+': '+dex[0]+', '+dex[1])
+                                else:
+                                    new_index.append(None)
+                            else:
+                                new_index.append(prefix+middle+suffix)
+                        US_temp.index = new_index
+                    elif fname.find('UAMVCSB') >= 0:
+                        typeCorrect = False
+                        new_rows = []
+                        typeFound = True
+                        for ind in range(US_temp.shape[0]):
+                            if str(US_temp.iloc[ind].iloc[0]).capitalize() == TYPE[datatype]:
+                                typeFound = True
+                            elif str(US_temp.iloc[ind].iloc[0]).capitalize() == EPYT[datatype]:
+                                typeFound = False
+                            if typeFound == True:
+                                new_rows.append(US_temp.index[ind])
+                            else:
+                                new_rows.append('drop')
+                        US_temp.index = new_rows
+                        US_temp = US_temp.drop(index=['drop'])
+                        if (TYPE[datatype] in list(US_temp[1]) or TYPE[datatype].upper() in list(US_temp[1])) and (EPYT[datatype] not in list(US_temp[1]) and EPYT[datatype].upper() not in list(US_temp[1])):
+                            typeCorrect = True
+                        dropcols = []
+                        cols = []
+                        if fname.find('_M') >= 0 and key == 'ft900':
+                            if US_temp.shape[1]%3 != 0:
+                                time_range = 2
+                            else:
+                                time_range = 3
+                            for auto in range(0, US_temp.shape[1], time_range):
+                                if str(US_temp.iloc[0].iloc[auto]) == 'Total' and AMV == 'AMV':
+                                    continue
+                                elif str(US_temp.iloc[0].iloc[auto]) not in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
+                                    for a in range(1,time_range+1):
+                                        dropcols.extend([auto+a])
+                        else:
+                            for auto in range(US_temp.shape[1]):
+                                if fname.find('_A') >= 0:
+                                    if str(US_temp.iloc[1].iloc[auto]).isnumeric():
+                                        cols.append(int(US_temp.iloc[1].iloc[auto]))
+                                auto_found = False
+                                for item in range(US_temp.shape[0]):
+                                    if fname.find('_M') >= 0 and key == 'final' and str(US_temp.iloc[item].iloc[auto]).strip() in MONTH:
+                                        cols.append(str(US_temp.iloc[item].iloc[auto]).strip())
+                                    if str(US_temp.iloc[item].iloc[auto]) == 'Total' and AMV == 'AMV':
+                                        auto_found = True
+                                    elif str(US_temp.iloc[item].iloc[auto]) in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
+                                        auto_found = True
+                                if auto_found == False:
+                                    dropcols.append(auto+1)
+                        US_temp = US_temp.drop(columns=dropcols)
+                        if fname.find('_M') >= 0 and key == 'ft900':
+                            for mnth in range(US_temp.shape[1]):
+                                if re.split(r'\n',str(US_temp.iloc[1].iloc[mnth]))[0] in MONTH and re.split(r'\n',str(US_temp.iloc[1].iloc[mnth]))[1].isnumeric():
+                                    cols.append(re.split(r'\n',str(US_temp.iloc[1].iloc[mnth]))[1]+'-'+str(datetime.strptime(re.split(r'\n',str(US_temp.iloc[1].iloc[mnth]))[0].strip(),'%B').month).rjust(2,'0'))
+                                else:
+                                    cols.append('drop')
+                            US_temp.columns = cols
+                            if 'drop' in US_temp.columns:
+                                US_temp = US_temp.drop(columns=['drop'])
+                        elif fname.find('_M') >= 0 and key == 'final':
+                            cols = [str(REVISION[ffname])+'-'+str(datetime.strptime(item,'%B').month).rjust(2,'0') for item in cols]
+                            US_temp.columns = cols
+                        elif fname.find('_A') >= 0:
+                            US_temp.columns = cols
+                        US_temp = US_temp.sort_index(axis=1)
+                        if TYPE[datatype] not in list(US_temp[US_temp.columns[0]]) and typeCorrect == False:
+                            logging.info(US_temp)
+                            ERROR('Incorrect indexes were chosen: '+str(REVISION[ffname])+' '+TYPE[datatype])
+                        for col in range(US_temp.shape[1]):
+                            if key == 'final':
+                                ItemCorrect = False
+                                for item in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
+                                    if (AMV == 'AMV' and 'Total' in list(US_temp[US_temp.columns[col]])) or (item in list(US_temp[US_temp.columns[col]])):
+                                        ItemCorrect = True
+                                        break
+                                if ItemCorrect == False:
+                                    logging.info(US_temp[US_temp.columns[col]])
+                                    ERROR('Incorrect column was chosen: '+str(REVISION[ffname])+' '+str(Series['CATEGORIES'].loc[AMV, 'cat_desc']))
+                        US_temp = US_temp.loc[US_temp.index.dropna()]
+                        new_ind = []
+                        for dex in US_temp.index:
+                            found = False
+                            for item in list(Series['GEO LEVELS']['name']):
+                                if str(dex).strip() in re.split(r'//', item.strip()):
+                                    new_ind.append(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item]['geo_desc'].item())
+                                    found = True
+                                    break
+                            if found == False:
+                                to_pass = False
+                                if str(US_temp.loc[dex, US_temp.columns[0]]) == 'nan':
+                                    to_pass = True
+                                for pas in PASS:
+                                    if str(dex).strip().find(pas) >= 0 or str(dex).strip() == '':
+                                        to_pass = True
+                                        break
+                                if to_pass == False:
+                                    ERROR('Country code not found: '+str(REVISION[ffname])+'-"'+str(dex)+'"')
+                                new_ind.append(None)
+                        US_temp.index = new_ind
+                        US_temp = US_temp.loc[US_temp.index.dropna()]
+                        middle = AMV
+                        suf = datatype
+                        for dex in US_temp.index:
+                            fix = ''
+                            for item in list(Series['GEO LEVELS']['geo_desc']):
+                                if str(dex) in re.split(r'//', item.strip()):
+                                    fix = Series['GEO LEVELS'].loc[Series['GEO LEVELS']['geo_desc'] == item].index[0]
+                                    new_label.loc[prefix+middle+suf+fix] = Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suf, 'dt_desc']+',  '+Series['GEO LEVELS'].loc[fix, 'geo_desc']
+                                    new_order.loc[prefix+middle+suf+fix] = Series['CATEGORIES'].loc[middle, 'order']
+                            if fix == '':
+                                new_index.append(None)
+                            else:
+                                new_index.append(prefix+middle+suf+fix)
+                        US_temp.index = new_index
+                    US_temp.columns = [int(col) if str(col).isnumeric() else col for col in US_temp.columns]
+                    US_temp = US_temp.sort_index(axis=1)
+                    for item in new_order:
+                        if type(item) == pd.core.series.Series:
+                            logging.info(item)
+                            ERROR('Order type incorrect: '+str(item.index[0]))
+                    for item in new_label:
+                        if type(item) == pd.core.series.Series:
+                            logging.info(item)
+                            ERROR('Label type incorrect: '+str(item.index[0]))
+                    US_temp = US_temp.loc[US_temp.index.dropna()]
+                    for dex in US_temp.index:
+                        for col in US_temp.columns:
+                            US_his.loc[dex, col] = US_temp.loc[dex, col]
+                    US_his = US_his.loc[US_his.index.dropna(), US_his.columns.dropna()]
+                    US_his.columns = [str(col) for col in US_his.columns]
+                    US_his = US_his.sort_index(axis=1)
+                    US_his.columns = [int(col) if str(col).isnumeric() else col for col in US_his.columns]
+                    for lab in new_label.index:
+                        US_his.loc[lab, 'Label'] = new_label.loc[lab]
+                    for order in new_order.index:
+                        US_his.loc[lab, 'order'] = new_order.loc[order]
+    #print(US_his)
+
+    US_his.to_excel(file_path, sheet_name=fname)
+    if fname == 'AGDSCSB':
+        for dex in US_his.index:
+            if dex.find('BOP') >= 0:
+                US_his = US_his.drop(dex)
+    return US_his
+
+def HIES_OLD(prefix, middle, data_path, address, fname=None, sname=None, DIY_series=None):
+    note = []
+    footnote = []
+    QUARTER = {'1st Qtr':'Q1','2nd Qtr':'Q2','3rd Qtr':'Q3','4th Qtr':'Q4'}
+    QUARTER2 = {'First':'Q1','Second':'Q2','Third':'Q3','Fourth':'Q4'}
+
+    HIES = readExcelFile(data_path+address+fname+'.xlsx', sheet_name_=sname, acceptNoFile=False)  
+    note2, footnote2 = US_NOTE(HIES[0], sname, address=address)
+    note = note + note2
+    footnote = footnote + footnote2
+    tables = {}
+    for h in range(HIES.shape[0]):
+        sys.stdout.write("\rLoading...("+str(round((h+1)*100/HIES.shape[0], 1))+"%)*")
+        sys.stdout.flush()
+        if fname == 'histtab8' and str(HIES.iloc[h][1])[:4].isnumeric() and str(HIES.iloc[h][0]) == 'nan':
+            table_head = h+1
+            for i in range(h+2, HIES.shape[0]):
+                if str(HIES.iloc[i][0]).find('Renter') >= 0:
+                    table_tail = i
+                    break
+            tables[str(HIES.iloc[h][1])[:4]] = readExcelFile(data_path+address+fname+'.xlsx', header_ = 0, index_col_ = 0, skiprows_ = list(range(table_head)), nrows_ = table_tail - table_head, sheet_name_=sname, usecols_=list(range(5)))
+            if tables[str(HIES.iloc[h][1])[:4]].empty == True:
+                ERROR('Sheet Not Found: '+data_path+address+fname+'.xlsx'+', sheet name: '+sname)
+            index = []
+            for dex in tables[str(HIES.iloc[h][1])[:4]].columns:
+                index.append(str(HIES.iloc[h][1])[:4]+'-'+QUARTER[dex])
+            tables[str(HIES.iloc[h][1])[:4]].columns = index
+        elif fname == 'histtab10' and bool(re.search(r'[Qq]uarter', str(HIES.iloc[h][1]))) == True and str(HIES.iloc[h][0]) == 'nan':
+            quarter = str(HIES.iloc[h][1])[:re.search(r'[Qq]uarter', str(HIES.iloc[h][1])).start()-1]
+            if bool(re.search(r'r[0-9]$', str(HIES.iloc[h][1]))):
+                date = str(HIES.iloc[h][1])[-6:-2]+'-'+QUARTER2[quarter]
+            else:
+                date = str(HIES.iloc[h][1])[-4:]+'-'+QUARTER2[quarter]
+            table_head = h+2
+            for i in range(h+3, HIES.shape[0]):
+                if str(HIES.iloc[i][0]).find('Renter') >= 0:
+                    table_tail = i
+                    break
+            tables[date] = readExcelFile(data_path+address+fname+'.xlsx', header_ = 0, index_col_ = 0, skiprows_ = list(range(table_head)), nrows_ = table_tail - table_head, sheet_name_=sname, usecols_=list(range(5)))
+            if tables[date].empty == True:
+                ERROR('Sheet Not Found: '+data_path+address+fname+'.xlsx'+', sheet name: '+sname)
+            tables[date].index.names = ['index']
+            index = []
+            for dex in tables[date].index:
+                new_dex = re.sub(r"[^A-Za-z\s\-',]+", "", str(dex))
+                if new_dex == 'Rented or Sold':
+                    new_dex = 'Rented or sold'
+                index.append(new_dex)
+            tables[date].index = index
+            if 'Rented, not yet occupied' in tables[date].index:
+                new_row = [0, 0, 0, 0]
+                drop_dex = []
+                for d in range(tables[date].shape[0]):
+                    if tables[date].index[d].find('not yet occupied') >= 0:
+                        drop_dex.append(tables[date].index[d])
+                        for e in range(len(tables[date].iloc[d])):
+                            new_row[e] = new_row[e] + tables[date].iloc[d][e]
+                for drop in drop_dex:
+                    tables[date] = tables[date].drop(index=drop)
+                new_df = pd.DataFrame([new_row], index=['Rented or sold'], columns=tables[date].columns)
+                tables[date] = pd.concat([tables[date], new_df])
+            tables[date] = tables[date][~tables[date].index.duplicated()]
+            region = []
+            for dex in tables[date].columns:
+                if bool(re.search(r'\.[0-9]+$', dex)):
+                    dex = re.sub(r'\.[0-9]+$', "", dex)
+                region.append(dex)
+            new_table = pd.concat([pd.Series(list(tables[date][dex]), index=tables[date].index) for dex in tables[date].columns], keys=region)
+            tables[date] = new_table
+    sys.stdout.write("\n\n")
+    
+    US_t = pd.DataFrame()
+    for key in tables:
+        tables[key] = tables[key][~tables[key].index.duplicated()]
+        US_t = pd.concat([US_t, tables[key]], axis=1)
+    if fname == 'histtab10':
+        US_t.columns = list(tables)
+    
+    new_index = []
+    new_label = []
+    new_order = []
+    geography = ''
+    for ind in range(US_t.shape[0]):
+        suffix = ''
+        if fname == 'histtab8':
+            dex = re.sub(r"[^A-Za-z\s\-']+", "", str(US_t.index[ind]))
+            if dex in list(DIY_series['DATA TYPES']['name']):
+                new_label.append(str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['dt_desc'].item()))
+                new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['order'].item())
+                suffix = 'US'+str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex].index.item())
+        elif fname == 'histtab10':
+            if US_t.index[ind][0] in list(DIY_series['GEO LEVELS']['name']) and US_t.index[ind][1] != 'nan':
+                geography = US_t.index[ind][0]
+                dex = US_t.index[ind][1]
+                new_label.append(str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['dt_desc'].item()))
+                new_order.append(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex]['order'].item())
+                suffix = str(DIY_series['GEO LEVELS'].loc[DIY_series['GEO LEVELS']['name'] == geography].index.item()) + str(DIY_series['DATA TYPES'].loc[DIY_series['DATA TYPES']['name'] == dex].index.item())
+        if suffix == '':
+            new_index.append('nan')
+            new_label.append('nan')
+            new_order.append(10000)
+        else:
+            new_index.append(prefix+middle+suffix)
+    US_t.insert(loc=0, column='Index', value=new_index)
+    US_t = US_t.set_index('Index', drop=False)
+    US_t.insert(loc=1, column='Label', value=new_label)
+    US_t.insert(loc=2, column='order', value=new_order)
+    US_t = US_t.sort_values(by='order')
+    label = US_t['Label']
+
+    return US_t, label, note, footnote
+
+def US_IHS(US_temp, Series, freq):
+    #AREMOS = pd.DataFrame()
+    note = []
+    footnote = [['NSA','Not Seasonally Adjusted'],['SAAR','Seasonally Adjusted Annual Rate'],[' - United States',''],['Total,','United States Total,'],['North East','Northeast'],['Mid West','Midwest']]
+    TYPE = ['Northeast','Midwest','South','West']
+    FORMC = {'NSA':'Not Seasonally Adjusted','SAAR':'Seasonally Adjusted Annual Rate'}
+    UNIT = {'Fixed':'Composite Index','Pending Home Sales Index':'Index',"Month's Supply":'Percentage','Single Family Home':'Thousands of Housing Units','Prices':'U.S. Dollars','Mortgage Rate':'Percentage','Monthly Payment as a Percent of Income':'Percentage','Housing Affordability':'U.S. Dollars','First Time Buyer Index':'Composite Index'}
+
+    new_index = []
+    description = []
+    unit = []
+    new_type = []
+    form_e = []
+    form_c = []
+    for i in range(US_temp.shape[0]):
+        sys.stdout.write("\rLoading...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
+        sys.stdout.flush()
+        found = False
+        key = str(US_temp.index[i])
+        if freq == 'Q':
+            key = key.replace('.Q','')
+        for j in range(Series.shape[0]):
+            if key.replace('.HIST','') == Series.iloc[j]['code']:
+                found = True
+                unit_found = False
+                type_found = False
+                form_cf = False
+                if freq == 'Q':
+                    new_index.append(Series.iloc[j]['code'])
+                else:
+                    new_index.append(Series.iloc[j]['code'][:-2])
+                uni = Series.iloc[j]['unit']
+                for uni in UNIT:
+                    if US_temp.iloc[i]['Short Label'].find(uni) >= 0:
+                        unit_found = True
+                        unit.append(UNIT[uni])
+                        break
+                if unit_found == False:
+                    unit.append('Housing Units')
+                loc1 = US_temp.iloc[i]['Short Label'].find(',')+2
+                loc2 = US_temp.iloc[i]['Short Label'].find(',',loc1)
+                if loc2 < 0:
+                    loc2 = US_temp.iloc[i]['Short Label'].find('-',loc1)-1
+                form_e.append(US_temp.iloc[i]['Short Label'][loc1:loc2])
+                description.append(US_temp.iloc[i]['Short Label'][loc2+2:].replace("'s",""))
+                for adj in FORMC:
+                    if US_temp.iloc[i]['Short Label'].find(adj) >= 0:
+                        form_cf = True
+                        form_c.append(FORMC[adj])
+                        break
+                if form_cf == False:
+                    if freq == 'A':
+                        form_c.append('Annual')
+                    elif Series.iloc[j]['code'].find('NS') > 0:
+                        form_c.append('Not Seasonally Adjusted')
+                    else:
+                        form_c.append('Seasonally Adjusted Annual Rate')
+                for typ in TYPE:
+                    if US_temp.iloc[i]['Short Label'].find(typ) >= 0:
+                        type_found = True
+                        if US_temp.iloc[i]['Short Label'].find('Mid West') >= 0:
+                            new_type.append('Midwest')
+                        else:
+                            new_type.append(typ)
+                        break
+                if type_found == False:
+                    if US_temp.iloc[i]['Short Label'].find('North East') >= 0:
+                        new_type.append('Northeast')
+                    else:
+                        new_type.append('United States Total')
+                #AREMOS = AREMOS.append(Series.iloc[j])
+                break
+        if found == False:
+            new_index.append('nan')
+            description.append('nan')
+            unit.append('nan')
+            new_type.append('nan')
+            form_e.append('nan')
+            form_c.append('nan')
+    sys.stdout.write("\n\n")
+
+    US_temp.insert(loc=0, column='Index', value=new_index)
+    US_temp.insert(loc=1, column='Label', value=description)
+    US_temp.insert(loc=2, column='unit', value=unit)
+    US_temp.insert(loc=3, column='type', value=new_type)
+    US_temp.insert(loc=4, column='form_e', value=form_e)
+    US_temp.insert(loc=5, column='form_c', value=form_c)
+    US_temp = US_temp.set_index('Index', drop=False)
+    label = US_temp['Label']
+
+    #AREMOS.to_excel(out_path+"NAR_series"+str(AREMOS.shape[0])+".xlsx", sheet_name='NAR_series')
+    return US_temp, label, note, footnote
+"""elif (fname.find('weekprod') >= 0 or str(sname).find('weekprod') >= 0) and freq == 'W':
+    US_new = pd.DataFrame()
+    last_week = pd.DataFrame()
+    first_concat = False
+    last_remain = False
+    for date in US_t:
+        sys.stdout.write("\rLoading...("+str(round((list(US_t.keys()).index(date)+1)*100/len(US_t.keys()), 1))+"%)*")
+        sys.stdout.flush()
+        
+        if fname.find('histot') >= 0 or fname.find('http') >= 0:
+            year = re.sub(r'.*?([0-9]{4}).*', r"\1", date)
+        else:
+            year = re.sub(r'.*?([0-9]{4}).*', r"\1", fname)
+        new_ind = []
+        for ind in range(US_t[date].shape[0]):
+            found = False
+            for item in list(Series['CATEGORIES']['name']):
+                if str(US_t[date].index[ind]).strip() in re.split(r'//', item.strip()):
+                    new_ind.append(Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item]['cat_desc'].item())
+                    found = True
+                    break
+            if found == False:
+                to_pass = False
+                if str(US_t[date].iloc[ind].iloc[0]) == 'nan' or type(US_t[date].iloc[ind].iloc[0]) == datetime:
+                    to_pass = True
+                for pas in PASS:
+                    if str(US_t[date].index[ind]).strip().lower().find(pas) >= 0 or str(US_t[date].index[ind]) == '':
+                        to_pass = True
+                        break
+                if to_pass == False:
+                    ERROR('Category item code not found: '+date+'-"'+str(US_t[date].index[ind])+'"')
+                if str(US_t[date].index[ind]).strip().lower() == 'state':
+                    new_ind.append('Week')
+                else: 
+                    new_ind.append(None)    
+        US_t[date].index = new_ind
+        US_t[date] = US_t[date][~US_t[date].index.duplicated()]
+        US_t[date] = US_t[date].loc[US_t[date].index.dropna()]
+
+        previous_week = ''
+        NO_LAST_REMAIN = False
+        if datetime.now().year - int(year) <= 1:
+            for item in list(US_t[date].loc['Week']):
+                try:
+                    week_num = int(re.sub(r'.*?[Ww]eek\s+([0-9]+).*', r"\1", str(item).replace('\n', '')))
+                except ValueError:
+                    week_num = week_num
+            date_range = pd.date_range(start=year+'-01-01',periods=week_num,freq='W-SAT').strftime('%Y-%m-%d')
+        else:
+            date_range = pd.date_range(start=year+'-01-01',end=year+'-12-31',freq='W-SAT').strftime('%Y-%m-%d')
+        if len(date_range) == 53:
+            NO_LAST_REMAIN = True
+            FIT = False
+            for item in list(US_t[date].loc['Week']):
+                if bool(re.search(r'[Ww]eek 53', str(item))):
+                    FIT = True
+                    break
+            if FIT == False:
+                if last_remain == False:
+                    ERROR('Length of date range does not meet the week number of year '+year)
+                first_concat = False
+                last_week.columns = [0]
+                US_t[date] = pd.concat([last_week, US_t[date]], axis=1)
+                last_remain = False
+        for col in US_t[date].columns:
+            WEEK = False
+            for item in list(US_t[date][col]):
+                if type(item) == datetime:
+                    US_t[date].loc[US_t[date].loc[US_t[date][col] == item].index[0], col] = item.strftime('%Y-%m-%d')
+                if bool(re.search(r'[Ww]eek 0*1[^0-9]*$', str(item))) and first_concat == True:
+                    first_week = pd.concat([last_week, US_t[date][col]], axis=1).sum(axis=1)
+                    last_remain = False
+                elif bool(re.search(r'[Ww]eek 53', str(item))) and NO_LAST_REMAIN == False:
+                    last_remain = True
+                    last_week = pd.DataFrame(US_t[date][col])
+                    break
+                elif bool(re.search(r'[Ww]eek', str(item))):
+                    WEEK = True
+                    if str(item).lower() == previous_week:
+                        US_t[date][previous_col] = pd.concat([US_t[date][previous_col], US_t[date][col]], axis=1).sum(axis=1)
+                        WEEK = False
+                        #print(US_t[date][previous_col])
+                    previous_week = str(item).lower()
+                    previous_col = col
+                    break
+            if WEEK == False:
+                US_t[date] = US_t[date].drop(columns=[col])
+        #print('first_concat',first_concat)
+        #print('last_remain',last_remain)
+        if first_concat == True:
+            if type(first_week) == type(None):
+                ERROR('Data from end week of last year('+str(int(year)-1)+') has not been concated to data for the first week of this year: '+year+'.')
+            US_t[date] = pd.concat([first_week, US_t[date]], axis=1)
+            first_week = None
+        else:
+            first_week = None
+        if last_remain == False:
+            last_week = pd.DataFrame()
+            first_concat = False
+        else:
+            first_concat = True
+        US_t[date].columns = date_range
+        US_t[date] = US_t[date].sort_index(axis=1)
+        #print(US_t[date])
+        US_new = pd.concat([US_new, US_t[date]], axis=1)
+    sys.stdout.write("\n\n")
+    US_t = US_new
+    for ind in range(US_t.shape[0]):
+        suffix = ''
+        description = str(US_t.index[ind])
+        for item in list(Series['CATEGORIES']['cat_desc']):
+            if description in re.split(r'//', item.strip()):
+                suffix = Series['CATEGORIES'].loc[Series['CATEGORIES']['cat_desc'] == item].index[0]
+                new_label_t.append(Series['DATA TYPES'].loc[prefix, 'dt_desc']+',  '+Series['CATEGORIES'].loc[suffix, 'cat_desc'])
+                new_unit_t.append(Series['DATA TYPES'].loc[prefix, 'dt_unit'])
+                break
+        if suffix == '':
+            new_code_t.append('nan')
+            new_label_t.append('nan')
+            new_unit_t.append('nan')
+        else:
+            new_code_t.append(prefix+suffix)"""
+"""elif fname == 'AGDSCSB' or fname == 'UGDSCSB':
+        US_t = US_t.rename(index={'Unnamed: 2_level_0': 'Balance'})
+        add_value = []
+        for ind in range(US_t.shape[1]):
+            TBOP = str(US_t.loc[('Balance', 'Total Balance of Payments Basis'), US_t.columns[ind]])
+            TCSB = str(US_t.loc[('Balance', 'Total Census Basis'), US_t.columns[ind]])
+            if US_t.columns[ind] == 'nan':
+                add_value.append('nan')
+            elif TBOP != 'nan' and TCSB != 'nan' and TBOP.strip() != '' and TCSB.strip() != '':
+                add_value.append(US_t.loc[('Balance', 'Total Balance of Payments Basis'), US_t.columns[ind]]-US_t.loc[('Balance', 'Total Census Basis'), US_t.columns[ind]])
+            else:
+                add_value.append('nan')
+        US_new = pd.DataFrame([add_value], columns=US_t.columns, index=[('Balance', 'Net Adjustments')])
+        US_t = pd.concat([US_t, US_new])
+        if fname == 'exh12' or fname == 'UGDSCSB':
+            US_t.index = pd.MultiIndex.from_arrays([US_t.index.get_level_values(0), US_t.index.get_level_values(1).str.replace(r'\s*Total Balance of Payments Basis.*', 'BOP', regex=True)])
+        suf = ''    
+        for ind in range(US_t.shape[0]):
+            suffix = ''
+            if str(US_t.index[ind][0]) in list(Series['DATA TYPES']['dt_desc']):
+                suf = Series['DATA TYPES'].loc[Series['DATA TYPES']['dt_desc'] == US_t.index[ind][0]].index[0]
+            for item in list(Series['GEO LEVELS']['name']):
+                if re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][1])) in re.split(r'//', item):
+                    suffix = suf+Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item].index[0]
+                    break
+            if suffix == '' and str(US_t.index[ind][1]) != 'Total Balance of Payments Basis':
+                ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][1])))
+            elif suffix == '' and str(US_t.index[ind][1]) == 'Total Balance of Payments Basis':
+                new_index.append(None)
+                new_label.append(None)
+                new_order.append(10000)
+            else:
+                new_index.append(prefix+middle+suffix)
+                new_label.append(Series['DATA TYPES'].loc[suffix[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc'])
+                new_order.append(Series['CATEGORIES'].loc[middle, 'order'])"""
+"""elif fname.find('AGDSEXCSB') >= 0 or fname.find('AGDSIMCSB') >= 0 or fname.find('UGDSSITC') >= 0:
+        US_new = pd.DataFrame()
+        for date in US_t:
+            sys.stdout.write("\rLoading...("+str(round((list(US_t.keys()).index(date)+1)*100/len(US_t.keys()), 1))+"%)*")
+            sys.stdout.flush()
+            typeCorrect = False
+            if (fname == 'exh7' or date == '7' or fname == 'exh8' or date == '8') and fname.find('_Y') < 0:
+                US_t[date].columns = [re.sub(r'\s+\([A-Z]+\)\s*', "", str(US_t[date].iloc[1].iloc[m])+'-'+\
+                    str(datetime.strptime(re.sub(r'\s+\([A-Z]+\)\s*', "", str(US_t[date].iloc[0].iloc[m])).strip(),'%B').month).rjust(2,'0')) for m in range(US_t[date].shape[1])]
+            elif fname == 'exh6_Y' or fname == 'exh7_Y' or ((date == '6' or date == '7') and fname.find('_Y') >= 0):
+                US_t[date].columns = [int(re.sub(r'\s*Annual\s*', "", str(US_t[date].columns[y]).strip())) for y in range(US_t[date].shape[1])]
+            elif fname == 'exh14_Y' or date == '14':
+                cols = [int(US_t[date].iloc[0].iloc[m]) for m in range(0, 6, 2)]
+                if datatype == 'EX':
+                    US_t[date] = US_t[date][[1, 3, 5]]
+                elif datatype == 'IM':
+                    US_t[date] = US_t[date][[2, 4, 6]]
+                US_t[date].columns = cols
+            elif fname == 'exh15' or date == '15':
+                US_t[date] = US_t[date].drop(US_t[date].index[[0]])
+                if str(US_t[date].iloc[0].iloc[2]).isnumeric():
+                    cols = [str(US_t[date].iloc[0].iloc[0])+'-'+str(datetime.strptime(str(US_t[date].iloc[1].iloc[0]).strip(),'%B').month).rjust(2,'0')]+[str(US_t[date].iloc[0].iloc[2])+'-'+str(datetime.strptime(str(US_t[date].iloc[1].iloc[2]).strip(),'%B').month).rjust(2,'0')]
+                else:
+                    cols = [str(US_t[date].iloc[0].iloc[0])+'-'+str(datetime.strptime(str(US_t[date].iloc[1].iloc[m]).strip(),'%B').month).rjust(2,'0') for m in [0, 2]]
+                if datatype == 'EX':
+                    if TYPE[datatype] in list(US_t[date][3]) and EPYT[datatype] not in list(US_t[date][4]):
+                        typeCorrect = True
+                    US_t[date] = US_t[date][[1, 4]]
+                elif datatype == 'IM':
+                    if TYPE[datatype] in list(US_t[date][5]) and EPYT[datatype] not in list(US_t[date][6]):
+                        typeCorrect = True
+                    US_t[date] = US_t[date][[2, 6]]
+                US_t[date].columns = cols
+            elif fname == 'UGDSSITC_A':
+                if re.split(r',', date)[0] < '2010':
+                    if datatype == 'EX':
+                        US_t[date] = US_t[date][[1]]
+                    elif datatype == 'IM':
+                        US_t[date] = US_t[date][[2]]
+                    US_t[date].columns = [int(date)]
+                else:
+                    dropcols = []
+                    for yr in range(0, US_t[date].shape[1], 2):
+                        if str(US_t[date].iloc[0].iloc[yr]) not in re.split(r',', date):
+                            dropcols.extend([yr+1, yr+2])
+                    US_t[date] = US_t[date].drop(columns=dropcols)
+                    if datatype == 'EX':
+                        US_t[date] = US_t[date][[US_t[date].columns[m] for m in range(0, US_t[date].shape[1], 2)]]
+                    elif datatype == 'IM':
+                        US_t[date] = US_t[date][[US_t[date].columns[m] for m in range(1, US_t[date].shape[1], 2)]]
+                    US_t[date].columns = reversed([int(year) for year in re.split(r',', date)])
+            elif fname.find('_A') >= 0:
+                for col in US_t[date].columns:
+                    if col.find(date) < 0:
+                        US_t[date] = US_t[date].drop(columns=[col])
+                US_t[date].columns = [int(date)]
+            elif fname == 'UGDSSITC_M' and date.find('M') < 0:
+                if datatype == 'EX':
+                    if TYPE[datatype] in list(US_t[date][3]) and EPYT[datatype] not in list(US_t[date][4]):
+                        typeCorrect = True
+                    US_t[date] = US_t[date][[4]]
+                elif datatype == 'IM':
+                    if TYPE[datatype] in list(US_t[date][5]) and EPYT[datatype] not in list(US_t[date][6]):
+                        typeCorrect = True
+                    US_t[date] = US_t[date][[6]]
+                US_t[date].columns = [date]
+            elif date.find('M') >= 0:
+                if bool(re.search(r'M[0-9]$', date)):
+                    US_t[date] = US_t[date].drop(US_t[date].index[[0]])
+                cols = [date[:4]+'-'+str(datetime.strptime(str(US_t[date].iloc[0].iloc[m]).strip(),'%B').month).rjust(2,'0') for m in range(0, US_t[date].shape[1], 2)]
+                if datatype == 'EX':
+                    US_t[date] = US_t[date][[m for m in range(1, US_t[date].shape[1]+1, 2)]]
+                elif datatype == 'IM':
+                    US_t[date] = US_t[date][[m for m in range(2, US_t[date].shape[1]+1, 2)]]
+                US_t[date].columns = cols
+            else:
+                US_t[date] = US_t[date].drop(columns=[1])
+                US_t[date].columns = [date]
+            US_t[date] = US_t[date].sort_index(axis=1)
+            if datatype != None:
+                for col in range(US_t[date].shape[1]):
+                    if TYPE[datatype] not in list(US_t[date][US_t[date].columns[col]]) and typeCorrect == False:
+                        logging.info(US_t[date])
+                        ERROR('Incorrect columns were chosen: '+date+' '+TYPE[datatype])
+            new_ind = []
+            REX = False
+            for ind in range(US_t[date].shape[0]):
+                found = False
+                if REX == True and datatype == 'EX':
+                    for item in reversed(list(Series['CATEGORIES']['name'])):
+                        if re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip()+', Re-exports' in re.split(r'//', item.strip()):
+                            found = True
+                            new_ind.append(Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item]['cat_desc'].item())
+                            break
+                elif REX == True and datatype == 'IM':
+                    found = True
+                    new_ind.append(None)
+                else:
+                    for item in list(Series['CATEGORIES']['name']):
+                        if re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip() in re.split(r'//', item.strip()):
+                            if re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip() == 'Total':
+                                new_ind.append(None)
+                            else:
+                                new_ind.append(Series['CATEGORIES'].loc[Series['CATEGORIES']['name'] == item]['cat_desc'].item())
+                            found = True
+                            break
+                        elif re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip().capitalize() == 'Re-exports' and datatype == 'EX':
+                            found = True
+                            REX = True
+                            new_ind.append('Re-exports')
+                            break
+                        elif re.sub(r'\s+', " ", re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t[date].index[ind]).strip())).strip().capitalize() == 'Re-exports' and datatype == 'IM':
+                            found = True
+                            REX = True
+                            new_ind.append(None)
+                            break
+                if found == False:
+                    to_pass = False
+                    if str(US_t[date].iloc[ind].iloc[0]) == 'nan':
+                        to_pass = True
+                    for pas in PASS:
+                        if str(US_t[date].index[ind]).strip().find(pas) >= 0 or str(US_t[date].index[ind]) == ' ':
+                            to_pass = True
+                            break
+                    if to_pass == False:
+                        if REX == True:
+                            logging.info('\nRe-exports')
+                        ERROR('Category item code not found: '+date+'-"'+str(US_t[date].index[ind])+'"')
+                    new_ind.append(None)    
+            US_t[date].index = new_ind
+            US_t[date] = US_t[date].loc[US_t[date].index.dropna()]
+            US_t[date] = US_t[date].loc[~US_t[date].index.duplicated()]
+            US_new = pd.concat([US_new, US_t[date]], axis=1)
+        sys.stdout.write("\n\n")
+        US_t = US_new
+        fix = suffix
+        for ind in range(US_t.shape[0]):
+            middle = ''
+            description = str(US_t.index[ind])
+            if description.find('Re-exports') >= 0:
+                if description == 'Re-exports':
+                    description = 'Goods'
+                description = description.replace(', Re-exports', '')
+                suffix = 'RE'+fix
+            elif datatype != None:
+                suffix = datatype+fix
+            for item in list(Series['CATEGORIES']['cat_desc']):
+                if description in re.split(r'//', item.strip()):
+                    middle = Series['CATEGORIES'].loc[Series['CATEGORIES']['cat_desc'] == item].index[0]
+                    new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suffix[:2], 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc'])
+                    new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
+            if middle == '':
+                new_index.append(None)
+                new_label.append(None)
+                new_order.append(10000)
+                #ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind])))
+            else:
+                new_index.append(prefix+str(middle)+suffix)"""
+"""elif fname == 'UATPCSB':
+        for ind in range(US_t.shape[0]):
+            suf = ''
+            if str(US_t.index[ind]) in list(Series['DATA TYPES']['dt_desc']):
+                suf = Series['DATA TYPES'].loc[Series['DATA TYPES']['dt_desc'] == US_t.index[ind]].index[0]
+                new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suf, 'dt_desc']+',  '+Series['GEO LEVELS'].loc[suffix, 'geo_desc'])
+                new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
+                new_index.append(prefix+middle+suf+suffix)
+            else:
+                if str(US_t.index[ind]) not in PASS:
+                    ERROR('Item index not found in '+fname+': '+str(US_t.index[ind]))
+                else:
+                    new_index.append(None)
+                    new_label.append(None)
+                    new_order.append(10000)"""
+"""elif fname == 'UPPCO':
+        if 'Imports' in list(US_t.iloc[0]):
+            new_cols = []
+            ImportsFound = False
+            for ind in range(US_t.shape[1]):
+                if US_t.iloc[0].iloc[ind] == 'Imports':
+                    ImportsFound = True
+                if ImportsFound == True:
+                    new_cols.append(US_t.columns[ind])
+                else:
+                    new_cols.append('drop')
+            US_t.columns = new_cols
+            US_t = US_t.drop(columns=['drop'])
+        product = ''
+        for ind in range(US_t.shape[0]):
+            middle = ''
+            if str(US_t.index[ind][0]).find('Unnamed') < 0:
+                product = re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind][0]))
+            for item in range(Series['CATEGORIES'].shape[0]):
+                if Series['CATEGORIES'].iloc[item]['name'] == product and Series['CATEGORIES'].iloc[item]['cat_desc'] == re.sub(r'\s+\([a-z\s]+\)\s*$', "", str(US_t.index[ind][1])):
+                    middle = Series['CATEGORIES'].index[item]
+                    new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['GEO LEVELS'].loc[suffix[2:], 'geo_desc'])
+                    new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
+                    break
+            if middle == '':
+                to_pass = False
+                for pas in PASS:
+                    if str(US_t.index[ind][0]).find(pas) >= 0 and str(US_t.index[ind][1]).find(pas) >= 0:
+                        to_pass = True
+                        break
+                if to_pass == False:
+                    ERROR('Item index not found in '+fname+': '+product+', '+re.sub(r'\s+\([a-z\s]+\)\s*$', "", str(US_t.index[ind][1])))
+                else:
+                    new_index.append(None)
+                    new_label.append(None)
+                    new_order.append(10000)
+            else:
+                new_index.append(prefix+middle+suffix)"""
+"""elif fname.find('UAMVCSB') >= 0:
+        US_new = pd.DataFrame()
+        for date in US_t:
+            sys.stdout.write("\rLoading...("+str(round((list(US_t.keys()).index(date)+1)*100/len(US_t.keys()), 1))+"%)*")
+            sys.stdout.flush()
+            typeCorrect = False
+            new_rows = []
+            typeFound = True
+            for ind in range(US_t[date].shape[0]):
+                if str(US_t[date].iloc[ind].iloc[0]).capitalize() == TYPE[datatype]:
+                    typeFound = True
+                elif str(US_t[date].iloc[ind].iloc[0]).capitalize() == EPYT[datatype]:
+                    typeFound = False
+                if typeFound == True:
+                    new_rows.append(US_t[date].index[ind])
+                elif bool(re.search(r'M[0-9]$', date)) and str(US_t[date].iloc[ind].iloc[0]) in MONTH:
+                    new_rows.append(US_t[date].index[ind])
+                else:
+                    new_rows.append('drop')
+            US_t[date].index = new_rows
+            US_t[date] = US_t[date].drop(index=['drop'])
+            if (TYPE[datatype] in list(US_t[date][1]) or TYPE[datatype].upper() in list(US_t[date][1])) and (EPYT[datatype] not in list(US_t[date][1]) and EPYT[datatype].upper() not in list(US_t[date][1])):
+                typeCorrect = True
+            dropcols = []
+            cols = []
+            if date.find('M') < 0 and fname.find('_A') < 0:
+                if US_t[date].shape[1]%3 != 0:
+                    time_range = 2
+                else:
+                    time_range = 3
+                for auto in range(0, US_t[date].shape[1], time_range):
+                    if str(US_t[date].iloc[0].iloc[auto]) == 'Total' and AMV == 'AMV':
+                        continue
+                    elif str(US_t[date].iloc[0].iloc[auto]) not in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
+                        for a in range(1,time_range+1):
+                            dropcols.extend([auto+a])
+            else:
+                if bool(re.search(r'M[0-9]$', date)):
+                    US_t[date] = US_t[date].drop(US_t[date].index[[0]]) 
+                for auto in range(US_t[date].shape[1]):
+                    if fname == 'exh17_Y' or date == '17':
+                        if str(US_t[date].iloc[1].iloc[auto]).isnumeric():
+                            cols.append(int(US_t[date].iloc[1].iloc[auto]))
+                    auto_found = False
+                    for item in range(US_t[date].shape[0]):
+                        if date.find('M') >= 0 and str(US_t[date].iloc[item].iloc[auto]).strip() in MONTH:
+                            cols.append(str(US_t[date].iloc[item].iloc[auto]).strip())
+                        if str(US_t[date].iloc[item].iloc[auto]) == 'Total' and AMV == 'AMV':
+                            auto_found = True
+                        elif str(US_t[date].iloc[item].iloc[auto]) in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
+                            auto_found = True
+                    if auto_found == False:
+                        dropcols.append(auto+1)
+            US_t[date] = US_t[date].drop(columns=dropcols)
+            if (fname == 'exh18' or date == '18') and fname.find('_A') < 0:
+                for mnth in range(US_t[date].shape[1]):
+                    if re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0] in MONTH and re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[1].isnumeric():
+                        cols.append(re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[1]+'-'+str(datetime.strptime(re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0].strip(),'%B').month).rjust(2,'0'))
+                    else:
+                        cols.append('drop')
+                US_t[date].columns = cols
+                if 'drop' in US_t[date].columns:
+                    US_t[date] = US_t[date].drop(columns=['drop'])
+            elif (fname == 'exh17_Y' or date == '17') and fname.find('_A') >= 0:
+                US_t[date].columns = cols
+            elif fname == 'UAMVCSB_M' and date.find('M') < 0:
+                for mnth in range(US_t[date].shape[1]):
+                    if re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0].strip() not in MONTH:
+                        cols.append('drop')
+                    elif re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[1]+'-'+str(datetime.strptime(re.split(r'\n',str(US_t[date].iloc[1].iloc[mnth]))[0].strip(),'%B').month).rjust(2,'0') == date:
+                        cols.append(date)
+                    else:
+                        cols.append('drop')
+                US_t[date].columns = cols
+                US_t[date] = US_t[date].drop(columns=['drop'])
+            elif date.find('M') >= 0:
+                cols = [date[:4]+'-'+str(datetime.strptime(item,'%B').month).rjust(2,'0') for item in cols]
+                US_t[date].columns = cols
+            elif fname == 'UAMVCSB_A':
+                if date >= '2010':
+                    US_t[date] = US_t[date][[US_t[date].columns[2]]]
+                US_t[date].columns = [int(date)]
+            US_t[date] = US_t[date].sort_index(axis=1)
+            if TYPE[datatype] not in list(US_t[date][US_t[date].columns[0]]) and typeCorrect == False:
+                logging.info(US_t[date])
+                ERROR('Incorrect indexes were chosen: '+date+' '+TYPE[datatype])
+            for col in range(US_t[date].shape[1]):
+                if freq == 'M' and date.find('M') < 0 and fname != 'exh18' and date != '18':
+                    if datetime.strptime(US_t[date].columns[col],'%Y-%m').strftime('%B')+'\n'+date[:4] not in list(US_t[date][US_t[date].columns[col]]):
+                        logging.info(US_t[date][US_t[date].columns[col]])
+                        ERROR('Incorrect month was chosen: '+date+' '+datetime.strptime(US_t[date].columns[col],'%Y-%m').strftime('%B'))
+                if freq == 'A' or date.find('M') >= 0:
+                    ItemCorrect = False
+                    for item in re.split(r'//', str(Series['CATEGORIES'].loc[AMV, 'name']).strip()):
+                        if (AMV == 'AMV' and 'Total' in list(US_t[date][US_t[date].columns[col]])) or (item in list(US_t[date][US_t[date].columns[col]])):
+                            ItemCorrect = True
+                            break
+                    if ItemCorrect == False:
+                        logging.info(US_t[date][US_t[date].columns[col]])
+                        ERROR('Incorrect column was chosen: '+date+' '+str(Series['CATEGORIES'].loc[AMV, 'cat_desc']))
+            new_ind = []
+            for ind in range(US_t[date].shape[0]):
+                found = False
+                for item in list(Series['GEO LEVELS']['name']):
+                    if str(US_t[date].index[ind]).strip() in re.split(r'//', item.strip()):
+                        new_ind.append(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item]['geo_desc'].item())
+                        found = True
+                        break
+                if found == False:
+                    to_pass = False
+                    if str(US_t[date].iloc[ind].iloc[0]) == 'nan':
+                        to_pass = True
+                    for pas in PASS:
+                        if str(US_t[date].index[ind]).strip().find(pas) >= 0 or str(US_t[date].index[ind]).strip() == '':
+                            to_pass = True
+                            break
+                    if to_pass == False:
+                        ERROR('Country code not found: '+date+'-"'+str(US_t[date].index[ind])+'"')
+                    new_ind.append(None)    
+            US_t[date].index = new_ind
+            US_t[date] = US_t[date].loc[US_t[date].index.dropna()]
+            US_t[date] = US_t[date].loc[~US_t[date].index.duplicated()]
+            US_new = pd.concat([US_new, US_t[date]], axis=1)
+        sys.stdout.write("\n\n")
+        US_t = US_new
+        middle = AMV
+        suf = datatype
+        for ind in range(US_t.shape[0]):
+            fix = ''
+            for item in list(Series['GEO LEVELS']['geo_desc']):
+                if str(US_t.index[ind]) in re.split(r'//', item.strip()):
+                    fix = Series['GEO LEVELS'].loc[Series['GEO LEVELS']['geo_desc'] == item].index[0]
+                    new_label.append(Series['CATEGORIES'].loc[middle, 'cat_desc']+',  '+Series['DATA TYPES'].loc[suf, 'dt_desc']+',  '+Series['GEO LEVELS'].loc[fix, 'geo_desc'])
+                    new_order.append(Series['CATEGORIES'].loc[middle, 'order'])
+            if fix == '':
+                new_index.append(None)
+                new_label.append(None)
+                new_order.append(10000)
+                #ERROR('Item index not found in '+fname+': '+re.sub(r'\s+\([0-9]+\)\s*$', "", str(US_t.index[ind])))
+            else:
+                new_index.append(prefix+middle+suf+fix)"""
