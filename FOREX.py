@@ -51,6 +51,13 @@ log = logging.getLogger()
 stream = logging.StreamHandler(sys.stdout)
 stream.setFormatter(logging.Formatter('%(message)s'))
 log.addHandler(stream)
+sys.stdout.write("\n\n")
+if merging:
+    logging.info('Process: File Merging\n')
+elif updating:
+    logging.info('Process: File Updating\n')
+else:
+    logging.info('Data Processing\n')
 
 def takeFirst(alist):
     return alist[0]
@@ -386,7 +393,8 @@ for f in FREQNAME:
         break
     if db_table_t_dict[f].empty == False:
         if f == 'W':
-            db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
+            #db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
+            db_table_t_dict[f].index = FREQLIST['W_s']
         DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
         DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))      
 
@@ -401,7 +409,7 @@ if updating == True:
 else:
     if df_key.empty and find_unknown == False:
         ERROR('Empty dataframe')
-    elif df_key.empty and find_unknown == True:
+    elif new_item_counts == 0 and find_unknown == True:
         ERROR('No new items were found.')
     df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown)    
 
@@ -410,7 +418,7 @@ logging.info(df_key)
 
 print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 df_key.to_excel(out_path+NAME+"key"+excel_suffix+".xlsx", sheet_name=NAME+'key')
-with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer:
     if updating == True:
         for d in DATA_BASE_dict:
             sys.stdout.write("\rOutputing sheet: "+str(d))

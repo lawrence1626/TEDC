@@ -42,7 +42,7 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,encoding=encoding_,engine=engine_,sep=sep_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -61,16 +61,16 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,engine=engine_,sep=sep_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
 def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
-             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None, wait=False):
+             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine=None,wait=False):
     try:
-        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
+        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_,engine=engine_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -83,8 +83,8 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
             t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
 def PRESENT(file_path):
     if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
@@ -293,7 +293,8 @@ def NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, df_key, DATA_BASE, db_table_t
         db_table_t = pd.DataFrame(index = FREQLIST[freq], columns = [])
     db_table = DB_TABLE+freq+'_'+str(start_table).rjust(4,'0')
     db_code = DB_CODE+str(start_code).rjust(3,'0')
-    db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    #db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(list(DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]), index=DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']].index, columns=[db_code])], axis=1)
     df_key.loc[f, 'db_table'] = db_table
     df_key.loc[f, 'db_code'] = db_code
     start_code += 1
@@ -335,7 +336,8 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             sys.stdout.write("\rConcating sheet: "+str(d))
             sys.stdout.flush()
             if d in DATA_BASE_t.keys():
-                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d])
+                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d], how='outer')
+                DATA_BASE_t[d] = DATA_BASE_t[d].sort_index(ascending=False)
             else:
                 DATA_BASE_t[d] = DB_dict[f][d]
         sys.stdout.write("\n")

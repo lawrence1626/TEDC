@@ -39,18 +39,22 @@ merge_suf = '?'
 dealing_start_year = 1940
 start_year = 1940
 if excel_suffix != '0':
-    merging = bool(int(input('Merging data file (1/0): ')))
-    updating = bool(int(input('Updating TOT file (1/0): ')))
-    if merging and updating:
-        ERROR('Cannot do merging and updating at the same time.')
-    elif merging or updating:
-        merge_suf = input('Be Merged(Original) data suffix: ')
-        main_suf = input('Main(Updated) data suffix: ')
+    merging = False
+    updating = False
+    data_processing = bool(int(input('Processing data (1/0): ')))
+    if data_processing == False:
+        merging = bool(int(input('Merging data file = 1/Updating TOT file = 0: ')))
+        updating = not merging
     else:
         find_unknown = bool(int(input('Check if new items exist (1/0): ')))
         if find_unknown == False:
             dealing_start_year = int(input("Dealing with data from year: "))
             start_year = dealing_start_year-5
+    if merging or updating:
+        merge_suf = input('Be Merged(Original) data suffix: ')
+        main_suf = input('Main(Updated) data suffix: ')
+    elif data_processing == False:
+        ERROR('No process was choosed')
 update = datetime.today()
 tStart = time.time()
 
@@ -93,7 +97,7 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,encoding=encoding_,engine=engine_,sep=sep_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -112,16 +116,16 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,engine=engine_,sep=sep_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
 def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
-             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None, wait=False):
+             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine_='openpyxl',wait=False):
     try:
-        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
+        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_,engine=engine_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -134,8 +138,8 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
             t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
 def PRESENT(file_path):
     if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
@@ -454,16 +458,18 @@ def MERGE(merge_file, DB_TABLE, DB_CODE, freq):
 def NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, df_key, DATA_BASE, db_table_t, start_table, start_code, DATA_BASE_new, DB_name_new):
     
     if start_code >= 200:
-        if freq == 'W':
-            db_table_t = db_table_t.reindex(FREQLIST['W_s'])
         DATA_BASE_new[DB_TABLE+freq+'_'+str(start_table).rjust(4,'0')] = db_table_t
         DB_name_new.append(DB_TABLE+freq+'_'+str(start_table).rjust(4,'0'))
         start_table += 1
         start_code = 1
-        db_table_t = pd.DataFrame(index = FREQLIST[freq], columns = [])
+        if freq == 'W':
+            db_table_t = pd.DataFrame(index = FREQLIST['W_s'], columns = [])
+        else:
+            db_table_t = pd.DataFrame(index = FREQLIST[freq], columns = [])
     db_table = DB_TABLE+freq+'_'+str(start_table).rjust(4,'0')
     db_code = DB_CODE+str(start_code).rjust(3,'0')
-    db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    #db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(list(DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]), index=DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']].index, columns=[db_code])], axis=1)
     df_key.loc[f, 'db_table'] = db_table
     df_key.loc[f, 'db_code'] = db_code
     start_code += 1
@@ -495,7 +501,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             sys.stdout.write("\rConcating sheet: "+str(d))
             sys.stdout.flush()
             if d in DATA_BASE_t.keys():
-                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d])
+                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d], how='outer')
             else:
                 DATA_BASE_t[d] = DB_dict[f][d]
         sys.stdout.write("\n")
@@ -572,7 +578,10 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
         start_table_dict[f] = 1
         start_code_dict[f] = 1
         DB_new_dict[f] = {}
-        db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
+        if f == 'W':
+            db_table_t_dict[f] = pd.DataFrame(index = FREQLIST['W_s'], columns = [])
+        else:
+            db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
         DB_name_new_dict[f] = []
     db_table_new = 0
     db_code_new = 0
@@ -591,6 +600,9 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
     sys.stdout.write("\n")
     for f in FREQNAME:
         if db_table_t_dict[f].empty == False:
+            if f == 'W':
+                #db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
+                db_table_t_dict[f].index = FREQLIST['W_s']
             DB_new_dict[f][DB_TABLE+f+'_'+str(start_table_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
             DB_name_new_dict[f].append(DB_TABLE+f+'_'+str(start_table_dict[f]).rjust(4,'0'))
         if not not DB_name_new_dict[f]:
@@ -1067,7 +1079,8 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
     if code_num >= 200:
         db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
         if frequency == 'W':
-            db_table_t = db_table_t.reindex(FREQLIST['W_s'])
+            #db_table_t = db_table_t.reindex(FREQLIST['W_s'])
+            db_table_t.index = FREQLIST['W_s']
         DATA_BASE[db_table] = db_table_t
         DB_name.append(db_table)
         table_num += 1
@@ -1151,7 +1164,8 @@ def FOREX_DATA(ind, new_item_counts, DF_KEY, FOREX_t, AREMOS_forex, code_num, ta
 
     db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
     db_code = DB_CODE+str(code_num).rjust(3,'0')
-    db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    #db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code])], axis=1)
     desc_e = str(AREMOS_key['description'][0])
     #if desc_e.find('FOREIGN EXCHANGE') >= 0:
     for ph in range(len(before1)):
@@ -1454,7 +1468,8 @@ def FOREX_CROSSRATE(g, new_item_counts, DF_KEY, df_key, AREMOS_forex, code_num, 
 
             db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
             db_code = DB_CODE+str(code_num).rjust(3,'0')
-            db_table_t[db_code] = ['' for tmp in range(freqlen)]
+            #db_table_t[db_code] = ['' for tmp in range(freqlen)]
+            db_table_t = pd.concat([db_table_t, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code])], axis=1)
             
             #start = df_key.iloc[ind]['start']
             #last = df_key.iloc[ind]['last']

@@ -23,29 +23,18 @@ main_suf = '?'
 merge_suf = '?'
 dealing_start_year = 1947
 start_year = 1947
-merging = bool(int(input('Merging data file (1/0): ')))
-updating = bool(int(input('Updating TOT file (1/0): ')))
-if merging and updating:
-    ERROR('Cannot do merging and updating at the same time.')
-elif merging or updating:
-    merge_suf = input('Be Merged(Original) data suffix: ')
-    main_suf = input('Main(Updated) data suffix: ')
-else:
-    find_unknown = bool(int(input('Check if new items exist (1/0): ')))
-    """if find_unknown == False:
-        dealing_start_year = int(input("Dealing with data from year: "))
-        start_year = dealing_start_year-10"""
+merging = False
+updating = False
+data_processing = bool(int(input('Processing data (1/0): ')))
 excel_suffix = CCT.excel_suffix
 DF_suffix = test.DF_suffix
-LOG = ['excel_suffix', 'merging', 'updating', 'find_unknown','dealing_start_year']
+LOG = ['excel_suffix', 'data_processing', 'find_unknown','dealing_start_year']
 for key in LOG:
     logging.info(key+': '+str(locals()[key])+'\n')
 log = logging.getLogger()
 stream = logging.StreamHandler(sys.stdout)
 stream.setFormatter(logging.Formatter('%(message)s'))
 log.addHandler(stream)
-main_file = readExcelFile(out_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
-merge_file = readExcelFile(out_path+NAME+'key'+merge_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'name_ord', 'snl', 'book', 'form_e', 'form_c']
 dataset_list = ['QNA']#, 'QNA_ARCHIVE'
 frequency_list = ['A','Q']
@@ -58,9 +47,6 @@ tStart = time.time()
 def takeFirst(alist):
 	return alist[0]
 
-country = readFile(data_path+'Country.csv', header_ = 0, index_col_=[0])
-country.to_dict()
-
 def COUNTRY_CODE(location):
     if location in country['Country_Code']:
         return country['Country_Code'][location]
@@ -72,14 +58,6 @@ def COUNTRY_NAME(location):
         return country['Country_Name'][location]
     else:
         ERROR('找不到國家: '+location)
-
-form_e_file = readExcelFile(data_path+'QNIA_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='QNIA_form_e')
-form_e_dict = {}
-for form in form_e_file:
-    form_e_dict[form] = form_e_file[form].dropna().to_list()
-
-subject_file = readExcelFile(data_path+'QNIA_Subjects.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Subjects')
-measure_file = readExcelFile(data_path+'QNIA_Measures.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Measures')
 
 def SUBJECT_CODE(code, slist):
     if code in subject_file['code2']:
@@ -125,18 +103,77 @@ for f in FREQNAME:
     DB_name_dict[f] = []
 DB_TABLE = 'DB_'
 DB_CODE = 'data'
-
 table_num_dict = {}
 code_num_dict = {}
-if merge_file.empty == False and merging == True and updating == False:
-    logging.info('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
+
+if data_processing:
+    find_unknown = bool(int(input('Check if new items exist (1/0): ')))
+    """if find_unknown == False:
+        dealing_start_year = int(input("Dealing with data from year: "))
+        start_year = dealing_start_year-10"""
+    sys.stdout.write("\n\n")
+    logging.info('Data Processing\n')
+    main_file = pd.DataFrame()
+    merge_file = pd.DataFrame()
+    snl = 1
     for f in FREQNAME:
-        table_num_dict[f], code_num_dict[f] = MERGE(merge_file, DB_TABLE, DB_CODE, f)
-    if main_file.empty == False:
-        logging.info('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-        logging.info('Reading file: '+NAME+'database'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-        main_database = readExcelFile(out_path+NAME+'database'+main_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+        table_num_dict[f] = 1
+        code_num_dict[f] = 1
+    country = readFile(data_path+'Country.csv', header_ = 0, index_col_=[0], encoding_='Big5')
+    country.to_dict()
+    form_e_file = readExcelFile(data_path+'QNIA_form_e.xlsx', acceptNoFile=False, header_ = 0, sheet_name_='QNIA_form_e')
+    form_e_dict = {}
+    for form in form_e_file:
+        form_e_dict[form] = form_e_file[form].dropna().to_list()
+    subject_file = readExcelFile(data_path+'QNIA_Subjects.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Subjects')
+    measure_file = readExcelFile(data_path+'QNIA_Measures.xlsx', acceptNoFile=False, header_ = 0, index_col_=[0], sheet_name_='QNIA_Measures')
+
+merge_file_loaded = False
+while data_processing == False:
+    while True:
+        try:
+            merging = bool(int(input('Merging data file = 1/Updating TOT file = 0: ')))
+            updating = not merging
+            if merge_file_loaded == False:
+                merge_suf = input('Be Merged(Original) data suffix: ')
+                if os.path.isfile(out_path+NAME+'key'+merge_suf+'.xlsx') == False:
+                    raise FileNotFoundError
+            main_suf = input('Main(Updated) data suffix: ')
+            if os.path.isfile(out_path+NAME+'key'+main_suf+'.xlsx') == False:
+                raise FileNotFoundError
+        except:
+            print('= ! = Incorrect Input'+'\n')
+        else:
+            break
+    sys.stdout.write("\n\n")
+    if merging:
+        logging.info('Process: File Merging\n')
+    elif updating:
+        logging.info('Process: File Updating\n')
+    logging.info('Reading main key: '+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+    main_file = readExcelFile(out_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key', acceptNoFile=False)
+    if main_file.empty:
+        ERROR('Empty updated_file')
+    logging.info('Reading main database: '+NAME+'database'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+    main_database = readExcelFile(out_path+NAME+'database'+main_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    if merge_file_loaded:
+        merge_file = df_key
+        merge_database = DATA_BASE_dict
+    else:
+        logging.info('Reading original key: '+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        merge_file = readExcelFile(out_path+NAME+'key'+merge_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key', acceptNoFile=False)
+        if merge_file.empty:
+            ERROR('Empty original_file')
+        logging.info('Reading original database: '+NAME+'database'+merge_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        merge_database = readExcelFile(out_path+NAME+'database'+merge_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    #if merge_file.empty == False and merging == True and updating == False:
+    if merging:
+        logging.info('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
+        for f in FREQNAME:
+            table_num_dict[f], code_num_dict[f] = MERGE(merge_file, DB_TABLE, DB_CODE, f)
+        #if main_file.empty == False:
+        #logging.info('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         for s in range(main_file.shape[0]):
             sys.stdout.write("\rSetting snls: "+str(s+snl))
             sys.stdout.flush()
@@ -156,11 +193,19 @@ if merge_file.empty == False and merging == True and updating == False:
             if db_table_t_dict[f].empty == False:
                 DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
                 DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
-else:    
-    snl = 1
-    for f in FREQNAME:
-        table_num_dict[f] = 1
-        code_num_dict[f] = 1
+        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown, DATA_BASE_t=merge_database)
+    elif updating:
+        df_key, DATA_BASE_dict = UPDATE(merge_file, main_file, key_list, NAME, out_path, merge_suf, main_suf, original_database=merge_database, updated_database=main_database)
+    merge_file_loaded = True
+    while True:
+        try:
+            continuing = bool(int(input('Merge or Update Another File With the Same Original File (1/0): ')))
+        except:
+            print('= ! = Incorrect Input'+'\n')
+        else:
+            break
+    if continuing == False:
+        break
 
 #print(QNIA_t.head(10))
 if updating == False and DF_suffix != merge_suf:
@@ -185,7 +230,8 @@ def QNIA_DATA(i, name, QNIA_t, code_num, table_num, KEY_DATA, DATA_BASE, db_tabl
     value = QNIA_t[QNIA_t.columns[i]]
     db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
     db_code = DB_CODE+str(code_num).rjust(3,'0')
-    db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    #db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code])], axis=1)
     start_found = False
     last_found = False
     found = False
@@ -249,10 +295,12 @@ def QNIA_DATA(i, name, QNIA_t, code_num, table_num, KEY_DATA, DATA_BASE, db_tabl
     desc_e = desc_e + ' - ' + book
     if str(QNIA_t.columns[i][5]).isnumeric():
         form_c = int(QNIA_t.columns[i][5])
-    elif str(QNIA_t.columns[i][5]).find('Unnamed') >= 0 or str(QNIA_t.columns[i][5]).find('nan') == 0:
+        desc_e = desc_e.replace('year','year('+str(form_c)+')')
+    elif str(QNIA_t.columns[i][5]).find('Unnamed') >= 0 or str(QNIA_t.columns[i][5]).find('nan') == 0 or str(QNIA_t.columns[i][5]).strip() == '':
         form_c = ''
     else:
         form_c = QNIA_t.columns[i][5]
+        desc_e = desc_e.replace('year','year('+str(form_c)+')')
     #flags = QNIA_t['Flags'][i]
     key_tmp= [databank, name, db_table, db_code, desc_e, desc_c, frequency, start, last, unit, name_ord, snl, book, form_e, form_c]
     KEY_DATA.append(key_tmp)
@@ -263,9 +311,10 @@ def QNIA_DATA(i, name, QNIA_t, code_num, table_num, KEY_DATA, DATA_BASE, db_tabl
     return code_num, table_num, DATA_BASE, db_table_t, DB_name, snl
 
 ###########################################################################  Main Function  ###########################################################################
-c_list = list(country.index)
-c_list.sort()
-new_item_counts = 0
+if data_processing:
+    c_list = list(country.index)
+    c_list.sort()
+    new_item_counts = 0
 
 for dataset in dataset_list:
     if main_file.empty == False:
@@ -353,25 +402,15 @@ for dataset in dataset_list:
             if find_unknown == True:
                 logging.info('Total New Items Found: '+str(new_item_counts)+' Time: '+str(int(time.time() - tStart))+' s'+'\n') 
 
-subject_file.to_excel(data_path+'QNIA_Subjects.xlsx', sheet_name='QNIA_Subjects')
-measure_file.to_excel(data_path+'QNIA_Measures.xlsx', sheet_name='QNIA_Measures')
-
-for f in FREQNAME:
-    if main_file.empty == False:
-        break
-    if db_table_t_dict[f].empty == False:
-        DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
-        DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
-
 print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
-if main_file.empty == True:
+if data_processing:
+    subject_file.to_excel(data_path+'QNIA_Subjects.xlsx', sheet_name='QNIA_Subjects')
+    measure_file.to_excel(data_path+'QNIA_Measures.xlsx', sheet_name='QNIA_Measures')
+    for f in FREQNAME:
+        if db_table_t_dict[f].empty == False:
+            DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+            DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
     df_key = pd.DataFrame(KEY_DATA, columns = key_list)
-else:
-    if merge_file.empty == True:
-        ERROR('Missing Merge File')
-if updating == True:
-    df_key, DATA_BASE_dict = UPDATE(merge_file, main_file, key_list, NAME, out_path, merge_suf, main_suf)
-else:
     if df_key.empty and find_unknown == False:
         ERROR('Empty dataframe')
     elif df_key.empty and find_unknown == True:
@@ -387,20 +426,20 @@ if os.path.isfile(out_path+"Unknown Subjects.xlsx"):
     os.remove(out_path+"Unknown Subjects.xlsx")
 if os.path.isfile(out_path+"Unknown Measures.xlsx"):
     os.remove(out_path+"Unknown Measures.xlsx")
-with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
-    if updating == True:
-        for d in DATA_BASE_dict:
-            sys.stdout.write("\rOutputing sheet: "+str(d))
-            sys.stdout.flush()
-            if DATA_BASE_dict[d].empty == False:
-                DATA_BASE_dict[d].to_excel(writer, sheet_name = d)
-    else:
+with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer:
+    #if updating == True:
+    for d in DATA_BASE_dict:
+        sys.stdout.write("\rOutputing sheet: "+str(d))
+        sys.stdout.flush()
+        if DATA_BASE_dict[d].empty == False:
+            DATA_BASE_dict[d].to_excel(writer, sheet_name = d)
+    """else:
         for f in FREQNAME:
             for d in DATA_BASE_dict[f]:
                 sys.stdout.write("\rOutputing sheet: "+str(d))
                 sys.stdout.flush()
                 if DATA_BASE_dict[f][d].empty == False:
-                    DATA_BASE_dict[f][d].to_excel(writer, sheet_name = d)
+                    DATA_BASE_dict[f][d].to_excel(writer, sheet_name = d)"""
 sys.stdout.write("\n")
 
 print('Time: '+str(int(time.time() - tStart))+' s'+'\n')

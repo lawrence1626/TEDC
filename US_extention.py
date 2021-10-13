@@ -1,7 +1,7 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
-import math, sys, calendar, os, copy, time, shutil, logging, zipfile, io
+import math, sys, calendar, os, copy, time, shutil, logging, zipfile, io, traceback
 import regex as re
 import pandas as pd
 import numpy as np
@@ -58,7 +58,7 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,encoding=encoding_,engine=engine_,sep=sep_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -77,16 +77,16 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,encoding=encoding_,engine=engine_,sep=sep_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
 def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
-             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None, wait=False):
+             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine_='openpyxl',wait=False):
     try:
-        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
+        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_,engine=engine_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -99,15 +99,29 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
             t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
-def PRESENT(file_path, forcing_download=False):
-    if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
-        if forcing_download == True:
+def PRESENT(file_path, check_latest_update=False, latest_update=None, forcing_download=False):
+    if os.path.isfile(file_path) and (datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V') or datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == (datetime.today()-timedelta(days=7)).strftime('%Y-%V')):
+        if check_latest_update == True:
+            try:
+                datetime.strptime(str(latest_update),'%Y-%m-%d')
+            except ValueError:
+                try:
+                    latest_update = datetime.strptime(str(latest_update),'%Y/%m/%d').strftime('%Y-%m-%d')
+                except ValueError:
+                    return False
+        if check_latest_update == True and datetime.strptime(str(latest_update),'%Y-%m-%d').strftime('%Y-%V') != datetime.today().strftime('%Y-%V') and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') != (datetime.today()-timedelta(days=7)).strftime('%Y-%V'):
             return False
-        logging.info('Present File Exists. Reading Data From Default Path.\n')
-        return True
+        elif forcing_download == True:
+            return False
+        else:
+            if check_latest_update == True:
+                logging.info('Latest Element Received.\n')
+            else:
+                logging.info('Present File Exists. Reading Data From Default Path.\n')
+            return True
     else:
         return False
 
@@ -320,13 +334,27 @@ def US_WEBDRIVER(chrome, address, sname, header=None, index_col=None, skiprows=N
     chrome.execute_script("window.open()")
     chrome.switch_to.window(chrome.window_handles[-1])
     chrome.get('chrome://downloads')
-    time.sleep(3)
+    time.sleep(5)
     try:
         if chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content #tag')").text == '已刪除':
             ERROR('The file was not properly downloaded')
     except JavascriptException:
         ERROR('The file was not properly downloaded')
     excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
+    if address.find('NFIB') >= 0:
+        try:
+            xl = win32.gencache.EnsureDispatch('Excel.Application')
+        except:
+            xl = win32.DispatchEx('Excel.Application')
+        xl.DisplayAlerts=False
+        xl.Visible = 0
+        path = (Path.home() / "Downloads" / excel_file).as_posix()
+        ExcelFile = xl.Workbooks.Open(path)
+        path_t = path.replace('.xlsx','1.xlsx')
+        ExcelFile.SaveCopyAs(path_t)
+        ExcelFile.Close()
+        os.remove(path)
+        os.rename(path_t, path)
     new_file_name = sname+re.sub(r'.+?(\.[csvxlszip]+)$', r"\1", excel_file)
     chrome.close()
     chrome.switch_to.window(chrome.window_handles[0])
@@ -457,8 +485,13 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
             elif address.find('DOT') >= 0:
                 if address.find('MTST') >= 0:
                     WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/label[@data-test-id="preset-label-all"]'))).click()
-                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.csv.zip')
+                    time.sleep(2)
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/span[contains(., "Download CSV File")]'))).click()
+                    time.sleep(10)
+                    link_found = True
+                    #link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.csv.zip')
                 elif address.find('TICS') >= 0:
+                    time.sleep(2)
                     link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.csv')
                     while len(chrome.window_handles) > 1:
                         time.sleep(0)
@@ -487,7 +520,7 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
                     link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.cfm')
                     US_temp = pd.read_html(chrome.page_source, skiprows=skiprows, header=header, index_col=index_col)[0]
                 elif str(sname).find('table') == 0:
-                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname))
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='.xlsx')
                 elif str(sname).find('TVT') == 0:
                     REG = {'Rural':'page7','Urban':'page8'}
                     region = str(sname)[-5:]
@@ -528,6 +561,8 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
                     airport = Select(chrome.find_element_by_id("AirportList"))
                     airport.select_by_value("All")
                     chrome.find_element_by_id("Link_"+re.sub(r'_.+', "", sname)).click()
+                    time.sleep(5)
+                    WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.ID, 'LblHeader')))
                     search = BeautifulSoup(chrome.page_source, "html.parser")
                     result = search.find(id="GridView1")
                     US_temp = pd.read_html(str(result), header=header, index_col=index_col)[0]
@@ -688,10 +723,16 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
                         link_found, link_meassage = US_WEB_LINK(target, fname, keyword='popproj.html')
                     elif address.find('CBRT') >= 0:
                         link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='women-fertility.html')
-                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.')
+                    if address.find('NAHB') >= 0:
+                        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(file_name), text_match=True)
+                    else:
+                        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.')
             if link_found == False:
                 raise FileNotFoundError
-        except (FileNotFoundError, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException):
+        except (FileNotFoundError, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException) as e:
+            sys.stdout.write('\n')
+            if str(e.__class__.__name__) != 'ElementClickInterceptedException':
+                print(traceback.format_exc())
             y+=500
             if y > height and link_found == False:
                 print(y, height)
@@ -747,7 +788,8 @@ def NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, df_key, DATA_BASE, db_table_t
         db_table_t = pd.DataFrame(index = FREQLIST[freq], columns = [])
     db_table = DB_TABLE+freq+'_'+str(start_table).rjust(4,'0')
     db_code = DB_CODE+str(start_code).rjust(3,'0')
-    db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    #db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(list(DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]), index=DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']].index, columns=[db_code])], axis=1)
     df_key.loc[f, 'db_table'] = db_table
     df_key.loc[f, 'db_code'] = db_code
     start_code += 1
@@ -756,15 +798,26 @@ def NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, df_key, DATA_BASE, db_table_t
     
     return df_key, DATA_BASE_new, DB_name_new, db_table_t, start_table, start_code, db_table_new, db_code_new
 
-def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, KEY_DATA_t, DB_dict, DB_name_dict, find_unknown=True):
+def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, KEY_DATA_t, DB_dict, DB_name_dict, find_unknown=True, DATA_BASE_t=None):
     if find_unknown == True:
         repeated_standard = 'start'
     else:
         repeated_standard = 'last'
     #logging.info('Reading file: '+NAME+'key'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     #KEY_DATA_t = readExcelFile(data_path+NAME+'key'+suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
-    logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
+    if DATA_BASE_t == None:
+        try:
+            with open(data_path+NAME+'database_num'+suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+                database_num = int(f.read().replace('\n', ''))
+            DATA_BASE_t = {}
+            for i in range(1,database_num+1):
+                logging.info('Reading file: '+NAME+'database_'+str(i)+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+                DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+                for d in DB_t.keys():
+                    DATA_BASE_t[d] = DB_t[d]
+        except:
+            logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+            DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
     if KEY_DATA_t.empty == False and type(DATA_BASE_t) != dict:
         ERROR(NAME+'database'+suf+'.xlsx Not Found.')
     elif type(DATA_BASE_t) != dict:
@@ -779,7 +832,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             sys.stdout.write("\rConcating sheet: "+str(d))
             sys.stdout.flush()
             if d in DATA_BASE_t.keys():
-                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d])
+                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d], how='outer')
             else:
                 DATA_BASE_t[d] = DB_dict[f][d]
         sys.stdout.write("\n")
@@ -890,13 +943,18 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
     DATA_BASE_dict = {}
     for f in FREQNAME:
         if not DB_name_dict[f]:
-            DATA_BASE_dict[f] = DB_dict[f]
+            for key in DB_dict[f]:
+                sys.stdout.write("\rConcating sheet: "+str(key))
+                sys.stdout.flush()
+                DATA_BASE_dict[key] = DB_dict[f][key]
+            sys.stdout.write("\n")
             continue
-        DATA_BASE_dict[f] = {}
+        #DATA_BASE_dict[f] = {}
         for d in DB_name_dict[f]:
             sys.stdout.write("\rConcating sheet: "+str(d))
             sys.stdout.flush()
-            DATA_BASE_dict[f][d] = DB_dict[f][d]
+            #DATA_BASE_dict[f][d] = DB_dict[f][d]
+            DATA_BASE_dict[d] = DB_dict[f][d]
         sys.stdout.write("\n")
     
     #print(KEY_DATA_t)
@@ -904,20 +962,42 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
 
     return KEY_DATA_t, DATA_BASE_dict
 
-def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf):
+def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf, original_database=None, updated_database=None):
     updated = 0
     tStart = time.time()
     logging.info('Updating file: '+str(int(time.time() - tStart))+' s'+'\n')
-    logging.info('Reading original database: '+NAME+'database'+orig_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
-    logging.info('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    if original_database == None:
+        try:
+            with open(data_path+NAME+'database_num'+orig_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+                database_num = int(f.read().replace('\n', ''))
+            original_database = {}
+            for i in range(1,database_num+1):
+                logging.info('Reading original database: '+NAME+'database_'+str(i)+orig_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+                DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+                for d in DB_t.keys():
+                    original_database[d] = DB_t[d]
+        except:
+            logging.info('Reading original database: '+NAME+'database'+orig_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+            original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    if updated_database == None:
+        try:
+            with open(data_path+NAME+'database_num'+up_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+                database_num = int(f.read().replace('\n', ''))
+            updated_database = {}
+            for i in range(1,database_num+1):
+                logging.info('Reading updated database: '+NAME+'database_'+str(i)+up_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+                DB_t = readExcelFile(data_path+NAME+'database_'+str(i)+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+                for d in DB_t.keys():
+                    updated_database[d] = DB_t[d]
+        except:
+            logging.info('Reading updated database: '+NAME+'database'+up_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+            updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
     CAT = ['desc_e', 'desc_c', 'unit', 'type', 'form_e', 'form_c']
 
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
     for ind in updated_file.index:
-        sys.stdout.write("\rUpdating latest data time: "+ind+" ")
+        sys.stdout.write("\rUpdating latest data time ("+str(round((list(updated_file.index).index(ind)+1)*100/len(updated_file.index), 2))+"%): "+ind+" ")
         sys.stdout.flush()
 
         if ind in original_file.index:
@@ -1410,9 +1490,9 @@ def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_ser
             US_t = readExcelFile(data_path+address+file_name+'.xls'+x, header_=header, index_col_=index_col, skiprows_=skiprows, sheet_name_=sheet_name, acceptNoFile=False, usecols_=usecols, names_=names)
         else:
             if fname.find('http') >= 0:
-                US_t = US_WEB(chrome, address, fname, sname, freq=freq, header=header, index_col=index_col, skiprows=skiprows, excel=x, usecols=usecols, names=names)
+                US_t = US_WEB(chrome, address, fname, sname, freq=freq, header=header, index_col=index_col, skiprows=skiprows, excel=x, usecols=usecols, names=names, file_name=key_text)
             elif website != None and address.find('POPT') < 0:
-                US_t = US_WEB(chrome, address, website, fname, freq=freq, tables=[sname], header=header, index_col=index_col, skiprows=skiprows, excel=x, usecols=usecols, names=names)
+                US_t = US_WEB(chrome, address, website, fname, freq=freq, tables=[sname], header=header, index_col=index_col, skiprows=skiprows, excel=x, usecols=usecols, names=names, file_name=key_text)
         fname = file_name
         sname = sheet_name
         if type(US_t) != dict and US_t.empty == True:
@@ -1965,6 +2045,9 @@ def US_FAMI(prefix, middle, data_path, address, fname, sname, DIY_series, x='', 
                 if str(US_temp.iloc[i][0]) in list(DIY_series['DATA TYPES']['key_desc']) or bool(re.search(r'[^0-9\(\)\s]+', str(US_temp.iloc[i][0]))):
                     table_tail = i-1
                     break
+                elif i == US_temp.shape[0]-1:
+                    table_tail = i
+                    break
             if str(US_temp.iloc[h][0]) == 'All Families':
                 use = [0,1,6]
                 names = ['Year', str(US_temp.iloc[h][0]), str(US_temp.iloc[h+1][6])]
@@ -2511,7 +2594,7 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, US_present=p
                                 table_tail = i
                                 break
                         if key == 'present':
-                            tables[key] = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', header=[0,1], index_col=0, widths=[30]+[8]*13, skiprows=list(range(table_head)), nrows=table_tail-table_head)
+                            tables[key] = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', header=[3,4], index_col=0, widths=[30]+[8]*13, nrows=table_tail-table_head+1)
                             tables[key].to_csv(data_path+address+fname.replace('his01_historical','')+'.csv')
                         else:
                             tables[key] = readFile(data_path+address+fname.replace('_historical','')+'.csv', header_=[0,1], index_col_=0, skiprows_=list(range(table_head)), nrows_=table_tail-table_head)
@@ -2543,7 +2626,7 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, US_present=p
                                     if suf_key in re.split(r'//', item.strip()):
                                         suffix = str(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item].index[0])
                             if middle == '' or suffix == '':
-                                ERROR('Item code of '+str(dex).strip()+' not found in table: '+key)
+                                ERROR('Item code of "'+str(dex).strip()+'" not found in table: '+key)
                             inds.append(prefix+middle+suffix)
                             if bool(re.search(r'[0-9]+/', str(dex))) and suffix not in Note_suf:
                                 Note_suf[suffix] = re.findall(r'[0-9]+/',str(dex))
@@ -2687,18 +2770,31 @@ def US_BTSDOL(data_path, address, fname, sname, Series, header=None, index_col=N
         unit = Series['DATA TYPES'].loc[suffix, 'dt_unit']
     if suffix.find('SAT') >= 0:
         note = []
-        chrome.get(fname)
-        if str(sname).find('US') >= 0:
-            Select(chrome.find_element_by_id("CarrierList")).select_by_value("AllUS")
+        file_path = data_path+address+'Units.csv'
+        unit_list = readFile(file_path, header_=[0], index_col_=0, acceptNoFile=False)
+        try:
+            latest = PRESENT(file_path, check_latest_update=True, latest_update=unit_list.loc[sname, 'last updated'])
+        except KeyError:
+            ERROR('File Name Not Found in Units.csv: '+sname)
+        if latest == True:
+            unit = str(unit_list.loc[sname, 'unit'])
         else:
-            Select(chrome.find_element_by_id("CarrierList")).select_by_value("All")
-        Select(chrome.find_element_by_id("AirportList")).select_by_value("All")
-        chrome.find_element_by_id("Link_"+re.sub(r'_.+', "", sname)).click()
-        search = BeautifulSoup(chrome.page_source, "html.parser")
-        unit_t = search.find(id="LblHeader").text
-        #unit_t = str(readExcelFile(data_path+address+fname+'.xls'+x, usecols_=[0], sheet_name_=sname).iloc[0][0]).strip()
-        if bool(re.search(r'.+?\(.+?\(.+?\)\).*', unit_t)):
-            unit = re.sub(r'.+?\((.+?)\(.+?\)\).*', r'\1', unit_t).strip().capitalize()
+            chrome.get(fname)
+            if str(sname).find('US') >= 0:
+                Select(chrome.find_element_by_id("CarrierList")).select_by_value("AllUS")
+            else:
+                Select(chrome.find_element_by_id("CarrierList")).select_by_value("All")
+            Select(chrome.find_element_by_id("AirportList")).select_by_value("All")
+            chrome.find_element_by_id("Link_"+re.sub(r'_.+', "", sname)).click()
+            WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.ID, 'LblHeader')))
+            search = BeautifulSoup(chrome.page_source, "html.parser")
+            unit_t = search.find(id="LblHeader").text
+            #unit_t = str(readExcelFile(data_path+address+fname+'.xls'+x, usecols_=[0], sheet_name_=sname).iloc[0][0]).strip()
+            if bool(re.search(r'.+?\(.+?\(.+?\)\).*', unit_t)):
+                unit = re.sub(r'.+?\((.+?)\(.+?\)\).*', r'\1', unit_t).strip().capitalize()
+            unit_list.loc[sname, 'unit'] = unit
+            unit_list.loc[sname, 'last updated'] = datetime.today().strftime('%Y-%m-%d')
+            unit_list.to_csv(file_path)
     PASS = ['Air', 'Rail']
     
     new_columns = []

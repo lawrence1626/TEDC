@@ -39,6 +39,7 @@ def QNIA_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True
     notsame = 0
     notsame_earliest = str(datetime.today().year)
     notsame_dict = {}
+    base_update = 0
     updated = 0
     update_list = []
     CHECK = ['desc_e', 'desc_c', 'freq', 'unit', 'name_ord', 'book', 'form_e', 'form_c']
@@ -80,7 +81,13 @@ def QNIA_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True
                         continue
                     elif checkDESC == False and (check == 'desc_e' or check == 'desc_c' or check == 'form_e' or check == 'form_c'):
                         continue
-                    logging.info('Index '+ind+' '+check+' error')
+                    if (check == 'desc_e' and str(df_key.loc[ind, check]).replace(str(df_key.loc[ind, 'form_c']), '') == str(DF_KEY.loc[ind, check]).replace(str(DF_KEY.loc[ind, 'form_c']), '')) or (check == 'form_c' and str(df_key.loc[ind, check]).strip() > str(DF_KEY.loc[ind, check]).strip()):
+                        logging.info('Index '+ind+' '+check+': base updated')
+                        if check == 'form_c':
+                            base_update += 1
+                        continue
+                    else:
+                        logging.info('Index '+ind+' '+check+' inconsistent')
                     if check == 'desc_e' and str(df_key.loc[ind, check]).replace(str(DF_KEY.loc[ind, check]), '') != str(df_key.loc[ind, check]):
                         logging.info('df_key(not equal part) = '+str(df_key.loc[ind, check]).replace(str(DF_KEY.loc[ind, check]), ''))
                     else:
@@ -121,7 +128,8 @@ def QNIA_identity(data_path, df_key, DF_KEY, checkNotFound=False, checkDESC=True
         for c in CHECK:
             logging.info('Total '+c+' inconsistent: '+str(notsame_dict[c]))
         logging.info('inconsistent earliest: '+str(notsame_earliest))
-    logging.info('updated: '+str(updated))
+    logging.info('base updated: '+str(base_update))
+    logging.info('data updated: '+str(updated))
     logging.info('including weekly: '+str(includingweekly))
     logging.info('too many months: '+str(toomanymonths))
 

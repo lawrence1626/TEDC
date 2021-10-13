@@ -5,8 +5,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
-from US_extention import ERROR, readFile, readExcelFile
-import US_extention as EXT
+from INTLINE_extention import ERROR, readFile, readExcelFile
+import INTLINE_extention as EXT
 
 ENCODING = 'utf-8-sig'
 data_path = "./output/"
@@ -19,8 +19,9 @@ if EXT.excel_suffix != "0":
 else:
     local = True #bool(int(input('Check from local data (1/0): ')))
     checkDESC = bool(int(input('Check data description (1/0): ')))
+    checkNotFound = bool(int(input('Check unfound data (1/0): ')))
 
-def US_identity(data_path, df_key, DF_KEY, keyword='', checkNotFound=True, checkDESC=True, checkOnly='', checkIgnore=[], tStart=time.time(), start_year=1901):
+def INTLINE_identity(data_path, df_key, DF_KEY=pd.DataFrame(), keyword='', checkNotFound=False, checkDESC=True, checkOnly='', checkIgnore=[], tStart=time.time(), start_year=1901):
     
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
@@ -36,13 +37,14 @@ def US_identity(data_path, df_key, DF_KEY, keyword='', checkNotFound=True, check
     toolong_list = []
     toomanymonths = False
     includingweekly = False
+    includingdaily = False
     notsame = 0
     notsame_earliest = str(datetime.today().year)
     notsame_dict = {}
     base_update = 0
     updated = 0
     update_list = []
-    CHECK = ['desc_e', 'desc_c', 'freq', 'unit', 'type', 'source', 'form_e', 'form_c']
+    CHECK = ['desc_e', 'country', 'freq', 'unit', 'type', 'source', 'form_e', 'form_c']
     for c in CHECK:
         notsame_dict[c] = 0
     UPDATE = ['last']
@@ -66,6 +68,8 @@ def US_identity(data_path, df_key, DF_KEY, keyword='', checkNotFound=True, check
                 toomanymonths = True
         if df_key.loc[ind, 'freq'] == 'W':
             includingweekly = True
+        elif df_key.loc[ind, 'freq'] == 'D':
+            includingdaily = True
         if ind not in DF_KEY.index:
             #logging.info('Index Unknown: '+ind)
             unknown_list.append([ind, df_key.loc[ind, 'start']])
@@ -79,12 +83,12 @@ def US_identity(data_path, df_key, DF_KEY, keyword='', checkNotFound=True, check
                         continue
                     elif str(DF_KEY.loc[ind, check]).strip() == 'nan' and str(df_key.loc[ind, check]).strip() == '':
                         continue
-                    elif checkDESC == False and (check == 'desc_e' or check == 'type' or check == 'desc_c'):
+                    elif checkDESC == False and (check == 'desc_e' or check == 'type'):
                         continue
-                    if (check == 'desc_e' and str(df_key.loc[ind, 'unit']).find('Index') >= 0 and str(df_key.loc[ind, check])[:str(df_key.loc[ind, check]).find('Unit:')] == str(DF_KEY.loc[ind, check])[:str(DF_KEY.loc[ind, check]).find('Unit:')]) or\
-                     ((check == 'unit' or check == 'desc_c') and str(df_key.loc[ind, 'unit']).find('Index') >= 0 and str(df_key.loc[ind, check]).strip() > str(DF_KEY.loc[ind, check]).strip()):
+                    if (check == 'desc_e' and str(df_key.loc[ind, 'unit']).find('Index') >= 0 and str(df_key.loc[ind, check]).replace(str(df_key.loc[ind, 'unit']), '') == str(DF_KEY.loc[ind, check]).replace(str(DF_KEY.loc[ind, 'unit']), '')) or\
+                     (check == 'unit' and str(df_key.loc[ind, check]).find('Index') >= 0 and str(df_key.loc[ind, check]).strip() > str(DF_KEY.loc[ind, check]).strip()):
                         logging.info('Index '+ind+' '+check+': base updated')
-                        if check == 'unit' or check == 'desc_c':
+                        if check == 'unit':
                             base_update += 1
                         continue
                     elif check == 'desc_e' and str(df_key.loc[ind, check])[:str(df_key.loc[ind, check]).find('Note:')] == str(DF_KEY.loc[ind, check])[:str(DF_KEY.loc[ind, check]).find('Note:')]:
@@ -138,6 +142,7 @@ def US_identity(data_path, df_key, DF_KEY, keyword='', checkNotFound=True, check
     logging.info('base updated: '+str(base_update))
     logging.info('data updated: '+str(updated))
     logging.info('including weekly: '+str(includingweekly))
+    logging.info('including daily: '+str(includingdaily))
     logging.info('too many months: '+str(toomanymonths))
 
     SET = {'BEA':'Bureau of Economic Analysis','BLS':'Bureau Of Labor Statistics'}
@@ -145,13 +150,15 @@ def US_identity(data_path, df_key, DF_KEY, keyword='', checkNotFound=True, check
     unfound_list = []
     if checkNotFound == True:
         for ind in DF_KEY.index:
-            sys.stdout.write("\rChecking Index: "+ind+" ")
-            sys.stdout.flush()
             if keyword in SET:
                 if str(DF_KEY.loc[ind, 'source']) != SET[keyword]:
                     continue
-            elif str(DF_KEY.loc[ind, 'source']) != str(df_key.iloc[0]['source']):
-                    continue
+            else:
+                for key in SET:
+                    if str(DF_KEY.loc[ind, 'source']) == SET[key]:
+                        continue
+            sys.stdout.write("\rChecking Index: "+ind+" ")
+            sys.stdout.flush()
             if ind not in df_key.index:
                 #logging.info('Index Not Found: '+ind)
                 unfound_list.append(ind)
@@ -163,11 +170,15 @@ def US_identity(data_path, df_key, DF_KEY, keyword='', checkNotFound=True, check
     return unknown_list, toolong_list, update_list, unfound_list
 
 if local == True:
+    if EXT.BANK == 'INTLINE':
+        NAME = EXT.NAME
+    elif EXT.BANK == 'ASIA':
+        NAME = EXT.ASIA_NAME
     main_suf = input('Main data suffix: ')
-    styr = 1901#int(input('Dealing Start Year of Main data: '))
-    logging.info('Reading file: US_key'+main_suf+'\n')
-    df_key = readExcelFile(data_path+'US_key'+main_suf+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
-    logging.info('Reading TOT file: US_key'+DF_suffix+'\n')
-    DF_KEY = readExcelFile(data_path+'US_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
+    styr = int(input('Dealing Start Year of Main data: '))
+    logging.info('Reading file: '+NAME+'key'+main_suf+'\n')
+    df_key = readExcelFile(data_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_=NAME+'key')
+    logging.info('Reading TOT file: INTLINE_key'+DF_suffix+'\n')
+    DF_KEY = readExcelFile(data_path+'INTLINE_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='INTLINE_key')
     DF_KEY = DF_KEY.set_index('name') 
-    unknown_list, toolong_list, update_list, unfound_list = US_identity(data_path, df_key, DF_KEY, checkDESC=checkDESC, start_year=styr)
+    unknown_list, toolong_list, update_list, unfound_list = INTLINE_identity(data_path, df_key, DF_KEY, checkDESC=checkDESC, checkNotFound=checkNotFound, start_year=styr)

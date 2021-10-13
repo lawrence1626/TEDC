@@ -25,7 +25,7 @@ main_suf = '?'
 merge_suf = '?'
 dealing_start_year = 1957
 start_year = 1957
-maximum = 9
+maximum = 8
 merging = bool(int(input('Merging data file (1/0): ')))
 updating = bool(int(input('Updating TOT file (1/0): ')))
 if merging and updating:
@@ -63,6 +63,13 @@ log = logging.getLogger()
 stream = logging.StreamHandler(sys.stdout)
 stream.setFormatter(logging.Formatter('%(message)s'))
 log.addHandler(stream)
+sys.stdout.write("\n\n")
+if merging:
+    logging.info('Process: File Merging\n')
+elif updating:
+    logging.info('Process: File Updating\n')
+else:
+    logging.info('Data Processing\n')
 
 def takeFirst(alist):
 	return alist[0]
@@ -181,7 +188,8 @@ def EIKON_DATA(i, loc1, loc2, name, sheet, EIKON_t, code_num, table_num, KEY_DAT
     index = EIKON_t[sheet][EIKON_t[sheet].columns[i]].index
     db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
     db_code = DB_CODE+str(code_num).rjust(3,'0')
-    db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    #db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code])], axis=1)
     
     start_found = False
     last_found = False

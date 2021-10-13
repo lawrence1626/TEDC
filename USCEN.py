@@ -32,21 +32,11 @@ start_year = 1900
 start_yearQ = 1940
 start_yearM = 1909
 start_yearS = 1980
-merging = bool(int(input('Merging data file (1/0): ')))
-updating = bool(int(input('Updating TOT file (1/0): ')))
-if merging and updating:
-    ERROR('Cannot do merging and updating at the same time.')
-elif merging or updating:
-    merge_suf = input('Be Merged(Original) data suffix: ')
-    main_suf = input('Main(Updated) data suffix: ')
-else:
-    find_unknown = bool(int(input('Check if new items exist (1/0): ')))
-    """if find_unknown == False:
-        dealing_start_year = int(input("Dealing with data from year: "))
-        start_year = dealing_start_year-10
-        start_yearQ = dealing_start_year-10
-        start_yearM = dealing_start_year-10
-        start_yearS = dealing_start_year-10"""
+maximum = 90
+merging = False
+updating = False
+data_processing = bool(int(input('Processing data (1/0): ')))
+keyword = ['','']
 bls_start = dealing_start_year
 TICS_start = str(dealing_start_year)+'-01'
 DF_suffix = test.DF_suffix
@@ -54,42 +44,18 @@ Historical = False
 make_discontinued = False
 ENCODING = EXT.ENCODING
 excel_suffix = EXT.excel_suffix
-if main_suf == '?':
-    keyword = input('keyword: ')
-    keyword = re.split(r'/', keyword)
-    if len(keyword) < 2:
-        keyword.append('')
-else:
-    keyword = ['','']
-if keyword[0] == 'BLS':
-    ig = input('ignore: ')
-    if ig != '':
-        ignore = re.split(r',', ig)
-    else:
-        ignore = []
-else:
-    ignore = []
-LOG = ['excel_suffix', 'merging', 'updating', 'find_unknown','dealing_start_year']
+LOG = ['excel_suffix', 'data_processing', 'find_unknown','dealing_start_year']
 for key in LOG:
     logging.info(key+': '+str(locals()[key])+'\n')
 log = logging.getLogger()
 stream = logging.StreamHandler(sys.stdout)
 stream.setFormatter(logging.Formatter('%(message)s'))
 log.addHandler(stream)
-sys.stdout.write("\n\n")
-if merging:
-    logging.info('Process: File Merging\n')
-elif updating:
-    logging.info('Process: File Updating\n')
-else:
-    logging.info('Data Processing\n')
 NAME = EXT.NAME
 data_path = EXT.data_path
 out_path = EXT.out_path
 databank = NAME[:-1]
 key_list = ['databank', 'name', 'db_table', 'db_code', 'desc_e', 'desc_c', 'freq', 'start', 'last', 'unit', 'type', 'snl', 'source', 'form_e', 'form_c', 'table_id']
-main_file = readExcelFile(out_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
-merge_file = readExcelFile(out_path+NAME+'key'+merge_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
 this_year = datetime.now().year + 1
 update = datetime.today()
 for i in range(len(key_list)):
@@ -130,22 +96,108 @@ for f in FREQNAME:
     DB_name_dict[f] = []
 DB_TABLE = 'DB_'
 DB_CODE = 'data'
-
 table_num_dict = {}
 code_num_dict = {}
-snl = 1
-for f in FREQNAME:
-    table_num_dict[f] = 1
-    code_num_dict[f] = 1
-if merge_file.empty == False and merging == True and updating == False:
-    logging.info('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
+
+if data_processing:
+    find_unknown = bool(int(input('Check if new items exist (1/0): ')))
+    """if find_unknown == False:
+        dealing_start_year = int(input("Dealing with data from year: "))
+        start_year = dealing_start_year-10
+        start_yearQ = dealing_start_year-10
+        start_yearM = dealing_start_year-10
+        start_yearS = dealing_start_year-10"""
+    keyword = input('keyword: ')
+    keyword = re.split(r'/', keyword)
+    if len(keyword) < 2:
+        keyword.append('')
+    if keyword[0] == 'BLS' or keyword[0] == 'ETC':
+        ig = input('ignore: ')
+        if ig != '':
+            ignore = re.split(r',', ig)
+        else:
+            ignore = []
+    else:
+        ignore = []
+    sys.stdout.write("\n\n")
+    logging.info('Data Processing\n')
+    main_file = pd.DataFrame()
+    merge_file = pd.DataFrame()
+    snl = 1
     for f in FREQNAME:
-        table_num_dict[f], code_num_dict[f] = MERGE(merge_file, DB_TABLE, DB_CODE, f)
-    if main_file.empty == False:
-        logging.info('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-        logging.info('Reading file: '+NAME+'database'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        table_num_dict[f] = 1
+        code_num_dict[f] = 1
+    logging.info('Reading table: TABLES, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+    TABLES = readExcelFile(data_path+'tables.xlsx', header_ = 0, sheet_name_=0)
+    Titles = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='titles').to_dict()
+
+merge_file_loaded = False
+while data_processing == False:
+    TABLES = pd.DataFrame()
+    while True:
+        try:
+            merging = bool(int(input('Merging data file = 1/Updating TOT file = 0: ')))
+            updating = not merging
+            if merge_file_loaded == False:
+                merge_suf = input('Be Merged(Original) data suffix: ')
+                if os.path.isfile(out_path+NAME+'key'+merge_suf+'.xlsx') == False:
+                    raise FileNotFoundError
+            main_suf = input('Main(Updated) data suffix: ')
+            if os.path.isfile(out_path+NAME+'key'+main_suf+'.xlsx') == False:
+                raise FileNotFoundError
+        except:
+            print('= ! = Incorrect Input'+'\n')
+        else:
+            break
+    sys.stdout.write("\n\n")
+    if merging:
+        logging.info('Process: File Merging\n')
+    elif updating:
+        logging.info('Process: File Updating\n')
+    logging.info('Reading main key: '+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+    main_file = readExcelFile(out_path+NAME+'key'+main_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key', acceptNoFile=False)
+    if main_file.empty:
+        ERROR('Empty updated_file')
+    try:
+        with open(out_path+NAME+'database_num'+main_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+            database_num = int(f.read().replace('\n', ''))
+        main_database = {}
+        for i in range(1,database_num+1):
+            logging.info('Reading main database: '+NAME+'database_'+str(i)+main_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+            DB_t = readExcelFile(out_path+NAME+'database_'+str(i)+main_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+            for d in DB_t.keys():
+                main_database[d] = DB_t[d]
+    except:
+        logging.info('Reading main database: '+NAME+'database'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         main_database = readExcelFile(out_path+NAME+'database'+main_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    if merge_file_loaded:
+        merge_file = df_key
+        merge_database = DATA_BASE_dict
+    else:
+        logging.info('Reading original key: '+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        merge_file = readExcelFile(out_path+NAME+'key'+merge_suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key', acceptNoFile=False)
+        if merge_file.empty:
+            ERROR('Empty original_file')
+        try:
+            with open(out_path+NAME+'database_num'+merge_suf+'.txt','r',encoding=ENCODING) as f:  #用with一次性完成open、close檔案
+                database_num = int(f.read().replace('\n', ''))
+            merge_database = {}
+            for i in range(1,database_num+1):
+                logging.info('Reading original database: '+NAME+'database_'+str(i)+merge_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+                DB_t = readExcelFile(out_path+NAME+'database_'+str(i)+merge_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False, sheet_name_=None)
+                for d in DB_t.keys():
+                    merge_database[d] = DB_t[d]
+        except:
+            logging.info('Reading original database: '+NAME+'database'+merge_suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+            merge_database = readExcelFile(out_path+NAME+'database'+merge_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    #if merge_file.empty == False and merging == True and updating == False:
+    if merging:
+        logging.info('Merging File: '+out_path+NAME+'key'+merge_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        snl = int(merge_file['snl'][merge_file.shape[0]-1]+1)
+        for f in FREQNAME:
+            table_num_dict[f], code_num_dict[f] = MERGE(merge_file, DB_TABLE, DB_CODE, f)
+        #if main_file.empty == False:
+        #logging.info('Main File Exists: '+out_path+NAME+'key'+main_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
         for s in range(main_file.shape[0]):
             sys.stdout.write("\rSetting snls: "+str(s+snl))
             sys.stdout.flush()
@@ -165,13 +217,22 @@ if merge_file.empty == False and merging == True and updating == False:
             if db_table_t_dict[f].empty == False:
                 DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
                 DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
-else:    
-    snl = 1
-    for f in FREQNAME:
-        table_num_dict[f] = 1
-        code_num_dict[f] = 1
-logging.info('Reading table: TABLES, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-TABLES = readExcelFile(data_path+'tables.xlsx', header_ = 0, sheet_name_=0)
+        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown, DATA_BASE_t=merge_database)
+    elif updating:
+        if 'table_id' in key_list:
+            key_list.remove('table_id')
+        df_key, DATA_BASE_dict = UPDATE(merge_file, main_file, key_list, NAME, out_path, merge_suf, main_suf, original_database=merge_database, updated_database=main_database)
+    merge_file_loaded = True
+    while True:
+        try:
+            continuing = bool(int(input('Merge or Update Another File With the Same Original File (1/0): ')))
+        except:
+            print('= ! = Incorrect Input'+'\n')
+        else:
+            break
+    if continuing == False:
+        break
+
 if updating == False and DF_suffix != merge_suf:
     logging.info('Reading file: US_key'+DF_suffix+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     DF_KEY = readExcelFile(out_path+'US_key'+DF_suffix+'.xlsx', header_=0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
@@ -249,7 +310,6 @@ def SCALE(code, address, SERIES=None):
             return('')
         else:
             ERROR('Scale error: '+code)
-Titles = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=0, sheet_name_='titles').to_dict()
 def US_KEY(address, counting=False, key=None):
     if address.find('BOC') >= 0:
         logging.info('Reading file: BOC_datasets, Time: '+str(int(time.time() - tStart))+' s'+'\n')
@@ -595,7 +655,8 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
     
     db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
     db_code = DB_CODE+str(code_num).rjust(3,'0')
-    db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    #db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code])], axis=1)
     content = ''
     note = ''
     note_num = 1
@@ -1233,17 +1294,18 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
     return code_num, table_num, DATA_BASE, db_table_t, DB_name, snl
 
 ###########################################################################  Main Function  ###########################################################################
-MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-TABLE_NAME = {'ISADJUSTED':'adj','CATEGORIES':'cat','DATA TYPES':'dt','GEO LEVELS':'geo'}
-NEW_TABLES = TABLES.copy()
-NEW_TABLES = NEW_TABLES.set_index(['Address','File','Sheet']).sort_index()
-Zip_table = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=[0,1], sheet_name_='ZIPdatasets').sort_index()
 chrome = None
-new_item_counts = 0
+if data_processing:
+    MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    TABLE_NAME = {'ISADJUSTED':'adj','CATEGORIES':'cat','DATA TYPES':'dt','GEO LEVELS':'geo'}
+    NEW_TABLES = TABLES.copy()
+    NEW_TABLES = NEW_TABLES.set_index(['Address','File','Sheet']).sort_index()
+    Zip_table = readExcelFile(data_path+'tables.xlsx', header_ = 0, index_col_=[0,1], sheet_name_='ZIPdatasets').sort_index()
+    new_item_counts = 0
 
 for source in SOURCE(TABLES):
-    if main_file.empty == False:
-        break
+    #if main_file.empty == False:
+    #    break
     for address in FILE_ADDRESS(source):
         if make_discontinued == False and (address.find('DSCO') >= 0 or address.find('in/') >= 0 or address.find('ml/') >= 0):
             continue
@@ -1390,6 +1452,13 @@ for source in SOURCE(TABLES):
                                 elif address.find('DIRI') >= 0 and str(Series['CATEGORIES'].loc[Series['CATEGORIES']['cat_desc'] == re.sub(r'\s*\(.*line.+\)|\s*/[0-9]+/',"",str(label.iloc[item]).strip())].index[0]) == '\xa0':
                                     label_level[item] = -1
                             note, footnote = US_NOTE(US_t.index, sname, label, address)
+                            if address.find('NIPA') >= 0 or address.find('FAAT') >= 0:
+                                for ind in list(US_t['Index']):
+                                    if str(ind) != 'nan' and str(ind) != 'ZZZZZZ':
+                                        try:
+                                            Series.loc[ind]
+                                        except KeyError:
+                                            CONTINUE.append(ind)
                     elif source == 'Federal Reserve Board':
                         file_path = data_path+address+sname+'.csv'
                         if address.find('G17') >= 0:
@@ -1477,7 +1546,7 @@ for source in SOURCE(TABLES):
                         label_level = None
                         repl = 5
                     elif source == 'Department Of The Treasury, Bureau Of The Fiscal Service':
-                        US_temp = readFile(zf.open(fname+'.csv'), header_ =0)
+                        US_temp = readFile(zf.open(zf.namelist()[0]), header_ =0)#fname+'.csv'
                         US_temp = US_temp.sort_values(by=['Line Code Number','Calendar Year','Calendar Month Number'], ignore_index=True)
                         US_t, label, note, footnote, label_level = US_DOT(Series, US_temp, fname, key=Series.loc[fname, 'Key'], find_unknown=find_unknown, DF_KEY=DF_KEY)
                         repl = None
@@ -1496,7 +1565,7 @@ for source in SOURCE(TABLES):
                                 sname_t = sname.replace('_historical','')
                             US_temp = US_WEB(chrome, address, fname, sname_t, freq=freq, header=[0], index_col=idx, skiprows=list(range(int(Table.loc[sname, 'skip'].item()))), csv=True)
                             if sname.find('mfhhis') >= 0:
-                                US_present = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', header=[0], index_col=0, widths=[30]+[8]*13)
+                                US_present = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', index_col=0, widths=[30]+[8]*13)
                                 US_his = readFile(file_path, header_=[0], index_col_=0)
                         if sname == 's1_globl':
                             KEYS = {3:['Marketable'],4:["Gov't"],5:['corporate','bonds'],0:['corporate','stocks'],1:['Foreign securities','Bonds'],2:['Stocks']}
@@ -1667,63 +1736,73 @@ for source in SOURCE(TABLES):
                         bls_key = str(Series['datasets'].loc[address, 'Y_KEY'])
                         bls_key2 = str(Series['datasets'].loc[address, 'Q_KEY'])
                         PERIODS = {'A':YEAR[bls_key],'S':SEMI,'Q':QUAR[bls_key2],'M':MON}
+                        US_t_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+' - '+FREQ[freq]+' - Final.csv'
                         freq_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+' - '+FREQ[freq]+'.csv'
                         #if bls_read == False:
-                        if PRESENT(freq_path):
-                            US_temp = readFile(freq_path, header_=[0], index_col_=0)
+                        if PRESENT(US_t_path):
+                            US_t = readFile(US_t_path, header_=[0], index_col_=0)
+                            US_temp = US_t
+                            label = US_t['Label']
+                            note = []
+                            footnote = []
                         else:
-                            file_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+'.csv'#'BLS/INTLINE_t_'+address[-3:-1]+'_'+freq+'.xlsx'
-                            if PRESENT(file_path):
-                                US_temp = readFile(file_path, header_=[0], index_col_=0)
+                            if PRESENT(freq_path):
+                                US_temp = readFile(freq_path, header_=[0], index_col_=0)
                             else:
-                                print('Waiting for Download...'+'\n')
-                                US_temp = readFile(address+fname, header_=0, names_=['series_id','year','period','value','footnote_codes'], acceptNoFile=True, sep_='\\t')
-                                US_temp.to_csv(file_path)
-                                print('Download Complete, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-                            #bls_read = True
-                            if address.find('in/') >= 0 and freq == 'A':
-                                for code in Table['begin_year']:
-                                    sys.stdout.write("\rCorrection...("+str(round((list(Table['begin_year']).index(code)+1)*100/len(Table['begin_year']), 1))+"%)*")
-                                    sys.stdout.flush()
-                                    if not not list(US_temp.loc[US_temp['series_id'] == code]['year']) and Table['begin_year'][code] not in list(US_temp.loc[US_temp['series_id'] == code]['year']):
-                                        Table['begin_year'][code] = list(US_temp.loc[US_temp['series_id'] == code]['year'])[0]
-                                sys.stdout.write("\n\n")
-                            elif address.find('ml/') >= 0:
-                                delete = []
-                                for i in range(US_temp.shape[0]):
-                                    sys.stdout.write("\rDropping redundant indexes...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
-                                    sys.stdout.flush()
-                                    if Table['srd_code'][US_temp.iloc[i]['series_id']] != 'S00' or Table['dataseries_code'][US_temp.iloc[i]['series_id']] == 'Q' or Table['industryb_code'][US_temp.iloc[i]['series_id']] == 'S':
-                                        delete.append(i)
-                                sys.stdout.write("\n")
-                                US_temp = US_temp.drop(delete)
-                            US_temp = US_temp.sort_values(by=['series_id','year','period'], ignore_index=True)
-                            US_temp = US_temp.loc[US_temp['period'].isin(PERIODS[freq])]
-                            US_temp.to_csv(freq_path)
-                        if US_temp.empty == False:
-                            cat_idx = str(Series['datasets'].loc[address, 'CATEGORIES'])[3:]
-                            item = str(Series['datasets'].loc[address, 'CONTENT']).lower()
-                            idb = str(Series['datasets'].loc[address, 'UNIT'])[3:]+'_code'
-                            labb = 'series_title'
-                            if str(Series['datasets'].loc[address, 'LAB_BASE']) != 'nan':
-                                labb = str(Series['datasets'].loc[address, 'LAB_BASE'])+'_code'
-                            if address.find('bd/') >= 0:
-                                cat_idx = 'industry'
-                            if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ei/') >= 0:
-                                idb = 'base_period'
-                            elif address.find('ce/') >= 0:
-                                idb = 'data_type_code'
-                            elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
-                                idb = 'base_year'
-                            elif address.find('in/') >= 0:
-                                idb = 'economicseries_code'
-                            elif address.find('ml/') >= 0:
-                                idb = 'irc_code'
-                            elif str(Series['datasets'].loc[address, 'UNIT']) == 'nan':
-                                idb = 'base_date'
-                            US_t, label, note, footnote = US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base=idb, address=address, DF_KEY=DF_KEY, start=bls_start, key=bls_key, key2=bls_key2, lab_base=labb, find_unknown=find_unknown, Series=Series)
-                        else:
-                            continue
+                                file_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+'.csv'#'BLS/INTLINE_t_'+address[-3:-1]+'_'+freq+'.xlsx'
+                                if PRESENT(file_path):
+                                    US_temp = readFile(file_path, header_=[0], index_col_=0)
+                                else:
+                                    print('Waiting for Download...'+'\n')
+                                    US_temp = readFile(address+fname, header_=0, names_=['series_id','year','period','value','footnote_codes'], acceptNoFile=True, sep_='\\t')
+                                    US_temp.to_csv(file_path)
+                                    print('Download Complete, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+                                #bls_read = True
+                                if address.find('in/') >= 0 and freq == 'A':
+                                    for code in Table['begin_year']:
+                                        sys.stdout.write("\rCorrection...("+str(round((list(Table['begin_year']).index(code)+1)*100/len(Table['begin_year']), 1))+"%)*")
+                                        sys.stdout.flush()
+                                        if not not list(US_temp.loc[US_temp['series_id'] == code]['year']) and Table['begin_year'][code] not in list(US_temp.loc[US_temp['series_id'] == code]['year']):
+                                            Table['begin_year'][code] = list(US_temp.loc[US_temp['series_id'] == code]['year'])[0]
+                                    sys.stdout.write("\n\n")
+                                elif address.find('ml/') >= 0:
+                                    delete = []
+                                    for i in range(US_temp.shape[0]):
+                                        sys.stdout.write("\rDropping redundant indexes...("+str(round((i+1)*100/US_temp.shape[0], 1))+"%)*")
+                                        sys.stdout.flush()
+                                        if Table['srd_code'][US_temp.iloc[i]['series_id']] != 'S00' or Table['dataseries_code'][US_temp.iloc[i]['series_id']] == 'Q' or Table['industryb_code'][US_temp.iloc[i]['series_id']] == 'S':
+                                            delete.append(i)
+                                    sys.stdout.write("\n")
+                                    US_temp = US_temp.drop(delete)
+                                US_temp = US_temp.sort_values(by=['series_id','year','period'], ignore_index=True)
+                                US_temp = US_temp.loc[US_temp['period'].isin(PERIODS[freq])]
+                                US_temp.to_csv(freq_path)
+                            if US_temp.empty == False:
+                                cat_idx = str(Series['datasets'].loc[address, 'CATEGORIES'])[3:]
+                                item = str(Series['datasets'].loc[address, 'CONTENT']).lower()
+                                idb = str(Series['datasets'].loc[address, 'UNIT'])[3:]+'_code'
+                                labb = 'series_title'
+                                if str(Series['datasets'].loc[address, 'LAB_BASE']) != 'nan':
+                                    labb = str(Series['datasets'].loc[address, 'LAB_BASE'])+'_code'
+                                if address.find('bd/') >= 0:
+                                    cat_idx = 'industry'
+                                if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ei/') >= 0:
+                                    idb = 'base_period'
+                                elif address.find('ce/') >= 0:
+                                    idb = 'data_type_code'
+                                elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
+                                    idb = 'base_year'
+                                elif address.find('in/') >= 0:
+                                    idb = 'economicseries_code'
+                                elif address.find('ml/') >= 0:
+                                    idb = 'irc_code'
+                                elif str(Series['datasets'].loc[address, 'UNIT']) == 'nan':
+                                    idb = 'base_date'
+                                US_t, label, note, footnote = US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base=idb, address=address, DF_KEY=DF_KEY, start=bls_start, key=bls_key, key2=bls_key2, lab_base=labb, find_unknown=find_unknown, Series=Series)
+                                US_t.index.name = 'index'
+                                US_t.to_csv(US_t_path)
+                            else:
+                                continue
                         if US_t.empty == False:
                             if str(Series['datasets'].loc[address, 'NOTE']) != 'nan':
                                 note = US_NOTE(Series['NOTE'], sname, LABEL=Table, address=address, other=True)
@@ -1837,63 +1916,54 @@ if chrome != None:
     chrome.quit()
     chrome = None
 
-for f in FREQNAME:
-    if main_file.empty == False:
-        break
-    if db_table_t_dict[f].empty == False:
-        #if f == 'W':
-        #    db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
-        #    #FREQLIST['W'] = FREQLIST['W_s']
-        DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
-        DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))       
-
 print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
-if main_file.empty == True:
+if data_processing:
+    for f in FREQNAME:
+        if db_table_t_dict[f].empty == False:
+            #if f == 'W':
+            #    db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
+            #    #FREQLIST['W'] = FREQLIST['W_s']
+            DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+            DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
     df_key = pd.DataFrame(KEY_DATA, columns = key_list)
-else:
-    if merge_file.empty == True:
-        ERROR('Missing Merge File')
-if updating == True:
-    df_key, DATA_BASE_dict = UPDATE(merge_file, main_file, key_list.remove('table_id'), NAME, out_path, merge_suf, main_suf)
-else:
     if df_key.empty and find_unknown == False:
         ERROR('Empty dataframe')
     elif df_key.empty and find_unknown == True:
         ERROR('No new items were found.')
-    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict)
+    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown)
 
-if main_file.empty == True and find_unknown == True:
-    NEW_TABLES['new_counts'] = [0 for i in range(NEW_TABLES.shape[0])]
-    new_tables = pd.DataFrame()
-    count = 0
-    for ind in range(df_key.shape[0]):
-        sys.stdout.write("\rCounting: "+str(ind+1)+" ")
-        sys.stdout.flush()
-        counted = False
-        addr = re.split(r',', df_key.iloc[ind]['table_id'])[0]
-        fnm = re.split(r',', df_key.iloc[ind]['table_id'])[1]
-        snm = re.split(r',', df_key.iloc[ind]['table_id'])[2]
-        snm_l = snm.lower()
-        for i in range(NEW_TABLES.loc[(addr,fnm)].shape[0]):
-            if NEW_TABLES.loc[(addr,fnm)].iloc[i]['Source'] == 'Bureau of Economic Analysis' and (snm_l.find(str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower()) >= 0 or str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower().find(snm_l) >= 0):
-                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
-                counted = True
-                count += 1
-                break
-            elif snm == str(NEW_TABLES.loc[(addr,fnm)].index[i]):
-                NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
-                counted = True
-                count += 1
-                break
-        if counted == False:
-            ERROR('Item not counted: name = '+df_key.iloc[ind]['name']+', table_id = '+df_key.iloc[ind]['table_id'])
-    for ind in range(NEW_TABLES.shape[0]):
-        if NEW_TABLES.iloc[ind]['new_counts'] != 0 and NEW_TABLES.iloc[ind]['counts'] != NEW_TABLES.iloc[ind]['new_counts']:
-            new_tables = new_tables.append(NEW_TABLES.iloc[ind])
-    sys.stdout.write("\n\n")
-    df_key = df_key.drop(columns=['table_id'])
-elif main_file.empty == True:
-    df_key = df_key.drop(columns=['table_id'])
+    if find_unknown == True:
+        NEW_TABLES['new_counts'] = [0 for i in range(NEW_TABLES.shape[0])]
+        new_tables = pd.DataFrame()
+        count = 0
+        for ind in range(df_key.shape[0]):
+            sys.stdout.write("\rCounting: "+str(ind+1)+" ")
+            sys.stdout.flush()
+            counted = False
+            addr = re.split(r',', df_key.iloc[ind]['table_id'])[0]
+            fnm = re.split(r',', df_key.iloc[ind]['table_id'])[1]
+            snm = re.split(r',', df_key.iloc[ind]['table_id'])[2]
+            snm_l = snm.lower()
+            for i in range(NEW_TABLES.loc[(addr,fnm)].shape[0]):
+                if NEW_TABLES.loc[(addr,fnm)].iloc[i]['Source'] == 'Bureau of Economic Analysis' and (snm_l.find(str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower()) >= 0 or str(NEW_TABLES.loc[(addr,fnm)].index[i]).lower().find(snm_l) >= 0):
+                    NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
+                    counted = True
+                    count += 1
+                    break
+                elif snm == str(NEW_TABLES.loc[(addr,fnm)].index[i]):
+                    NEW_TABLES.loc[(addr,fnm,NEW_TABLES.loc[(addr,fnm)].index[i]), 'new_counts'] = NEW_TABLES.loc[(addr,fnm)].iloc[i]['new_counts'] + 1
+                    counted = True
+                    count += 1
+                    break
+            if counted == False:
+                ERROR('Item not counted: name = '+df_key.iloc[ind]['name']+', table_id = '+df_key.iloc[ind]['table_id'])
+        for ind in range(NEW_TABLES.shape[0]):
+            if NEW_TABLES.iloc[ind]['new_counts'] != 0 and NEW_TABLES.iloc[ind]['counts'] != NEW_TABLES.iloc[ind]['new_counts']:
+                new_tables = new_tables.append(NEW_TABLES.iloc[ind])
+        sys.stdout.write("\n\n")
+        df_key = df_key.drop(columns=['table_id'])
+    else:
+        df_key = df_key.drop(columns=['table_id'])
 
 logging.info(df_key)
 #logging.info(DATA_BASE_t)
@@ -1901,7 +1971,58 @@ logging.info('Total Items: '+str(df_key.shape[0]))
 
 print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 df_key.to_excel(out_path+NAME+"key"+excel_suffix+".xlsx", sheet_name=NAME+'key')
-with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer:
+DB_name = []
+database_num = 0
+annual_num = 0
+monthly_num = 0
+other_num = 0
+for table in DATA_BASE_dict.keys():
+    DB_name.append(table)
+    if str(table).find('M_') >= 0:
+        monthly_num += 1
+    elif str(table).find('A_') >= 0:
+        annual_num += 1
+    else:
+        other_num += 1
+if annual_num > 0:
+    database_num += 1
+if other_num > 0:
+    database_num += 1
+if monthly_num > 0:
+    database_num += int((monthly_num-1)/maximum)+1
+if monthly_num > maximum:#database_num > 1:
+    logging.info('Total databases: '+str(database_num))
+    current_db = 0
+    for d in range(1, database_num+1):
+        with pd.ExcelWriter(out_path+NAME+"database_"+str(d)+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+            logging.info('Outputing file: '+NAME+"database_"+str(d))
+            current_monthly = 0
+            for db in range(current_db, len(DB_name)):
+                sys.stdout.write("\rOutputing sheet: "+str(DB_name[db])+'  Time: '+str(int(time.time() - tStart))+'s')
+                sys.stdout.flush()
+                if DATA_BASE_dict[DB_name[db]].empty == False:
+                    DATA_BASE_dict[DB_name[db]].to_excel(writer, sheet_name = DB_name[db])
+                if db < len(DB_name)-1:
+                    if str(DB_name[db]).find('M_') >= 0:
+                        current_monthly += 1
+                    if (str(DB_name[db]).find('A_') >= 0 and str(DB_name[db+1]).find('M_') >= 0) or (current_monthly >= maximum) or (str(DB_name[db]).find('M_') >= 0 and str(DB_name[db+1]).find('M_') < 0):
+                        current_db = db+1
+                        break
+            writer.save()
+            sys.stdout.write("\n")
+else:
+    with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
+        for key in DATA_BASE_dict:
+            sys.stdout.write("\rOutputing sheet: "+str(key))
+            sys.stdout.flush()
+            if DATA_BASE_dict[key].empty == False:
+                DATA_BASE_dict[key].to_excel(writer, sheet_name = key)
+sys.stdout.write("\n")
+logging.info('\ndatabase_num = '+str(database_num))
+if database_num > 1:
+    with open(out_path+NAME+'database_num'+excel_suffix+'.txt','w', encoding=ENCODING) as f:    #用with一次性完成open、close檔案
+        f.write(str(database_num))
+"""with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer:
     if updating == True:
         for d in DATA_BASE_dict:
             sys.stdout.write("\rOutputing sheet: "+str(d))
@@ -1915,11 +2036,12 @@ with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer:
                 sys.stdout.flush()
                 if DATA_BASE_dict[f][d].empty == False:
                     DATA_BASE_dict[f][d].to_excel(writer, sheet_name = d)
-            sys.stdout.write("\n")
+            sys.stdout.write("\n")"""
 
-if main_file.empty == True and find_unknown == True: 
+if data_processing and find_unknown == True:
     if new_tables.empty == False:
         logging.info('New items were found')
+        logging.info(new_tables)
         if bool(int(input('Update the table file (1/0): '))):
             new_tables['New Total Counts'] = new_tables['counts'].apply(lambda x: 0 if str(x) == 'nan' else x)+new_tables['new_counts']
             try:

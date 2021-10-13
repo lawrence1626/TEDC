@@ -29,18 +29,25 @@ main_suf = '?'
 merge_suf = '?'
 dealing_start_year = 1970
 start_year = 1970
-merging = False#bool(int(input('Merging data file (1/0): ')))
-updating = bool(int(input('Updating TOT file (1/0): ')))
-if merging and updating:
-    ERROR('Cannot do merging and updating at the same time.')
-elif merging or updating:
-    merge_suf = input('Be Merged(Original) data suffix: ')
-    main_suf = input('Main(Updated) data suffix: ')
+merging = False
+updating = False
+data_processing = bool(int(input('Processing data (1/0): ')))
+if data_processing == False:
+    merging = False#bool(int(input('Merging data file (1/0): ')))
+    updating = bool(int(input('Updating TOT file (1/0): ')))
 else:
     #find_unknown = bool(int(input('Check if new items exist (1/0): ')))
     if find_unknown == False:
         dealing_start_year = int(input("Dealing with data from year: "))
         start_year = dealing_start_year-2
+if merging and updating:
+    ERROR('Cannot do merging and updating at the same time.')
+elif merging or updating:
+    merge_suf = input('Be Merged(Original) data suffix: ')
+    main_suf = input('Main(Updated) data suffix: ')
+elif data_processing == False:
+    ERROR('No process was choosed')
+
 excel_suffix = CCT.excel_suffix
 with open(out_path+NAME+'TOT_name.txt','r',encoding='ANSI') as f:
     DF_suffix = f.read()
@@ -63,6 +70,13 @@ log = logging.getLogger()
 stream = logging.StreamHandler(sys.stdout)
 stream.setFormatter(logging.Formatter('%(message)s'))
 log.addHandler(stream)
+sys.stdout.write("\n\n")
+if merging:
+    logging.info('Process: File Merging\n')
+elif updating:
+    logging.info('Process: File Updating\n')
+else:
+    logging.info('Data Processing\n')
 
 def takeFirst(alist):
 	return alist[0]
@@ -153,7 +167,8 @@ def GERFIN_DATA(i, name, GERFIN_t, code_num, table_num, KEY_DATA, DATA_BASE, db_
     new_table = False
     db_table = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
     db_code = DB_CODE+str(code_num).rjust(3,'0')
-    db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    #db_table_t[db_code] = ['' for tmp in range(freqlen)]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code])], axis=1)
     if AREMOS_key2 != None:
         code_num += 1
         if code_num >= 200:
@@ -165,11 +180,13 @@ def GERFIN_DATA(i, name, GERFIN_t, code_num, table_num, KEY_DATA, DATA_BASE, db_
             db_table_t2 = pd.DataFrame(index = freqlist, columns = [])
             db_table2 = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
             db_code2 = DB_CODE+str(code_num).rjust(3,'0')
-            db_table_t2[db_code2] = ['' for tmp in range(freqlen)]
+            #db_table_t2[db_code2] = ['' for tmp in range(freqlen)]
+            db_table_t2 = pd.concat([db_table_t2, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code2])], axis=1)
         else:
             db_table2 = DB_TABLE+frequency+'_'+str(table_num).rjust(4,'0')
             db_code2 = DB_CODE+str(code_num).rjust(3,'0')
-            db_table_t[db_code2] = ['' for tmp in range(freqlen)]
+            #db_table_t[db_code2] = ['' for tmp in range(freqlen)]
+            db_table_t = pd.concat([db_table_t, pd.DataFrame(['' for tmp in range(freqlen)], index=freqlist, columns=[db_code2])], axis=1)
     start_found = False
     last_found = False
     found = False

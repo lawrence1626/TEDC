@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 from urllib.error import HTTPError
+from pandas.errors import ParserError
 
 ENCODING = 'utf-8-sig'
 data_path = './output/'
@@ -26,7 +27,7 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,encoding=encoding_,engine=engine_,sep=sep_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -45,8 +46,10 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,engine=engine_,sep=sep_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了
+        except ParserError:
+            return default
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
 def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
              header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None, wait=False):
@@ -54,7 +57,7 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
         t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
         #print(t)
         return t
-    except FileNotFoundError:
+    except (OSError, FileNotFoundError):
         if acceptNoFile:
             return default
         else:
@@ -67,8 +70,10 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
             t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
             #print(t)
             return t
-        except:
-            return default  #有檔案但是讀不了:多半是沒有限制式，使skiprow後為空。 一律用預設值
+        except ParserError:
+            return default
+        except UnicodeDecodeError as err:
+            ERROR(str(err))
 
 def PRESENT(file_path):
     if os.path.isfile(file_path) and datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V'):
@@ -113,7 +118,8 @@ def NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, df_key, DATA_BASE, db_table_t
         db_table_t = pd.DataFrame(index = FREQLIST[freq], columns = [])
     db_table = DB_TABLE+freq+'_'+str(start_table).rjust(4,'0')
     db_code = DB_CODE+str(start_code).rjust(3,'0')
-    db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    #db_table_t[db_code] = DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]
+    db_table_t = pd.concat([db_table_t, pd.DataFrame(list(DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']]), index=DATA_BASE[df_key.iloc[f]['db_table']][df_key.iloc[f]['db_code']].index, columns=[db_code])], axis=1)
     df_key.loc[f, 'db_table'] = db_table
     df_key.loc[f, 'db_code'] = db_code
     start_code += 1
@@ -122,15 +128,16 @@ def NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, df_key, DATA_BASE, db_table_t
     
     return df_key, DATA_BASE_new, DB_name_new, db_table_t, start_table, start_code, db_table_new, db_code_new
 
-def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, KEY_DATA_t, DB_dict, DB_name_dict, find_unknown=True):
+def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, KEY_DATA_t, DB_dict, DB_name_dict, find_unknown=True, DATA_BASE_t=None):
     if find_unknown == True:
         repeated_standard = 'start'
     else:
         repeated_standard = 'last'
     #logging.info('Reading file: '+NAME+'key'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
     #KEY_DATA_t = readExcelFile(data_path+NAME+'key'+suf+'.xlsx', header_ = 0, index_col_=0, sheet_name_=NAME+'key')
-    logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
+    if DATA_BASE_t == None:
+        logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
     if KEY_DATA_t.empty == False and type(DATA_BASE_t) != dict:
         ERROR(NAME+'database'+suf+'.xlsx Not Found.')
     elif type(DATA_BASE_t) != dict:
@@ -145,7 +152,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
             sys.stdout.write("\rConcating sheet: "+str(d))
             sys.stdout.flush()
             if d in DATA_BASE_t.keys():
-                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d])
+                DATA_BASE_t[d] = DATA_BASE_t[d].join(DB_dict[f][d], how='outer')
             else:
                 DATA_BASE_t[d] = DB_dict[f][d]
         sys.stdout.write("\n")
@@ -248,13 +255,18 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
     DATA_BASE_dict = {}
     for f in FREQNAME:
         if not DB_name_dict[f]:
-            DATA_BASE_dict[f] = DB_dict[f]
+            for key in DB_dict[f]:
+                sys.stdout.write("\rConcating sheet: "+str(key))
+                sys.stdout.flush()
+                DATA_BASE_dict[key] = DB_dict[f][key]
+            sys.stdout.write("\n")
             continue
-        DATA_BASE_dict[f] = {}
+        #DATA_BASE_dict[f] = {}
         for d in DB_name_dict[f]:
             sys.stdout.write("\rConcating sheet: "+str(d))
             sys.stdout.flush()
-            DATA_BASE_dict[f][d] = DB_dict[f][d]
+            #DATA_BASE_dict[f][d] = DB_dict[f][d]
+            DATA_BASE_dict[d] = DB_dict[f][d]
         sys.stdout.write("\n")
     
     #print(KEY_DATA_t)
@@ -262,20 +274,22 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
 
     return KEY_DATA_t, DATA_BASE_dict
 
-def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf):
+def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_suf, original_database=None, updated_database=None):
     updated = 0
     tStart = time.time()
     logging.info('Updating file: '+str(int(time.time() - tStart))+' s'+'\n')
-    logging.info('Reading original database: '+NAME+'database'+orig_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
-    logging.info('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    if original_database == None:
+        logging.info('Reading original database: '+NAME+'database'+orig_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        original_database = readExcelFile(data_path+NAME+'database'+orig_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
+    if updated_database == None:
+        ogging.info('Reading updated database: '+NAME+'database'+up_suf+'.xlsx, Time: '+str(int(time.time() - tStart))+' s'+'\n')
+        updated_database = readExcelFile(data_path+NAME+'database'+up_suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=False)
     CAT = ['desc_e', 'desc_c', 'unit', 'book', 'form_e', 'form_c']
     
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
     for ind in updated_file.index:
-        sys.stdout.write("\rUpdating latest data time: "+ind+" ")
+        sys.stdout.write("\rUpdating latest data time ("+str(round((list(updated_file.index).index(ind)+1)*100/len(updated_file.index), 2))+"%): "+ind+" ")
         sys.stdout.flush()
 
         if ind in original_file.index:
