@@ -196,7 +196,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                         keep = k
                     else:
                         repeated_index.append(k)
-        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
+        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found ("+str(round((i+1)*100/len(KEY_DATA_t), 1))+"%)*")
         sys.stdout.flush()
     sys.stdout.write("\n")
     for target in repeated_index:

@@ -1,6 +1,6 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import math, re, sys, calendar, os, copy, time, shutil, logging
+import math, re, sys, calendar, os, copy, time, shutil, logging, traceback
 import pandas as pd
 import numpy as np
 import requests as rq
@@ -18,6 +18,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import ElementClickInterceptedException
+from selenium.common.exceptions import UnexpectedAlertPresentException
 import webdriver_manager
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -65,7 +68,7 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
             ERROR(str(err))
 
 def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
-             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine=None,wait=False):
+             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine_=None,wait=False):
     try:
         t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_,engine=engine_)
         #print(t)
@@ -151,7 +154,7 @@ def GERFIN_WEBDRIVER(chrome, file_name, header=None, index_col=None, skiprows=No
 
 def GERFIN_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=False):
     
-    link_list = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
+    link_list = WebDriverWait(chrome, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
     link_found = False
     for link in link_list:
         if (text_match == True and link.text.find(keyword) >= 0) or (text_match == False and link.get_attribute(get_attribute).find(keyword) >= 0):
@@ -209,10 +212,24 @@ def GERFIN_WEB(chrome, g, file_name, url, header=None, index_col=0, skiprows=Non
                 #ActionChains(chrome).send_keys(Keys.ENTER).perform()
                 link_found = True
             elif g == 2:
-                WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="Add all"]'))).click()
-                link_found, link_meassage = GERFIN_WEB_LINK(chrome, url, keyword='data-basket')
+                chrome.refresh()
+                try:
+                    WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="Remove all"]')))
+                except TimeoutException:
+                    WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="Add all"]'))).click()
+                while True:
+                    try:
+                        #chrome.execute_script("window.scrollTo(0,100)")
+                        link_found, link_meassage = GERFIN_WEB_LINK(chrome, url, keyword='data-basket')
+                    except (UnexpectedAlertPresentException, ElementClickInterceptedException):
+                        time.sleep(0.5)
+                    else:
+                        break
+                chrome.execute_script("window.scrollTo(0,200)")
                 WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@name="its_from"]'))).send_keys(str(start_year))
                 chrome.find_element_by_xpath('.//span[text()="English"]').click()
+                chrome.refresh()
+                chrome.execute_script("window.scrollTo(0,0)")
                 chrome.find_element_by_xpath('.//input[@value="Go to download"]').click()
                 link_found, link_meassage = GERFIN_WEB_LINK(chrome, url, keyword='Daily series', text_match=True)
             elif g == 3:
@@ -232,7 +249,8 @@ def GERFIN_WEB(chrome, g, file_name, url, header=None, index_col=0, skiprows=Non
                 link_found = True
             if link_found == False:
                 raise FileNotFoundError
-        except (FileNotFoundError, TimeoutException):
+        except (FileNotFoundError, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException):
+            print(str(traceback.format_exc())[:1000])
             if g == 1 or g == 4:
                 DOWN+=1
             else:
@@ -383,7 +401,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                         keep = k
                     else:
                         repeated_index.append(k)
-        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
+        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found ("+str(round((i+1)*100/len(KEY_DATA_t), 1))+"%)*")
         sys.stdout.flush()
     sys.stdout.write("\n")
     for target in repeated_index:
@@ -487,7 +505,7 @@ def UPDATE(original_file, updated_file, key_list, NAME, data_path, orig_suf, up_
     original_file = original_file.set_index('name')
     updated_file = updated_file.set_index('name')
     for ind in updated_file.index:
-        sys.stdout.write("\rUpdating latest data time: "+ind+" ")
+        sys.stdout.write("\rUpdating latest data time ("+str(round((list(updated_file.index).index(ind)+1)*100/len(updated_file.index), 2))+"%): "+ind+" ")
         sys.stdout.flush()
 
         if ind in original_file.index:

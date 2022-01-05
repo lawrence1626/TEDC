@@ -1,8 +1,10 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
-#pip install regex, datetime, pandas, requests, openpyxl(2.4.9), lxml, xlrd, iteration_utilities, matplotlib, statsmodels, pathlib, bs4, selenium, webdriver_manager, quandl, pywin32, pycnnum, roman, html5lib, pyxlsb
-import math, sys, calendar, os, copy, time, shutil, logging, ssl, zipfile, traceback, pycnnum, roman
+#pip install regex, datetime, pandas, requests, openpyxl(2.4.9), lxml, xlrd(1.2.0), iteration_utilities, matplotlib, statsmodels, pathlib, bs4, selenium, webdriver_manager, quandl, pywin32, pycnnum, roman, html5lib, pyxlsb, dateparser, sqlalchemy, pymysql
+#sql="SELECT * FROM intline_keytot202111"
+#pd.read_sql_query(sql, engine)
+import math, sys, calendar, os, copy, time, shutil, logging, ssl, zipfile, traceback, pycnnum, roman, dateparser
 import regex as re
 import pandas as pd
 import numpy as np
@@ -29,6 +31,8 @@ from selenium.common.exceptions import UnexpectedAlertPresentException
 from selenium.common.exceptions import NoSuchFrameException
 from pandas.errors import ParserError
 from roman import InvalidRomanNumeralError
+from io import BytesIO
+import http.client
 import webdriver_manager
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, date, timedelta
@@ -51,7 +55,7 @@ ASIA_NAME = 'ASIA_'
 ENCODING = 'utf-8-sig'
 data_path = "./data/"
 out_path = "./output/"
-BANK = 'INTLINE'#input('Bank (INTLINE/ASIA): ')#
+BANK = input('Bank (INTLINE/ASIA): ')#'INTLINE'#
 if BANK not in ['INTLINE','ASIA']:
     ERROR('Incorrect Name of Bank')
 excel_suffix = input('Output file suffix (If test identity press 0): ')
@@ -92,11 +96,10 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,engine=engine_,sep=sep_)
             #print(t)
             return t
-        except UnicodeDecodeError as err:
-            ERROR(str(err))
-        except Exception as e2:
+        except Exception as error:
             #print(traceback.format_exc())
-            return default
+            #return default
+            raise error
 
 def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, squeeze_=False, \
              header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine_=None, wait=False):
@@ -121,11 +124,10 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
             t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_,squeeze=squeeze_)
             #print(t)
             return t
-        except UnicodeDecodeError as err:
-            ERROR(str(err))
-        except Exception as e2:
+        except Exception as error:
             #print(traceback.format_exc())
-            return default
+            #return default
+            raise error
 
 def Reading_Excel(file_path, tables, header, index_col, skiprows, usecols=None, names=None, specific_sheet=False, sheet_name_t=None, nrows=None, wait=True):
     if str(file_path)[-4:] == '.xls':
@@ -153,6 +155,11 @@ def Reading_Excel(file_path, tables, header, index_col, skiprows, usecols=None, 
                 INTLINE_t = readExcelFile(file_path, header_=h, index_col_=i, skiprows_=skiprows, sheet_name_=None, acceptNoFile=False, usecols_=usecols, names_=names, nrows_=nrows, engine_=eng, wait=wait)
                 for t in tables:
                     sheet = t
+                    if file_path.find('ANFIA/') >= 0:
+                        yr = re.sub(r'.*?([0-9]{4}).*', r"\1", sheet)
+                        sheet_this_year = sheet.replace(yr, str(datetime.today().year))
+                        if sheet_this_year not in INTLINE_t.keys():
+                            sheet = sheet.replace(yr, str(int(yr)-1))
                     if t == 0:
                         sheet = list(INTLINE_t.keys())[0]
                     if h == None and header != None:
@@ -178,9 +185,11 @@ def Reading_Excel(file_path, tables, header, index_col, skiprows, usecols=None, 
     
     return INTLINE_t
 
-def INTLINE_PRESENT(file_path, check_latest_update=False, latest_update=None, forcing_download=False, freq='A'):
+def INTLINE_PRESENT(file_path, check_latest_update=False, latest_update=None, forcing_download=False, freq='A', discontinued=False):
     if os.path.isfile(file_path) and (datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == datetime.today().strftime('%Y-%V') or datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%V') == (datetime.today()-timedelta(days=7)).strftime('%Y-%V')):
         if check_latest_update == True:
+            if str(latest_update).find('discontinued') >= 0:
+                return True
             try:
                 datetime.strptime(str(latest_update),'%Y-%m-%d')
             except ValueError:
@@ -200,7 +209,7 @@ def INTLINE_PRESENT(file_path, check_latest_update=False, latest_update=None, fo
             else:
                 logging.info('Present File Exists. Reading Data From Default Path.\n')
             return True
-    elif file_path.find('discontinued') >= 0:
+    elif file_path.find('discontinued') >= 0 or discontinued == True:
         return True
     else:
         return False
@@ -262,8 +271,14 @@ def INTLINE_DATASETS(chrome, data_path, country, address, fname, sname, freq, Se
         Table = Table.reset_index().set_index('File or Sheet')
     if country == 534:
         tables = [int(t) if str(t).isnumeric() else t for t in re.split(r'//', str(Table.loc[fname, 'Tables']))]
+    elif address.find('ANFIA') >= 0:
+        if previous_data == True:
+            tables = [str(t)+' '+str(datetime.today().year-1) for t in re.split(r', ', str(Table.loc[fname, 'Tables']))]
+            Table.loc[fname, 'previous_data'] = np.nan
+        else:
+            tables = [str(t)+' '+str(datetime.today().year) for t in re.split(r', ', str(Table.loc[fname, 'Tables']))]
     else:
-        tables = [int(t) if str(t).isnumeric() else t for t in re.split(r', ', str(Table.loc[fname, 'Tables']))]
+        tables = [int(str(t).replace('.0','')) if str(t).replace('.0','').isnumeric() else t for t in re.split(r', ', str(Table.loc[fname, 'Tables']))]
     skip = None
     if str(Table.loc[fname, 'skip']) != 'nan':
         skip = list(range(int(Table.loc[fname, 'skip'])))
@@ -287,8 +302,8 @@ def INTLINE_DATASETS(chrome, data_path, country, address, fname, sname, freq, Se
     except KeyError:
         csv = False
     try:
-        excel = 'x'
-        if str(Table.loc[fname, 'excel']) != 'x':
+        excel = str(Table.loc[fname, 'excel'])
+        if excel not in ['x','m']:
             excel = ''
     except KeyError:
         excel = 'x'
@@ -306,6 +321,12 @@ def INTLINE_DATASETS(chrome, data_path, country, address, fname, sname, freq, Se
             nrows = Table.loc[fname, 'nrows']
     except KeyError:
         nrows = None
+    try:
+        usecols = None
+        if str(Table.loc[fname, 'usecols']) != 'nan':
+            usecols = list(range(int(Table.loc[fname, 'usecols'])))
+    except KeyError:
+        usecols = None
     try:
         Name = None
         if str(Table.loc[fname, 'Name']) != 'nan':
@@ -364,6 +385,9 @@ def INTLINE_DATASETS(chrome, data_path, country, address, fname, sname, freq, Se
         file_path = data_path+str(country)+'/'+address+str(file_name)+'.csv'
     else:
         file_path = data_path+str(country)+'/'+address+str(file_name)+'.xls'+excel
+        if (address.find('ISTAT') >= 0 and output == True) or (INTLINE_PRESENT(file_path) == False and INTLINE_PRESENT(file_path.replace('.xls'+excel,'.xlsx')) == True):
+            file_path = file_path.replace('.xls'+excel,'.xlsx')
+            excel = 'x'
     present_file_existed = INTLINE_PRESENT(file_path)
     if present_file_existed == False and address.find('DEUSTATIS') >= 0:
         if INTLINE_PRESENT(re.sub(r'\.[csvxlzip]+', "", file_path)+'_Notes.csv'):
@@ -375,16 +399,20 @@ def INTLINE_DATASETS(chrome, data_path, country, address, fname, sname, freq, Se
         if tables == ['None']:
             INTLINE_temp = INTLINE_WEB_TRADE(chrome, country, address, fname, sname, freq=freq, header=head, index_col=index_col, skiprows=skip, start_year=dealing_start_year)
         else:
-            INTLINE_temp, webnote = INTLINE_WEB(chrome, country, address, fname, sname, freq=freq, tables=tables, header=head, index_col=index_col, skiprows=skip, nrows=nrows, csv=csv, encode=encode, renote=True, Series=Series, Table=Table, start_year=dealing_start_year, previous=previous_data, output=output, Zip=Zip, file_name=Name, specific_time_unit=specific_time_unit, interval=interval)
+            INTLINE_temp, webnote = INTLINE_WEB(chrome, country, address, fname, sname, freq=freq, tables=tables, header=head, index_col=index_col, skiprows=skip, usecols=usecols, nrows=nrows, csv=csv, encode=encode, renote=True, Series=Series, Table=Table, start_year=dealing_start_year, previous=previous_data, output=output, Zip=Zip, file_name=Name, specific_time_unit=specific_time_unit, interval=interval)
             if address.find('DEUSTATIS') >= 0 and not not webnote:
                 file_name = file_name+' - '+str(webnote[-1])
     elif Zip == True and present_file_existed == False:
         zipname = INTLINE_WEB(chrome, country, address, Zip_table.loc[file_name, 'website'], zip_file_name, freq=freq, Zip=True, file_name=Name)
         zf = zipfile.ZipFile(file_path,'r')
-        if csv == True:
-            INTLINE_temp = readFile(zf.open(zf.namelist()[0]), header_=head, index_col_=index_col, skiprows_=skip, acceptNoFile=False, encoding_=encode, nrows_=nrows)
+        if Name != None and Name in zf.namelist():
+            zip_fname = Name
         else:
-            INTLINE_temp = Reading_Excel(zf.open(zf.namelist()[0]), tables, head, index_col, skip, specific_sheet=True, sheet_name_t=sheet_name, nrows=nrows, wait=False)
+            zip_fname = zf.namelist()[0]
+        if csv == True:
+            INTLINE_temp = readFile(zf.open(zip_fname), header_=head, index_col_=index_col, skiprows_=skip, acceptNoFile=False, encoding_=encode, nrows_=nrows)
+        else:
+            INTLINE_temp = Reading_Excel(zf.open(zip_fname), tables, head, index_col, skip, specific_sheet=True, sheet_name_t=sheet_name, nrows=nrows, wait=False)
     else:
         if str(fname).find('http') >= 0:
             specific_sheet = False
@@ -396,16 +424,20 @@ def INTLINE_DATASETS(chrome, data_path, country, address, fname, sname, freq, Se
             sheet_name_t = sname
         if Zip == True:
             zf = zipfile.ZipFile(data_path+str(country)+'/'+address+zip_file_name+'.zip','r')
+            if Name != None and Name in zf.namelist():
+                zip_fname = Name
+            else:
+                zip_fname = zf.namelist()[0]
         if csv == True:
             if Zip == True:
-                file_path = zf.open(zf.namelist()[0])
+                file_path = zf.open(zip_fname)
             else:
                 file_path = data_path+str(country)+'/'+address+str(file_name)+'.csv'
             INTLINE_temp = readFile(file_path, header_=head, index_col_=index_col, skiprows_=skip, acceptNoFile=False, encoding_=encode, nrows_=nrows)
         else:
             wait = False
             if Zip == True:
-                file_path = zf.open(zf.namelist()[0])
+                file_path = zf.open(zip_fname)
             else:
                 file_path = data_path+str(country)+'/'+address+str(file_name)+'.xls'+excel
             if time_units != None:
@@ -416,7 +448,9 @@ def INTLINE_DATASETS(chrome, data_path, country, address, fname, sname, freq, Se
                     INTLINE_temp[yr] = IN_temp
                 file_name = file_name+' - '+str(time_units[-1])
             else:
-                INTLINE_temp = Reading_Excel(file_path, tables, head, index_col, skip, specific_sheet=specific_sheet, sheet_name_t=sheet_name_t, nrows=nrows, wait=wait)
+                if address.find('ISTAT') >= 0 and output == True:
+                    skip = None
+                INTLINE_temp = Reading_Excel(file_path, tables, head, index_col, skip, usecols=usecols, specific_sheet=specific_sheet, sheet_name_t=sheet_name_t, nrows=nrows, wait=wait)
             #INTLINE_temp = readExcelFile(file_path, header_=head, index_col_=index_col, skiprows_=skip, sheet_name_=sheet_name_t, acceptNoFile=False)
         file_path = str(file_path)
         webnote = readFile(re.sub(r'\.[csvxlzip]+', "", file_path)+'_Notes.csv', acceptNoFile=True).values.tolist()
@@ -440,26 +474,32 @@ def INTLINE_WEBDRIVER(chrome, country, address, sname, tables=None, header=None,
     chrome.execute_script("window.open()")
     chrome.switch_to.window(chrome.window_handles[-1])
     chrome.get('chrome://downloads')
+    time.sleep(1)
     try:
         if chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content #tag')").text == '已刪除':
             ERROR('The file was not properly downloaded')
     except JavascriptException:
         ERROR('The file was not properly downloaded')
     excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
-    if address.find('BPS') >= 0:
+    if address.find('BPS') >= 0 or address.find('ISTAT') >= 0:
+        path = (Path.home() / "Downloads" / excel_file).as_posix()
+        timeStart = time.time()
+        while os.path.isfile(path) == False:
+            time.sleep(0)
+            if int(time.time() - timeStart) > 60:
+                ERROR('File Download Error')
         try:
             xl = win32.gencache.EnsureDispatch('Excel.Application')
         except:
             xl = win32.DispatchEx('Excel.Application')
         xl.DisplayAlerts=False
         xl.Visible = 0
-        path = (Path.home() / "Downloads" / excel_file).as_posix()
         ExcelFile = xl.Workbooks.Open(path)
         ExcelFile.SaveCopyAs(path.replace('.xls','.xlsx'))
         ExcelFile.Close()
         os.remove(path)
         os.rename(path.replace('.xls','.xlsx'), path)
-    new_file_name = str(sname)+re.sub(r'.+?(\.[csvxlszip]+)$', r"\1", excel_file)
+    new_file_name = str(sname)+re.sub(r'.+?(\.[csvxlszipm]+)$', r"\1", excel_file)
     if new_file_name.find(':') >= 0:
         ERROR('File name should not contain ":" for file "'+str(new_file_name)+'"')
     chrome.close()
@@ -777,6 +817,89 @@ def INTLINE_BASE_YEAR(INTLINE_temp, chrome, data_path, country, address, file_na
                 link_found, link_meassage = INTLINE_WEB_LINK(chrome, website, keyword=str(Name), text_match=True)
                 target = WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="bloc fichiers"][contains(., "'+str(file_name)+'")]')))
                 base_year = re.sub(r'.*?Base\s100\sin\s([0-9]{4}).*', r"\1", target.text.replace('\n',''))
+    elif address.find('ISTAT') >= 0 and 'Index' in list(Series[freq].loc[Series[freq]['DataSet']==str(file_name)]['Unit']):
+        file_path = data_path+str(country)+'/'+address+'base_year.csv'
+        base_year_list = readFile(file_path, header_=[0], index_col_=0, acceptNoFile=False)
+        try:
+            latest = INTLINE_PRESENT(file_path, check_latest_update=True, latest_update=base_year_list.loc[file_name, 'last updated'])
+            if str(file_name).find('discontinued') >= 0:
+                latest = True
+        except KeyError:
+            ERROR('File Name Not Found in base_year.csv: '+file_name)
+        if latest == True:
+            base_year = re.sub(r'\.0$', "", str(base_year_list.loc[file_name, 'base year']))
+            if str(file_name).find('collective labour agreement') >= 0 or str(file_name).find('Contract') >= 0:
+                is_period = True
+        else:
+            count = 0
+            while True:
+                try:
+                    chrome.set_page_load_timeout(20)
+                    chrome.get(website)
+                except TimeoutException:
+                    chrome.execute_script("window.stop();")
+                    try:
+                        if str(file_name).find('chain linked') >= 0:
+                            chrome.find_element_by_xpath('.//table[@class="DataTable"]/thead/tr[contains(., "Valuation")]')
+                        elif str(file_name).find('collective labour agreement') >= 0 or str(file_name).find('Labour positions') >= 0 or (str(file_name).find('confidence Index') >= 0 and str(file_name).find('retail') < 0):
+                            chrome.find_element_by_xpath('.//table[@class="DataTable"]/tbody//td[@class="RowDimLabel"]')
+                        else:
+                            chrome.find_element_by_xpath('.//table[@class="DataTable"]/thead/tr')
+                    except NoSuchElementException:
+                        count +=1
+                        if count > 3:
+                            ERROR('The website is unable to enter, please download the file manually: '+str(fname).replace('$',''))
+                        else:
+                            continue
+                    else:
+                        print('base year web page loaded')
+                        break
+                else:
+                    break
+            if str(file_name).find('chain linked') >= 0:
+                target = chrome.find_element_by_xpath('.//table[@class="DataTable"]/thead/tr[contains(., "Valuation")]')
+                base_year = re.sub(r'.*?reference\s*year\s*([0-9]{4}).*', r"\1", target.text.replace('\n',''))
+            elif str(file_name).find('collective labour agreement') >= 0:
+                is_period = True
+                target = chrome.find_element_by_xpath('.//table[@class="DataTable"]/tbody//td[@class="RowDimLabel"]')
+                chrome.execute_script("arguments[0].style.visibility = 'visible';", target)
+                base_year = datetime.strptime(re.sub(r'.*?base\s*([a-z]+\s*[0-9]{4})=100.*', r"\1", target.text.replace('\n','')), '%B %Y').strftime('%Y.%m')
+            else:
+                if str(file_name).find('Labour positions') >= 0 or (str(file_name).find('confidence Index') >= 0 and str(file_name).find('retail') < 0):
+                    target = chrome.find_element_by_xpath('.//table[@class="DataTable"]/tbody//td[@class="RowDimLabel"]')   
+                else:
+                    try:
+                        target = chrome.find_element_by_xpath('.//table[@class="DataTable"]/thead/tr[contains(., "dicator")]')
+                    except:
+                        try:
+                            target = chrome.find_element_by_xpath('.//table[@class="DataTable"]/thead/tr[contains(., "type")]')
+                        except:
+                            target = chrome.find_element_by_xpath('.//table[@class="DataTable"]/thead/tr[contains(., "Aggregate")]')
+                if str(file_name).find('Contract') >= 0:
+                    is_period = True
+                    base_year = datetime.strptime(re.sub(r'.*?base\s*([a-z]+\s*[0-9]{4})=100.*', r"\1", target.text.replace('\n','')), '%B %Y').strftime('%Y.%m')
+                else:
+                    base_year = re.sub(r'.*?([0-9]{4})=100.*', r"\1", target.text.replace('\n',''))
+    elif address.find('SIDRA') >= 0 and str(file_name).find('indice') >= 0:
+        if str(file_name).find('Table') >= 0:
+            data_text = str(readExcelFile(data_path+str(country)+'/'+address+file_name+'.xls'+excel, sheet_name_=sheet_name, acceptNoFile=False).T.iloc[0].iloc[4])
+        else:
+            data_text = readExcelFile(data_path+str(country)+'/'+address+file_name+'.xls'+excel, sheet_name_=sheet_name, acceptNoFile=False).iloc[0].iloc[0]
+        base_year = re.sub(r'.*?([0-9]{4})\s*=\s*100.*', r"\1", data_text)
+    elif address.find('STANOR') >= 0 and (str(file_name).lower().find('price') >= 0 or str(file_name).lower().find('index') >= 0):
+        file_path = data_path+str(country)+'/'+address+'base_year.csv'
+        base_year_list = readFile(file_path, header_=[0], index_col_=0, acceptNoFile=False)
+        try:
+            latest = INTLINE_PRESENT(file_path, check_latest_update=True, latest_update=base_year_list.loc[file_name, 'last updated'])
+        except KeyError:
+            ERROR('File Name Not Found in base_year.csv: '+file_name)
+        if latest == True:
+            base_year = re.sub(r'\.0$', "", str(base_year_list.loc[file_name, 'base year']))
+        else:
+            chrome.get(website)
+            WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/span[contains(., "Choose variables")]'))).click()
+            target = chrome.find_element_by_xpath('.//div[@id="table-title"]')
+            base_year = re.sub(r'.*?([0-9]{4})\s*=\s*100.*', r"\1", target.text.replace('\n',''))
     if (str(base_year).isnumeric() == False and is_period == False) or (str(base_year)[:4].isnumeric() == False and is_period == True):
         ERROR('Base Year Not Found in source: '+src)
     if base_year_list.empty == False:
@@ -905,7 +1028,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                     else:
                         repeated_index.append(k)
             #print(KEY_DATA_t.iloc[keep]) 
-        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
+        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found ("+str(round((i+1)*100/len(KEY_DATA_t), 1))+"%)*")
         sys.stdout.flush()
     sys.stdout.write("\n")
     #rp_idx = []
@@ -1540,7 +1663,7 @@ def INTLINE_STOCK(chrome, data_path, country, address, fname, sname, freq, keywo
     file_path = data_path+str(country)+'/'+address+str(sname)+' - '+FREQ[freq]+'.xlsx'
     update_path = data_path+str(country)+'/'+address+str(sname)+' - '+FREQ[freq]+' - '+keyword+'.txt'
     if freq == 'M' or freq == 'Q' or freq == 'A':
-        start = "01/01/"+str(datetime.today().year-50)
+        start = "01/01/"+str(datetime.today().year-20)
     else:
         start = "01/01/"+str(datetime.today().year-18)
     start_year = int(start[-4:])
@@ -1558,6 +1681,7 @@ def INTLINE_STOCK(chrome, data_path, country, address, fname, sname, freq, keywo
         if freq == 'W':
             IHS.columns = [(datetime.strptime(col, '%Y-%m-%d')+timedelta(days=1)).strftime('%Y-%m-%d') if (col[:4].isnumeric() and datetime.strptime(col, '%Y-%m-%d').weekday() == 4) else col for col in IHS.columns]
             """IHS_D = readExcelFile(data_path+str(country)+'/'+address+str(sname)+' - Daily.xlsx', header_=0, index_col_=0, sheet_name_=0)
+            IHS_D.columns = [col.strftime('%Y-%m-%d') if type(col) != str else col for col in IHS_D.columns]
             for i in range(IHS.shape[1]):
                 if IHS.columns[i][:4].isnumeric():
                     d=6
@@ -1585,7 +1709,10 @@ def INTLINE_STOCK(chrome, data_path, country, address, fname, sname, freq, keywo
         return INTLINE_t, label, note, footnote
     modified = pd.Series(np.array([datetime.now().strftime('%Y-%m-%d, %H:%M:%S')]))
     if str(chrome.current_url) != str(fname):
-        chrome.get(fname)
+        try:
+            chrome.get(fname)
+        except TimeoutException:
+            chrome.execute_script("window.stop();")
     if address.find('SGSE') >= 0:
         price = 'Close'
         daydelta = 1
@@ -1598,6 +1725,10 @@ def INTLINE_STOCK(chrome, data_path, country, address, fname, sname, freq, keywo
         elif freq == 'W':
             IN_t.columns = [(datetime.strptime(str(col).strip(), '%Y-%m-%d')-timedelta(days=daydelta)).strftime('%Y-%m-%d') if str(col).strip()[:4].isnumeric() else '' for col in IN_t.columns]
     else:
+        try:
+            WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/i[@class="popupCloseIcon largeBannerCloser"]'))).click()
+        except TimeoutException:
+            time.sleep(0)
         price = 'Price'
         daydelta = 1
         Select(chrome.find_element_by_id("data_interval")).select_by_value(FREQ[freq])
@@ -1681,6 +1812,7 @@ def INTLINE_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=Fa
     
     link_list = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
     link_found = False
+    error_count = 0
     for link in link_list:
         if (text_match == True and link.text.find(keyword) >= 0) or (text_match == False and link.get_attribute(get_attribute).find(keyword) >= 0):
             while True:
@@ -1688,8 +1820,10 @@ def INTLINE_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=Fa
                     link.click()
                 except ElementClickInterceptedException:
                     if fname.find('bea.gov') >= 0:
-                        driver.refresh()
-                        time.sleep(5)
+                        error_count+=1
+                        if error_count > 3:
+                            raise ElementClickInterceptedException
+                        ActionChains(driver).send_keys(Keys.ESCAPE).perform()
                     else:
                         raise ElementClickInterceptedException
                 else:
@@ -1726,18 +1860,28 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
         INTLINE_temp = pd.DataFrame.from_dict(pd.read_json(json_data).loc['records','result']).set_index('end_of_month')
         INTLINE_temp = INTLINE_temp.sort_index(axis=0)
         done = True
-    elif address.find('RBI') >= 0 and re.sub(r'#[0-9]+', "", str(chrome.current_url)) != re.sub(r'#[0-9]+', "", str(fname)):
+    elif (address.find('RBI') >= 0 or address.find('ISTAT') >= 0 or (address.find('BCB') >= 0 and str(sname).find('general government debt') >= 0) or address.find('COMEX') >= 0) \
+        and re.sub(r'#[0-9]+', "", str(chrome.current_url)) != re.sub(r'#[0-9]+', "", str(fname)):
         count = 0
+        time_limit = 20
+        if address.find('ISTAT') >= 0 and freq == 'M':
+            time_limit = 30
         while True:
             try:
-                chrome.set_page_load_timeout(20)
+                chrome.set_page_load_timeout(time_limit)
                 chrome.get(fname.replace('$',''))
             except TimeoutException:
                 if count > 2:
                     input('加載時間過長，請手動重新整理後按Enter鍵繼續:')
                 chrome.execute_script("window.stop();")
                 try:
+                    if re.sub(r'#[0-9]+', "", str(chrome.current_url)) != re.sub(r'#[0-9]+', "", str(fname)):
+                        raise NoSuchElementException
                     chrome.find_element_by_tag_name('div')
+                    if address.find('RBI') >= 0:
+                        WebDriverWait(chrome, 20).until(EC.element_to_be_clickable((By.XPATH, './/a')))
+                    if address.find('ISTAT') >= 0:
+                        chrome.find_element_by_xpath('.//table[@class="DataTable"]')
                 except NoSuchElementException:
                     count +=1
                     if count > 3:
@@ -1745,13 +1889,25 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                     else:
                         continue
                 else:
+                    print('web page loaded')
                     break
             else:
                 break
     elif address.find('DEUSTATIS') >= 0:
         chrome.get(fname.replace('#','&language=en#'))
+    elif address.find('BOF') >= 0:
+        client_ID = open(data_path+str(country)+'/'+address+'Client ID.txt','r',encoding='ANSI').read()
+        conn = http.client.HTTPSConnection("api.webstat.banque-france.fr")
+        headers = { 'accept': "application/json" }
+        conn.request("GET", "/webstat-en/v1/data/"+str(file_name)+"?client_id="+client_ID+"&format=csv&detail=dataonly", headers=headers)
+        logging.info('Reading Data from API')
+        data = conn.getresponse().read()
+        INTLINE_temp = pd.read_csv(BytesIO(data), header=[2], index_col=0, low_memory=False)
+        done = True
     else:
         chrome.get(fname)
+        if address.find('MEASTF') >= 0:
+            time.sleep(2)
     y = 0
     height = chrome.execute_script("return document.documentElement.scrollHeight")
     while True:
@@ -1847,6 +2003,9 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                     except TimeoutException:
                         break
                 link_found = True
+            elif address.find('ECB') >= 0:
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/span[@class="download"]'))).click()
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='Excel', text_match=True)
             elif address.find('BEIS') >= 0:
                 #WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="'+str(sname)+'"]'))).click()
                 target = WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="'+str(sname)+'"]'))).get_attribute('href')
@@ -1977,10 +2136,10 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                                 try:
                                     if bool(re.search(r'\[[0-9]+\]$', item)):
                                         time.sleep(1)
-                                        target.find_elements_by_link_text(re.sub(r'\[[0-9]+\]$', "", item))[int(re.sub(r'.+?\[([0-9]+)\]$', r"\1", item))].click()
+                                        target.find_elements_by_link_text(re.sub(r'\[[0-9]+\]\s*$', "", item))[int(re.sub(r'.+?\[([0-9]+)\]\s*$', r"\1", item))].click()
                                     else:
-                                        WebDriverWait(target, 3).until(EC.element_to_be_clickable((By.LINK_TEXT, str(item)))).click()
-                                        target = target.find_element_by_link_text(str(item)).find_element_by_xpath('..')
+                                        WebDriverWait(target, 3).until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, str(item)))).click()
+                                        target = target.find_element_by_partial_link_text(str(item)).find_element_by_xpath('..')
                                     ActionChains(chrome).send_keys(Keys.DOWN).send_keys(Keys.DOWN).send_keys(Keys.DOWN).perform()
                                 except (ElementNotInteractableException, ElementClickInterceptedException):
                                     if count > 3:
@@ -2016,8 +2175,10 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                     except (KeyError, ElementNotInteractableException):
                         time.sleep(1)
                     except TimeoutException as t:
-                        ERROR(str(t)+'Link Text Not Found for item: '+str(item))
+                        print(traceback.format_exc())
+                        ERROR('Link Text Not Found for item: '+str(item))
                     except Exception as e:
+                        print(traceback.format_exc())
                         ERROR(str(e))
                     else:
                         break
@@ -2079,6 +2240,7 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                         except IndexError:
                             time.sleep(1)
                         else:
+                            time.sleep(2)
                             link_found = True
                             break
                 else:
@@ -2180,11 +2342,12 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                             target = WebDriverWait(target, 20).until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, str(item)))).find_element_by_xpath('..')
                             if target.get_attribute('class') == 'FolderOpen':
                                 continue
-                            WebDriverWait(target, 20).until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, str(item)))).click()
                             if WebDriverWait(target, 20).until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, str(item)))).text.find('Standards') >= 0:
                                 note_content = re.sub(r'.*?([0-9]{4}.*?Standards).*', r"\1", WebDriverWait(target, 20).until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, str(item)))).text)
+                            WebDriverWait(target, 20).until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, str(item)))).click()
                             time.sleep(1)
-                    except (TimeoutException, StaleElementReferenceException):
+                    except (TimeoutException, StaleElementReferenceException) as e:
+                        print(traceback.format_exc())
                         count += 1
                         if count > 3:
                             raise ElementNotInteractableException
@@ -2507,7 +2670,7 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                 INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x)[0].isnumeric() else x)
                 link_found = True
             elif address.find('CFIB') >= 0:
-                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='business-barometer-')
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='economic-indicators')
                 link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword=str(sname))
             elif address.find('DEUSTATIS') >= 0:
                 if str(sname).find('Indices of labour costs') >= 0:
@@ -2773,25 +2936,49 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                                 break
                 link_found = True
             elif address.find('BUNDES') >= 0:
+                chrome.set_window_size(1080,1020)
+                chrome.refresh()
                 if str(sname).find('special trade') >= 0 or str(sname).find('MFI interest rate statistics') >= 0:
                     ITEM = list(Series[freq].loc[Series[freq]['DataSet']==str(sname)]['keyword'])
                     for item in ITEM:
-                        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-basket-tsid="'+str(item)+'"]'))).click()
+                        sys.stdout.write("\rGetting Item: "+str(item)+" "*10)
+                        sys.stdout.flush()
+                        target = WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-basket-tsid="'+str(item)+'"]')))
+                        while True:
+                            try:
+                                target.click()
+                            except ElementClickInterceptedException:
+                                time.sleep(1)
+                            else:
+                                break
+                    sys.stdout.write('\n\n')
                 else:
-                    WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="Add all"]'))).click()
+                    try:
+                        WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="Remove all"]')))
+                    except TimeoutException:
+                        WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[text()="Add all"]'))).click()
                 if str(sname).find('Consumer price index SA') >= 0:
                     chrome.get('https://www.bundesbank.de/dynamic/action/en/statistics/time-series-databases/time-series-databases/745582/745582?tsTab=2&tsId=BBDP1.M.DE.Y.VPI.C.SVXR.I15.A')
                     WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/a[@data-basket-tsid="BBDP1.M.DE.Y.VPI.C.SVXR.I15.A"]'))).click()
                 while True:
                     try:
+                        #chrome.execute_script("window.scrollTo(0,100)")
                         link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='data-basket')
-                    except UnexpectedAlertPresentException:
+                    except (UnexpectedAlertPresentException, ElementClickInterceptedException):
                         time.sleep(0.5)
                     else:
                         break
+                chrome.execute_script("window.scrollTo(0,200)")
                 ActionChains(chrome).move_to_element(WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@name="its_from"]')))).send_keys(str(start_year)).send_keys(Keys.RIGHT).send_keys('01').perform()
                 chrome.find_element_by_xpath('.//span[text()="English"]').click()
+                chrome.refresh()
+                chrome.execute_script("window.scrollTo(0,0)")
                 chrome.find_element_by_xpath('.//input[@value="Go to download"]').click()
+                time.sleep(10)
+                # for i in range(5):
+                #     time.sleep(10)
+                #     chrome.refresh()
+                input('請手動重新整理後按Enter鍵繼續:')
                 target = WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="listTable"]')))
                 if freq == 'M' or str(sname).find('monthly average') >= 0 or str(sname).find('monthly end') >= 0:
                     link_found, link_meassage = INTLINE_WEB_LINK(target, fname, keyword='Monthly series', text_match=True)
@@ -2800,7 +2987,17 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                 elif freq == 'Q':
                     link_found, link_meassage = INTLINE_WEB_LINK(target, fname, keyword='Quarterly series', text_match=True)
                 chrome.find_element_by_xpath('.//input[@value="Back"]').click()
-                WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@value="Delete all"]'))).click()
+                while True:
+                    try:
+                        chrome.execute_script("window.scrollTo(0,3000)")
+                        WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@value="Delete all"]'))).click()
+                        #time.sleep(5)
+                        #chrome.execute_script("window.scrollTo(0,3000)")
+                        #WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/input[@value="Refresh"]'))).click()
+                    except ElementClickInterceptedException:
+                        time.sleep(1)
+                    else:
+                        break
             elif address.find('IFO') >= 0:
                 target = WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/li[contains(., "'+str(sname)+'")]')))
                 link_found, link_meassage = INTLINE_WEB_LINK(target, fname, keyword='xlsx')
@@ -3024,12 +3221,14 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                 time.sleep(2)
                 while True:
                     try:
-                        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/span[@id="_NS__workingMsg"]')))
+                        #WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/span[@id="_NS__workingMsg"]')))
+                        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/td[contains(.,"您的報告已準備就緒")]')))
                     except TimeoutException:
-                        link_found = True
-                        break
-                    else:
                         continue
+                    else:
+                        link_found = True
+                        time.sleep(10)
+                        break
                 chrome.close()
                 chrome.switch_to.window(chrome.window_handles[0])
             elif address.find('GSO') >= 0:
@@ -3090,6 +3289,7 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                         except TimeoutException:
                             time.sleep(0)
                         else:
+                            time.sleep(2)
                             break
                     if Zip == True:
                         link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='xlsx')
@@ -3118,12 +3318,293 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
                         if link_found == False:
                             ERROR('Link Not Found: '+re.split(r'//', str(file_name))[0])
                         link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword=re.split(r'//', str(file_name))[1])
+            elif address.find('DOUANES') >= 0:
+                target = WebDriverWait(chrome, 3).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="bande"][contains(., "Séries mensuelles CVS-CJO et brutes estimées")]')))
+                link_found, link_meassage = INTLINE_WEB_LINK(target, fname, keyword='Transfert_file')
+            elif address.find('MEASTF') >= 0:
+                username = open(data_path+'email.txt','r',encoding='ANSI').read()
+                password = open(data_path+'password.txt','r',encoding='ANSI').read()
+                WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.ID, 'Login'))).send_keys(username)
+                WebDriverWait(chrome, 5).until(EC.visibility_of_element_located((By.ID, 'Pwd'))).send_keys(password)
+                WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/input[@type="submit"]'))).click()
+                WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/span[contains(., "Période")]'))).click()
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='SelectAll')
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='SelectLevel(0,0)')
+                WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/input[@class="ShowReport"]'))).click()
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='DownloadButton')
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='.xls', text_match=True)
+                chrome.switch_to.window(chrome.window_handles[-1])
+                WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/input[@type="button"]'))).click()
+                chrome.close()
+                chrome.switch_to.window(chrome.window_handles[0])
+            elif address.find('MLF') >= 0:
+                link_found, link_message = INTLINE_WEB_LINK(chrome, fname, keyword=str(file_name), get_attribute='title')
+            elif address.find('ISTAT') >= 0:
+                try:
+                    dex = 1
+                    edition = Select(WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'PDim_T_BIS'))))
+                    edition.select_by_index(len(edition.options)-dex)
+                except TimeoutException:
+                    time.sleep(0)
+                else:
+                    while True:
+                        print('dex: '+str(dex))
+                        time.sleep(3)
+                        try:
+                            target = chrome.find_element_by_xpath('.//table[@class="DataTable"]/tbody')
+                            chrome.execute_script("arguments[0].style.visibility = 'visible';", target)
+                            WebDriverWait(chrome, 2).until(EC.visibility_of_element_located((By.XPATH, './/table[@class="DataTable"]/tbody/tr')))
+                        except TimeoutException:
+                            dex += 1
+                            edition = Select(WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'PDim_T_BIS'))))
+                            edition.select_by_index(len(edition.options)-dex)
+                        else:
+                            break
+                ActionChains(chrome).send_keys(Keys.ESCAPE).perform()
+                target = chrome.find_element_by_xpath('.//table[@class="DataTable"]')
+                if output == True:
+                    try:
+                        pages = Select(WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'PAGE'))))
+                    except TimeoutException:
+                        try:
+                            WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/img[@title="Next page"]')))
+                        except TimeoutException:
+                            INTLINE_temp = pd.read_html(target.get_attribute('outerHTML'), header=0, index_col=index_col)[0]
+                            INTLINE_temp = INTLINE_temp.loc[~INTLINE_temp.index.duplicated()]
+                            if type(index_col) == list:
+                                INTLINE_temp = INTLINE_temp.T.set_index(tuple(['Select time' for d in index_col])).T
+                            else:
+                                try:
+                                    INTLINE_temp = INTLINE_temp.T.set_index('Select time').T
+                                except KeyError:
+                                    INTLINE_temp = INTLINE_temp.T.set_index('Time and frequency').T
+                        else:
+                            INTLINE_temp = pd.DataFrame()
+                            while True:
+                                print(str(sname))
+                                try:
+                                    IN_temp = pd.read_html(chrome.find_element_by_xpath('.//table[@class="DataTable"]').get_attribute('outerHTML'), header=0, index_col=index_col)[0]
+                                    IN_temp = IN_temp.loc[~IN_temp.index.duplicated()]
+                                    if type(index_col) == list:
+                                        IN_temp = IN_temp.T.set_index(tuple(['Select time' for d in index_col])).T
+                                    else:
+                                        try:
+                                            IN_temp = IN_temp.T.set_index('Select time').T
+                                        except KeyError:
+                                            IN_temp = IN_temp.T.set_index('Time and frequency').T
+                                    INTLINE_temp = pd.concat([INTLINE_temp, IN_temp])
+                                except:
+                                    break
+                                try:
+                                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/img[@title="Next page"]'))).click()
+                                except TimeoutException:
+                                    break
+                                else:
+                                    timeStart = time.time()
+                                    while True:
+                                        try:
+                                            WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/img[@title="Previous page"]')))
+                                        except TimeoutException:
+                                            if int(time.time()-timeStart) > 20:
+                                                break
+                                            time.sleep(0)
+                                        else:
+                                            break
+                                    time.sleep(1)
+                    else:
+                        INTLINE_temp = pd.DataFrame()
+                        for i in range(len(pages.options)):
+                            Select(WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.ID, 'PAGE')))).select_by_index(i)
+                            timeStart = time.time()
+                            while True:
+                                print('pages: '+str(pages))
+                                try:
+                                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.ID, 'PAGE')))
+                                except TimeoutException:
+                                    if int(time.time()-timeStart) > 20:
+                                        break
+                                    time.sleep(0)
+                                else:
+                                    break
+                            time.sleep(1)
+                            IN_temp = pd.read_html(chrome.find_element_by_xpath('.//table[@class="DataTable"]').get_attribute('outerHTML'), header=0, index_col=index_col)[0]
+                            IN_temp = IN_temp.loc[~IN_temp.index.duplicated()]
+                            if type(index_col) == list:
+                                IN_temp = IN_temp.T.set_index(tuple(['Select time' for d in index_col])).T
+                            else:
+                                try:
+                                    IN_temp = IN_temp.T.set_index('Select time').T
+                                except KeyError:
+                                    IN_temp = IN_temp.T.set_index('Time and frequency').T
+                            INTLINE_temp = pd.concat([INTLINE_temp, IN_temp])
+                else:
+                    IN_t = pd.read_html(target.get_attribute('outerHTML'), skiprows=skiprows[:-2], header=header, index_col=index_col)[0]
+                    ActionChains(chrome).move_to_element(WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'export-icon')))).perform()
+                    WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.ID, 'export-excel-icon'))).click()
+                    export = WebDriverWait(chrome, 5).until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'DialogFrame')))
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'btnExportToExcel'))).click()
+                link_found = True
+            elif address.find('BOI') >= 0:
+                timeStart = time.time()
+                while True:
+                    try:
+                        target = WebDriverWait(chrome, 60).until(EC.visibility_of_element_located((By.XPATH, './/div[@data-idx="2"]/button[@title="Enable multiple selection"]')))
+                        ActionChains(chrome).click(WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'headerApp')))).perform()
+                        for i in range(100):
+                            ActionChains(chrome).send_keys(Keys.UP).perform()
+                        target.click()
+                    except TimeoutException:
+                        if int(time.time()-timeStart) >= 300:
+                            ERROR('The website is not correctly loaded: '+str(fname))
+                        chrome.refresh()
+                    else:
+                        break
+                for tab in re.split(r', ', str(file_name)):
+                    while WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@id="tree_2"]//li[contains(@id, "'+tab+'")]'))).get_attribute('aria-selected') == 'false':
+                        WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[@id="tree_2"]//li[contains(@id, "'+tab+'")]'))).click()
+                ActionChains(chrome).click(WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'headerApp')))).perform()
+                for i in range(100):
+                    ActionChains(chrome).send_keys(Keys.UP).perform()
+                WebDriverWait(chrome, 3).until(EC.visibility_of_element_located((By.XPATH, './/div[@data-idx="2"]/button[@id="esportaTaxo"]'))).click()
+                time.sleep(1)
+                WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'excel'))).click()
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'alldateExport'))).click()
+                #WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'expData'))).click()
+                while WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'joinTimeseries'))).get_attribute('checked') != 'true':
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'joinTimeseries'))).click()
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'descrizioniExport'))).click()
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'applicaExport'))).click()
+                timeStart = time.time()
+                while True:
+                    try:
+                        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.ID, 'descrizioniExport'))).click()
+                    except ElementClickInterceptedException:
+                        if int(time.time()-timeStart) >= 300:
+                            ERROR('The file was not properly downloaded')
+                        time.sleep(0)
+                    else:
+                        break
+                link_found = True
+            elif address.find('ANFIA') >= 0:
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='Passenger cars, press release tables', text_match=True)
+            elif address.find('SIDRA') >= 0:
+                WebDriverWait(chrome, 50).until(EC.element_to_be_clickable((By.XPATH, './/button[contains(., "Funções")]'))).click()
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='XLSX', text_match=True)
+                time.sleep(20)
+            elif address.find('BCB') >= 0:
+                if str(sname).find('general government debt') >= 0:
+                    link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='Divggni.xls')
+                else:
+                    try:
+                        WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/span[contains(., "English")]'))).click()
+                    except TimeoutException:
+                        time.sleep(0)
+                    for code in re.split(r', ', str(file_name).replace('.0','')):
+                        target = WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'txCodigo')))
+                        ActionChains(chrome).click(target).key_down(Keys.CONTROL).send_keys('A').key_up(Keys.CONTROL).send_keys(Keys.BACKSPACE).perform()
+                        target.send_keys(code)
+                        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/td[span[contains(., "By code")]]//img'))).click()
+                        WebDriverWait(chrome, 3).until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'iCorpo')))
+                        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="'+code+'"]'))).click()
+                        try:
+                            ActionChains(chrome).send_keys(Keys.ENTER).perform()
+                        except UnexpectedAlertPresentException:
+                            ActionChains(chrome).send_keys(Keys.ENTER).perform()
+                        chrome.switch_to.default_content()
+                        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="Add series"]'))).click()
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="Search series"]'))).click()
+                    Select(WebDriverWait(chrome, 5).until(EC.visibility_of_element_located((By.ID, 'lbTipoArq')))).select_by_visible_text('CSV in english')
+                    target = chrome.find_element_by_id('dataInicio')
+                    chrome.execute_script("arguments[0].setAttribute('value', '01/01/1900')", target)
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="View values"]'))).click()
+                    link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='CSV file', text_match=True)
+                    chrome.back()
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/input[@value="Remove"]'))).click()
+            elif address.find('COMEX') >= 0:
+                chrome.refresh()
+                time.sleep(2)
+                Selections = {'Initial year':'1997', 'Final year': str(datetime.today().year), 'Initial Month':'January', 'Final month':'December'}
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Exports")]'))).click()
+                for item in Selections:
+                    if WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/div[label[contains(., "'+item+'")]]//div[@class="item"]'))).text != Selections[item]:
+                        WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/div[label[contains(., "'+item+'")]]//div[@data-dropdown-direction="down"]'))).click()
+                        if item.lower() == 'final year':
+                            try:
+                                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/div[label[contains(., "'+item+'")]]//div[text()="'+Selections[item]+'"]'))).click()
+                            except TimeoutException:
+                                WebDriverWait(chrome, 1).until(EC.element_to_be_clickable((By.XPATH, './/div[label[contains(., "'+item+'")]]//div[text()="'+str(datetime.today().year-1)+'"]'))).click()
+                        else:
+                            WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/div[label[contains(., "'+item+'")]]//div[text()="'+Selections[item]+'"]'))).click()
+                if WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Detailing by month")]'))).get_attribute('class').find('active') < 0:
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Detailing by month")]'))).click()
+                if WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "US$ FOB")]'))).get_attribute('class').find('active') < 0:
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "US$ FOB")]'))).click()
+                if WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Net Weight")]'))).get_attribute('class').find('active') >= 0:
+                    WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Net Weight")]'))).click()
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Values")]'))).click()
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/button[contains(., "Query")]'))).click()
+                WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/label[contains(., "Export data ")]')))
+                time.sleep(2)
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Vertical")]'))).click()
+                time.sleep(2)
+                WebDriverWait(chrome, 3).until(EC.element_to_be_clickable((By.XPATH, './/button[contains(., "CSV")]'))).click()
+                time.sleep(2)
+                link_found = True
+            elif address.find('FGV') >= 0:
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='SÉRIES INSTITUCIONAIS', text_match=True)
+                for item in re.split(r', ', str(file_name)):
+                    listed = False
+                    while True:
+                        try:
+                            target = WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/table[@id="cphConsulta_dlsSerie"]')))
+                            if target.text.find(item) >= 0:
+                                listed = True
+                        except TimeoutException:
+                            time.sleep(0)
+                        if listed == False:
+                            WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'txtBuscarSeries'))).click()
+                            ActionChains(chrome).key_down(Keys.CONTROL).send_keys('A').key_up(Keys.CONTROL).send_keys(Keys.BACKSPACE).send_keys(item).send_keys(Keys.ENTER).perform()
+                            WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.ID, 'btnSelecionarTodas'))).click()
+                            time.sleep(3)
+                            WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'butBuscarSeriesOK'))).click()
+                            time.sleep(2)
+                            if WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/table[@id="cphConsulta_dlsSerie"]'))).text.find(item) >= 0:
+                                break
+                        else:
+                            break
+                while WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'cphConsulta_chkFerramenta2'))).get_attribute('checked') != 'true':
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'cphConsulta_chkFerramenta2'))).click()
+                    time.sleep(2)
+                while WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'cphConsulta_rbtSerieHistorica'))).get_attribute('checked') != 'true':
+                    WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'cphConsulta_rbtSerieHistorica'))).click()
+                    time.sleep(2)
+                WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.ID, 'cphConsulta_butVisualizarResultado'))).click()
+                WebDriverWait(chrome, 10).until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'cphConsulta_ifrVisualizaConsulta')))
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='Salvar XLS', text_match=True)
+            elif address.find('CNI') >= 0:
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='recentseries')
+            elif address.find('STANOR') >= 0:
+                WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.ID, 'SaveAsHeaderButton'))).click()
+                WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/label[contains(., "Excel")]'))).click()
+                WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/input[@type="submit"][@value="Save"]'))).click()
+                link_found = True
+            elif address.find('NORGES') >= 0:
+                chrome.execute_script("window.scrollTo(0,2500)")
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='xlsx')
+            elif address.find('NIMA') >= 0:
+                WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/article[@class="article-card-overlay"]'))).click()
+                link_found, link_meassage = INTLINE_WEB_LINK(chrome, fname, keyword='xlsm')
+            elif address.find('NAV') >= 0:
+                WebDriverWait(chrome, 2).until(EC.element_to_be_clickable((By.XPATH, './/li[contains(., "Registered Unemployed")]/a[contains(., "xls")]'))).click()
+                link_found = True
             if link_found == False:
+                print(link_message)
                 raise FileNotFoundError
         except (FileNotFoundError, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException) as e:
             sys.stdout.write('\n')
             #if str(e.__class__.__name__) != 'ElementClickInterceptedException':
             #   print(traceback.format_exc())
+            print(str(traceback.format_exc())[:1000])
             y+=500
             if y > height and link_found == False:
                 print(traceback.format_exc())
@@ -3158,9 +3639,12 @@ def INTLINE_WEB(chrome, country, address, fname, sname, freq=None, tables=None, 
             time.sleep(12)
         else:
             time.sleep(3)
-        INTLINE_temp = INTLINE_WEBDRIVER(chrome, country, address, sname, tables, header=header, index_col=index_col, skiprows=skiprows, nrows=nrows, csv=csv, Zip=Zip, US_address=US_address, encode=encode, specific_sheet=specific_sheet)
+        INTLINE_temp = INTLINE_WEBDRIVER(chrome, country, address, sname, tables, header=header, index_col=index_col, skiprows=skiprows, usecols=usecols, nrows=nrows, csv=csv, Zip=Zip, US_address=US_address, encode=encode, specific_sheet=specific_sheet)
         if address.find('RBI') >= 0:
             chrome.refresh()
+        elif address.find('ISTAT') >= 0:
+            if INTLINE_temp.columns[-1] != IN_t.columns[-1]:
+                ERROR('下載下來的Excel檔因時間範圍過長而未能載入完整時間序列，請在tablesINT中修改output參數為TRUE並重新嘗試')
     if len(chrome.window_handles) > 1:
         nohandles = len(chrome.window_handles)-1
         for window in range(nohandles):
@@ -4319,15 +4803,444 @@ def INTLINE_SINGLEKEY(INTLINE_temp, data_path, country, address, fname, sname, S
             INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
             INTLINE_temp = INTLINE_temp.sort_index(axis=1)
             INTLINE_temp.to_excel(file_path, sheet_name=fname[:30])
-        #print(INTLINE_temp)
-        #ERROR('')
+    elif address.find('BOF') >= 0:
+        if freq == 'Q':
+            INTLINE_temp.columns = [str(pd.Period(datetime.strptime(str(col).strip(), '%d-%m-%Y'), freq='Q')).replace('Q','-Q') if str(col).strip()[3:5] in ['01','04','07','10'] else None for col in INTLINE_temp.columns]
+        elif freq == 'M':
+            INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%d-%m-%Y').strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+    elif address.find('DOUANES') >= 0:
+        file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+        INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+        KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+        INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%m.%Y').strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp.index = [str(dex[0])+'//'+str(dex[1]) if str(dex[0])+'//'+str(dex[1]) in KEYS else None for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+        INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp.to_excel(file_path, sheet_name=fname)
+    elif address.find('MEASTF') >= 0:
+        file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+        INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+        KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+        INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        INTLINE_temp.columns = [dateparser.parse(str(col).strip()).strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x)[-1].isnumeric() else np.nan)
+        if str(fname).find('authorized') >= 0:
+            IN_temp = INTLINE_temp.loc['Nombre de logements autorisés individuels purs'].add(INTLINE_temp.loc['Nombre de logements autorisés individuels groupés'])
+            IN_temp.name = 'Nombre de logements autorisés individuels'
+        elif str(fname).find('started') >= 0:
+            IN_temp = INTLINE_temp.loc['Nombre de logements commencés individuels purs'].add(INTLINE_temp.loc['Nombre de logements commencés individuels groupés'])
+            IN_temp.name = 'Nombre de logements commencés individuels'
+        INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_temp).T])
+        INTLINE_temp.index = [str(dex).strip() if str(dex).strip() in KEYS else None for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+        INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp.to_excel(file_path, sheet_name=fname[:30])
+    elif address.find('MLF') >= 0:
+        if str(fname).find('Offers') >= 0:
+            dataset = sname
+        INTLINE_temp.columns = [col.strftime('%Y-%m') if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        new_index = []
+        sex = ''
+        for dex in INTLINE_temp.index:
+            if str(dex[0]) != 'nan' and str(dex[0]).find('Unnamed') < 0:
+                sex = str(dex[0]).strip()
+            new_index.append(sex+'//'+str(dex[1]).strip())
+        INTLINE_temp.index = new_index
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+    elif address.find('ISTAT') >= 0:
+        INTLINE_his = pd.DataFrame()
+        if (freq == 'A' and str(fname).find('Population') >= 0) or (freq == 'M' and str(fname).find('Index') >= 0):
+            file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+            INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+            KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+            if freq == 'A':
+                INTLINE_his.columns = [int(str(col).strip()[:4]) if str(col).strip()[:4].isnumeric() else col for col in INTLINE_his.columns]
+                INTLINE_temp.columns = [int(str(col).strip()) if str(col).strip().isnumeric() else None for col in INTLINE_temp.columns]
+            elif freq == 'M':
+                INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+                INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%b-%Y').strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+                base_path = data_path+str(country)+'/'+address+'base_year_archive.csv'
+                base_year_list = readFile(base_path, header_=[0], index_col_=0, acceptNoFile=False)
+                if re.sub(r'\.0$', "", str(base_year_list.loc[fname, 'base year'])) != str(base_year):
+                    print('Modifying Data with new base year')
+                    for ind in INTLINE_his.index:
+                        if str(base_year).isnumeric():
+                            new_base = sum([INTLINE_his.loc[ind, str(base_year)+'-'+str(num).rjust(2,'0')] for num in range(1,13)])/12
+                        else:
+                            new_base = INTLINE_his.loc[ind, str(base_year).replace('.','-')]
+                        multiplier = 100/new_base
+                        for col in INTLINE_his.columns:
+                            INTLINE_his.loc[ind, col] = float(INTLINE_his.loc[ind, col])*multiplier
+                    base_year_list.loc[fname, 'base year'] = base_year
+                    base_year_list.to_csv(base_path)
+        elif freq == 'Q' and str(fname).find('Index of production in construction') >= 0:
+            INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%b-%Y').strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+            INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+            INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x)[-1].isnumeric() and str(x)[0].isnumeric() else np.nan)
+            INTLINE_temp = INTLINE_temp.T
+            INTLINE_temp['quarter'] = [pd.Period(str(dex).strip(), freq='Q').strftime('%Y-Q%q') if str(dex)[:4].isnumeric() else None for dex in INTLINE_temp.index]
+            INTLINE_temp = INTLINE_temp.set_index('quarter', append=True)
+            INTLINE_temp = INTLINE_temp.groupby(axis=0, level=1).mean().T
+        elif freq == 'M' and str(fname).find('discontinued') >= 0:
+            INTLINE_temp.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_temp.columns]
+        elif freq == 'A':
+            INTLINE_temp.columns = [str(col).strip() if str(col).strip().isnumeric() else None for col in INTLINE_temp.columns]
+        elif freq == 'Q':
+            INTLINE_temp.columns = [str(col).strip()[-4:]+'-'+str(col).strip()[:2] if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+            if INTLINE_previous.empty == False:
+                INTLINE_previous.columns = [str(col).strip()[-4:]+'-'+str(col).strip()[:2] if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_previous.columns]
+        elif freq == 'M':
+            INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%b-%Y').strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+        if str(fname).find('discontinued') < 0:
+            INTLINE_temp = INTLINE_temp.applymap(lambda x: float(re.sub(r'[^0-9\.\-]', "", str(x))) if str(x)[-1].isnumeric() else np.nan)
+        if INTLINE_his.empty == False:
+            if isinstance(INTLINE_temp.index, pd.MultiIndex):
+                new_index = []
+                for dex in INTLINE_temp.index:
+                    new_dex = ''
+                    for d in dex:
+                        new_dex = new_dex + re.sub(r'\+|\-+\s|(\(|base).+?=\s*100\s*\)*\s*', "", str(d)).strip()+'//'
+                    new_index.append(new_dex.strip('//'))
+                INTLINE_temp.index = new_index
+            INTLINE_temp.index = [re.sub(r'\+|\-+\s|(\(|base).+?=\s*100\s*\)*\s*', "", str(dex)).strip() if re.sub(r'\+|\-+\s|\(.+?=\s*100\s*\)\s*', "", str(dex)).strip() in KEYS else None for dex in INTLINE_temp.index]
+            INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+            INTLINE_temp = INTLINE_temp.loc[~INTLINE_temp.index.duplicated()]
+            not_found = []
+            for dex in INTLINE_his.index:
+                if dex not in list(INTLINE_temp.index):
+                    not_found.append(dex)
+            if not not not_found:
+                ERROR(str(file_path))
+            INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+            INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+            INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+            INTLINE_temp.to_excel(file_path, sheet_name=fname[:30])
+            INTLINE_temp.columns = [str(col).replace('.0','') for col in INTLINE_temp.columns]
+        elif str(fname).find('Economic account') >= 0 or str(fname).find('Social protection account') >= 0:
+            new_index = []
+            index_list = ['' for i in range(9)]
+            for dex in INTLINE_temp.index:
+                found = False
+                for i in range(9):
+                    if bool(re.match(r'\s{'+str(i)+'}[^\s]', str(dex))):
+                        index_list[i] = str(dex).strip()+'//'
+                        prefix = ''
+                        for j in range(i):
+                            prefix = prefix + index_list[j]
+                        new_index.append(prefix+str(dex).strip())
+                        found = True
+                        break
+                if found == False:
+                    new_index.append(None)
+            INTLINE_temp.index = new_index
+            if str(fname).find('Economic account') >= 0:
+                INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x)[-1].isnumeric() else np.nan)
+                IN_sub = INTLINE_temp.loc['total Government expenditure'].sub(INTLINE_temp.loc['total Government expenditure//total capital expenditure'])
+                IN_sub.name = 'total Government expenditure//total current expenditure'
+                INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_sub).T])
+        elif str(fname).find('non-financial assets by institutional sector') >= 0:
+            new_index = []
+            index_list = ['' for i in range(10)]
+            for dex in INTLINE_temp.index:
+                found = False
+                for i in range(10):
+                    if bool(re.match(r'\s{'+str(i)+'}[^\s]', str(dex[1]))):
+                        index_list[i] = str(dex[1]).strip()+'//'
+                        prefix = str(dex[0]).strip()+'//'
+                        for j in range(i):
+                            prefix = prefix + index_list[j]
+                        new_index.append(prefix+str(dex[1]).strip())
+                        found = True
+                        break
+                if found == False:
+                    new_index.append(None)
+            INTLINE_temp.index = new_index
+        elif str(fname).find('Labour positions') >= 0:
+            INTLINE_temp.index = [re.sub(r'(.+?\)).*', r"\1", str(dex)).strip() if str(dex) != 'nan' and str(dex).strip() != '' else None for dex in INTLINE_temp.index]
+        elif isinstance(INTLINE_temp.index, pd.MultiIndex):
+            new_index = []
+            for dex in INTLINE_temp.index:
+                new_dex = ''
+                for d in dex:
+                    new_dex = new_dex + re.sub(r'\+|\-\s|(\(|base).+?=\s*100\s*\)*\s*', "", str(d)).strip()+'//'
+                new_index.append(new_dex.strip('//'))
+            INTLINE_temp.index = new_index
+            if str(fname).find('Labour force') >= 0:
+                INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x)[-1].isnumeric() else np.nan)
+                for dex in INTLINE_temp.index:
+                    if str(dex).find('35-44') >= 0:
+                        IN_sum = INTLINE_temp.loc[dex].add(INTLINE_temp.loc[dex.replace('35-44','45-54')])
+                        IN_sum.name = dex.replace('35-44','35-54')
+                        INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_sum).T])
+            elif str(fname).find('Population by labour status') >= 0:
+                INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x)[-1].isnumeric() else np.nan)
+                for dex in INTLINE_temp.index:
+                    if str(dex).find('15-19') >= 0:
+                        IN_sum = INTLINE_temp.loc[dex].add(INTLINE_temp.loc[dex.replace('15-19','20-24')])
+                        IN_sum.name = dex.replace('15-19','15-24')
+                        INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_sum).T])
+                    elif str(dex).find('25-29') >= 0:
+                        IN_sum = INTLINE_temp.loc[dex].add(INTLINE_temp.loc[dex.replace('25-29','30-34')])
+                        IN_sum.name = dex.replace('25-29','25-34')
+                        INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_sum).T])
+                    elif str(dex).find('15 years and over') >= 0 and str(dex).find('Data extracted') < 0:
+                        IN_sum = INTLINE_temp.loc[dex].sub(INTLINE_temp.loc[dex.replace('15 years and over','15-64 years')]).add(INTLINE_temp.loc[dex.replace('15 years and over','55-59 years')]).add(INTLINE_temp.loc[dex.replace('15 years and over','60-64 years')])
+                        IN_sum.name = dex.replace('15 years and over','55 years and over')
+                        INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_sum).T])
+        else:
+            INTLINE_temp.index = [re.sub(r'\(*\+\)*|\(\-\)|\-{2,}\s|(\(|base).+?=\s*100\s*\)*\s*', "", str(dex)).strip() if str(dex) != 'nan' and str(dex).strip() != '' else None for dex in INTLINE_temp.index]
+            if freq == 'Q' and (str(fname).find('Value added') >= 0 or str(fname).find('Gross') >= 0):
+                INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x)[-1].isnumeric() else np.nan)
+                INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+                INTLINE_previous.index = [re.sub(r'\(*\+\)*|\(\-\)|\-{2,}\s', "", str(dex)).strip() if str(dex) != 'nan' and str(dex).strip() != '' else None for dex in INTLINE_previous.index]
+                INTLINE_previous = INTLINE_previous.applymap(lambda x: float(x) if str(x)[-1].isnumeric() else np.nan)
+                INTLINE_previous = INTLINE_previous.loc[INTLINE_previous.index.dropna(), INTLINE_previous.columns.dropna()]
+                IN_div = INTLINE_previous.mul(100).div(INTLINE_temp)
+                IN_div = IN_div.loc[~IN_div.index.duplicated(), IN_div.columns.dropna()]
+                IN_div.index = [str(dex).strip()+'//Deflator' for dex in IN_div.index]
+                INTLINE_temp = pd.concat([INTLINE_temp, IN_div])
+        INTLINE_temp = INTLINE_temp.loc[~INTLINE_temp.index.duplicated(), INTLINE_temp.columns.dropna()]
+    elif address.find('BOI') >= 0:
+        INTLINE_his = pd.DataFrame()
+        file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+        if os.path.isfile(file_path):
+            INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+            KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+            if freq == 'Q':
+                INTLINE_his.columns = [pd.Period(col, freq='Q').strftime('%Y-Q%q') if type(col) != str else col for col in INTLINE_his.columns]
+            elif freq == 'M':
+                INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        if freq == 'Q':
+            INTLINE_temp.columns = [pd.Period(str(col), freq='Q').strftime('%Y-Q%q') if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        elif freq == 'M':
+            INTLINE_temp.columns = [str(col).strip()[:7] if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        if INTLINE_his.empty == False:
+            INTLINE_temp.index = [re.sub(r'\+', "", str(dex)).strip() if re.sub(r'\+', "", str(dex)).strip() in KEYS else None for dex in INTLINE_temp.index]
+            INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+            INTLINE_temp = INTLINE_temp.dropna(axis=1)
+            if str(fname).find('External Debt') >= 0:
+                INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x)*0.001 if str(x)[-1].isnumeric() else np.nan)
+            INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+            INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+            INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+            INTLINE_temp.to_excel(file_path, sheet_name=fname[:30])
+        else:
+            INTLINE_temp.index = [re.sub(r'\+', "", str(dex)).strip() if str(dex) != 'nan' else None for dex in INTLINE_temp.index]
+    elif address.find('ECB') >= 0:
+        file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+        INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+        INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%Y%b').strftime('%Y-%m') if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+        INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp.to_excel(file_path, sheet_name=fname[:30])
+    elif address.find('ANFIA') >= 0:
+        MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+        if re.sub(r'.*?([0-9]{4}).*', r"\1", sname) != str(datetime.today().year):
+            present_year = str(datetime.today().year-1)
+            previous_year = str(datetime.today().year-2)
+        else:
+            present_year = str(datetime.today().year)
+            previous_year = str(datetime.today().year-1)
+        file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+        INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+        KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+        INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        INTLINE_temp.columns = [present_year+datetime.strptime(str(col).strip(), '%B').strftime('-%m') if str(col).strip()[:3] in MONTH else None for col in INTLINE_temp.columns]
+        INTLINE_previous.columns = [previous_year+datetime.strptime(str(col).strip(), '%B').strftime('-%m') if str(col).strip()[:3] in MONTH else None for col in INTLINE_previous.columns]
+        INTLINE_temp = pd.concat([INTLINE_previous, INTLINE_temp], axis=1)
+        INTLINE_temp.index = [re.sub(r'\+', "", str(dex)).strip() if re.sub(r'\+', "", str(dex)).strip() in KEYS else None for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = INTLINE_temp.loc[~INTLINE_temp.index.duplicated()]
+        INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+        INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp.to_excel(file_path, sheet_name=fname[:30])
+    elif address.find('SIDRA') >= 0:
+        FULL_MONTHS = {'janeiro':'01','fevereiro':'02','março': '03','abril':'04','maio':'05','junho':'06','julho':'07','agosto':'08','setembro':'09','outubro':'10','novembro':'11','dezembro':'12'}
+        if freq == 'A':
+            INTLINE_temp.columns = [str(col).strip() if str(col).strip().isnumeric() else None for col in INTLINE_temp.columns]
+        elif freq == 'M':
+            INTLINE_temp.columns = [str(col).strip()[-4:]+'-'+FULL_MONTHS[str(col).strip()[:-4].replace(' ','')] if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+        if isinstance(INTLINE_temp.index, pd.MultiIndex):
+            INTLINE_temp.index = [re.sub(r'\(.*?\)', "", str(dex[0])).strip()+'//'+str(dex[1]).strip() for dex in INTLINE_temp.index]
+        else:
+            INTLINE_temp.index = [str(dex).strip() for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        if str(fname).find('Table') >= 0 and str(fname).find('indice') < 0:
+            file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+            INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+            KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+            INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+            INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x) if str(x).strip()[-1].isnumeric() else np.nan)
+            INTLINE_temp = INTLINE_temp.dropna(axis=1, how='all')
+            INTLINE_temp.index = [str(dex).strip() if str(dex).strip() in KEYS else None for dex in INTLINE_temp.index]
+            INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+            INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+            INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+            INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+            INTLINE_temp.to_excel(file_path, sheet_name=fname)
+    elif address.find('BCB') >= 0:
+        if str(fname).find('monthly') >= 0 and freq != 'M':
+            INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%m/%Y').strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+            INTLINE_temp = INTLINE_temp.loc[:, INTLINE_temp.columns.dropna()]
+            INTLINE_temp = INTLINE_temp.applymap(lambda x: float(str(x).replace(',','')) if str(x).strip()[-1].isnumeric() else np.nan)
+            INTLINE_temp = INTLINE_temp.T
+            if freq == 'A':
+                INTLINE_temp['annual'] = [pd.Period(str(dex).strip(), freq='A').strftime('%Y') for dex in INTLINE_temp.index]
+                INTLINE_temp = INTLINE_temp.set_index('annual', append=True)
+            elif freq == 'Q':
+                INTLINE_temp['quarter'] = [pd.Period(str(dex).strip(), freq='Q').strftime('%Y-Q%q') for dex in INTLINE_temp.index]
+                INTLINE_temp = INTLINE_temp.set_index('quarter', append=True)
+            INTLINE_temp = INTLINE_temp.groupby(axis=0, level=1).mean().T
+        elif str(fname).find('daily') >= 0:
+            INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%d/%m/%Y').strftime('%Y-%m-%d') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+            INTLINE_temp = INTLINE_temp.loc[:, INTLINE_temp.columns.dropna()]
+            if freq == 'A':
+                annual_end_list = pd.date_range(start=INTLINE_temp.columns[0],end=datetime.today(),freq='A').strftime('%Y-%m-%d').tolist()
+                INTLINE_temp.columns = [datetime.strptime(col, '%Y-%m-%d').strftime('%Y') if col in annual_end_list else None for col in INTLINE_temp.columns]
+            elif freq == 'M':
+                month_end_list = pd.date_range(start=INTLINE_temp.columns[0],end=datetime.today(),freq='M').strftime('%Y-%m-%d').tolist()
+                INTLINE_temp.columns = [datetime.strptime(col, '%Y-%m-%d').strftime('%Y-%m') if col in month_end_list else None for col in INTLINE_temp.columns]
+        elif str(fname).find('general government debt') >= 0:
+            dataset = sname
+            yr = ''
+            for col in INTLINE_temp.columns:
+                if str(col[0]).strip().isnumeric():
+                    yr = str(col[0]).strip()
+                try:
+                    new_columns.append(yr+'-'+datetime.strptime(str(col[1]).strip(), '%B').strftime('%m'))
+                except ValueError:
+                    new_columns.append(None)
+            INTLINE_temp.columns = new_columns
+            INTLINE_temp.index = [re.sub(r'\+|\(.*?\)|[0-9]+/', "", str(dex)).strip() for dex in INTLINE_temp.index]
+        elif freq == 'A':
+            INTLINE_temp.columns = [str(col).strip() if str(col).strip().isnumeric() else None for col in INTLINE_temp.columns]
+        elif freq == 'M':
+            INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%m/%Y').strftime('%Y-%m') if str(col).strip()[-4:].isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp.index = [str(dex).strip() for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = INTLINE_temp.applymap(lambda x: float(str(x).replace(',','')) if str(x).strip()[-1].isnumeric() else np.nan)
+    elif address.find('COMEX') >= 0:
+        file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+        INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+        KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+        INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        INTLINE_temp.columns = [str(col[0]).strip()+'-'+str(col[1]).strip().rjust(2,'0') if str(col[0]).strip().isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = INTLINE_temp.applymap(lambda x: float(x)*0.000001 if str(x).strip()[-1].isnumeric() else np.nan)
+        INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+        INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp.to_excel(file_path, sheet_name=fname)
+    elif address.find('FGV') >= 0:
+        try:
+            index_table = INTLINE_temp.loc[:, INTLINE_temp.columns[INTLINE_temp.columns.get_loc('Série'):INTLINE_temp.columns.get_loc('Série')+11]].set_index('Série').T
+            base_year = datetime.strptime(str(index_table.iloc[0]['Base do No. índice']).strip(), '%m/%d/%Y').strftime('%Y.%m')
+        except KeyError:
+            ERROR('Index of index_table Not Found: '+str(fname))
+        try:
+            INTLINE_temp = INTLINE_temp.set_index('Data')
+        except KeyError:
+            ERROR('Data Index Not Found: '+str(fname))
+        INTLINE_temp.index = [str(index_table.loc[dex,'Título']) for dex in INTLINE_temp.index]
+        INTLINE_temp.columns = [datetime.strptime(str(col).strip(), '%m/%Y').strftime('%Y-%m') if (len(str(col).strip())>4 and str(col).strip()[-4:].isnumeric()) else None for col in INTLINE_temp.columns]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+    elif address.find('CNI') >= 0:
+        file_path = data_path+str(country)+'/'+address+str(fname)+'_historical.xlsx'
+        INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+        KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(fname)]['keyword'])
+        INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        INTLINE_temp.columns = [str(col).strip()[:7] if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp.index = [str(dex[1]).strip() if str(dex[1]).strip() in KEYS else None for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[~INTLINE_temp.index.duplicated()]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+        INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp.to_excel(file_path, sheet_name=fname)
+    elif address.find('STANOR') >= 0:
+        if freq == 'A':
+            INTLINE_temp.columns = [str(col).strip() if str(col).strip().isnumeric() else None for col in INTLINE_temp.columns]
+        elif freq == 'Q':
+            INTLINE_temp.columns = [str(col).replace('K','-Q').strip() if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        elif freq == 'M':
+            INTLINE_temp.columns = [str(col).replace('M','-').strip() if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        if isinstance(INTLINE_temp.index, pd.MultiIndex):
+            INTLINE_temp.index = [re.sub(r'Constant.+?prices', "Constant prices", str(dex[0])).strip()+'//'+re.sub(r'\(.+?=.*100.*\)', "", str(dex[1])).replace('+',' plus ').strip() if str(dex[0]) != 'nan' else None for dex in INTLINE_temp.index]
+            if INTLINE_previous.empty == False:
+                INTLINE_previous.index = [str(dex[0]).strip()+'//'+str(dex[1]).replace('+',' plus ').strip() if str(dex[0]) != 'nan' else None for dex in INTLINE_previous.index]
+        else:
+            INTLINE_temp.index = [re.sub(r'\(.+?=.*100.*\)', "", str(dex)).replace('+',' plus ').strip() if str(dex) != 'nan' else None for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.applymap(lambda x: float(str(x).replace(' ','')) if str(x).strip()[-1].isnumeric() else np.nan)
+        INTLINE_temp = INTLINE_temp.loc[~INTLINE_temp.index.duplicated()]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        if str(fname).find('10799') >= 0:
+            IN_temp = INTLINE_temp.loc['Resident sectors, total//Balance of primary income'].add(INTLINE_previous.loc['Total industry//Consumption of fixed capital. Current prices (NOK million)'])
+            IN_temp.name = 'GROSS NATIONAL INCOME'
+            INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_temp).T])
+        elif str(fname).find('08864') >= 0:
+            IN_temp = INTLINE_temp.loc['Exports excl. ships and oil platforms//Value'].sub(INTLINE_temp.loc['Imports excl. ships and oil platforms//Value'])
+            IN_temp.name = 'Trade balance excl. ships and oil platforms//Value'
+            INTLINE_temp = pd.concat([INTLINE_temp, pd.DataFrame(IN_temp).T])
+    elif address.find('NORGES') >= 0:
+        INTLINE_temp.columns = [col.strftime('%Y-%m') if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        INTLINE_temp.index = [str(dex).replace('\n','//').strip() if str(dex) != 'nan' else None for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+    elif address.find('NIMA') >= 0:
+        INTLINE_temp.columns = [col.strftime('%Y-%m') if str(col).strip()[:4].isnumeric() else None for col in INTLINE_temp.columns]
+        new_index = []
+        subject = ''
+        for dex in INTLINE_temp.index:
+            if str(dex[0]) != 'nan':
+                subject = str(dex[0]).strip()+'//'
+            if str(dex[1]) != 'nan':
+                new_index.append(subject+str(dex[1]).strip())
+            else:
+                new_index.append(None)
+        INTLINE_temp.index = new_index
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+    elif address.find('NAV') >= 0:
+        dataset = sname
+        file_path = data_path+str(country)+'/'+address+str(dataset)+'_historical.xlsx'
+        INTLINE_his = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=0)
+        KEYS = list(Series[freq].loc[Series[freq]['DataSet']==str(dataset)]['keyword'])
+        INTLINE_his.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in INTLINE_his.columns]
+        IN_temp = pd.DataFrame(index=[str(sname)])
+        for dex in INTLINE_temp.index:
+            if str(dex).strip().isnumeric():
+                for col in INTLINE_temp.columns:
+                    try:
+                        IN_temp.insert(loc=len(IN_temp.columns), column=str(dex).strip()+'-'+datetime.strptime(str(col).strip(), '%B').strftime('%m'), value=[INTLINE_temp.loc[dex,col]])
+                    except ValueError:
+                        continue
+        INTLINE_temp = IN_temp
+        INTLINE_temp.index = [dex if dex in KEYS else None for dex in INTLINE_temp.index]
+        INTLINE_temp = INTLINE_temp.loc[INTLINE_temp.index.dropna(), INTLINE_temp.columns.dropna()]
+        INTLINE_temp = pd.concat([INTLINE_temp, INTLINE_his], axis=1)
+        INTLINE_temp = INTLINE_temp.loc[:, ~INTLINE_temp.columns.duplicated()]
+        INTLINE_temp = INTLINE_temp.sort_index(axis=1)
+        INTLINE_temp.to_excel(file_path, sheet_name=fname)  
+    # INTLINE_keywords(INTLINE_temp, data_path, country, address, fname, freq, data_key='', data_year=2018, multiplier=1, check_long_label=False, allow_duplicates=False, multiple=True)
+    # return 'testing', False, False, False
+    print(INTLINE_temp)
+    #ERROR('')
     
     #################################################################################################################################################################################################################
     for ind in range(Series[freq].shape[0]):
         sys.stdout.write("\rLoading...("+str(round((ind+1)*100/Series[freq].shape[0], 1))+"%)*")
         sys.stdout.flush()
         if Series[freq].iloc[ind]['DataSet'] == dataset:
-            code = re.sub(r'[0_]+|\.[A-Z]', "", str(Series[freq].index[ind])).replace(Countries.loc[country, 'location'],'').replace(Countries.loc[country, 'location'][:2],'')
+            code = re.sub(r'[0_&]+|\.[A-Z]', "", str(Series[freq].index[ind])).replace(Countries.loc[country, 'location'],'').replace(Countries.loc[country, 'location'][:2],'')
             #if base_year != 0:
             #    code = code+base_year[-2:]
             if str(Series[freq].iloc[ind]['keyword']).find('+') >= 0:
@@ -4367,11 +5280,14 @@ def INTLINE_SINGLEKEY(INTLINE_temp, data_path, country, address, fname, sname, S
                 except KeyError:
                     logging.info(list(INTLINE_temp.index))
                     ERROR('Item not found: '+str(key))
-            lab = re.sub(r'(\([ESNA0-9]+\)\s*)*(\([0-9]{4}(\-[0-9]{2,4})*\))*[,\s]*([NSWCDA]|Trend)*\s+\-\s*(\(.+?\)\s*|SAR)*', "",\
-                 str(Series[freq].iloc[ind]['Short Label']).replace(Countries.loc[country, 'Country_Name'],'')).strip(' ,').replace(Countries.loc[country, 'Country_Name'].lower(),Countries.loc[country, 'Country_Name'])
+            suffix = ''
+            if address.find('ISTAT') >= 0 and str(Series[freq].iloc[ind]['Short Label']).find('(PY)') >= 0:
+                suffix = ' (In Previous Year Prices)'
+            lab = re.sub(r'(\([ESNA0-9]+\)\s*)*(\(([0-9]{4}(\-[0-9]{2,4})*|PY)\))*[,\s]*([NSWCDA]|Trend)*\s+\-\s*(\(.+?\)\s*|SAR)*', "",\
+                 str(Series[freq].iloc[ind]['Short Label']).replace(Countries.loc[country, 'Country_Name'],'')).strip(' ,').replace(Countries.loc[country, 'Country_Name'].lower(),Countries.loc[country, 'Country_Name'])+suffix
             if str(Series[freq].iloc[ind]['Scale']) != 'nan' and str(Series[freq].iloc[ind]['Scale']) != 'Unit':
                 unit = str(Series[freq].iloc[ind]['Scale'])+' of '+str(Series[freq].iloc[ind]['Unit'])
-            elif str(Series[freq].iloc[ind]['Unit']) == 'Index' and (address.find('PPI') < 0 and address.find('CFIB') < 0 and str(dataset).find('5206') != 0):
+            elif str(Series[freq].iloc[ind]['Unit']) == 'Index' and (address.find('PPI') < 0 and address.find('CFIB') < 0 and str(dataset).find('5206') != 0 and address.find('CNI') < 0):
                 if base_year != 0 :
                     base = base_year
                 elif address.find('NIKK') >= 0:
@@ -4881,7 +5797,7 @@ def INTLINE_MULTIKEYS(INTLINE_temp, data_path, country, address, fname, sname, S
             if found == False:
                 logging.info(list(INTLINE_temp.index))
                 ERROR('Item not found: '+str(keys))
-            lab = re.sub(r'(\([ESNA0-9]+\)\s*)*(\([0-9]{4}\))*[,\s]*[NSWDA]*\s+\-\s*(\(.+?\)\s*|SAR)*', "", \
+            lab = re.sub(r'(\([ESNA0-9]+\)\s*)*(\(([0-9]{4}|PY)\))*[,\s]*[NSWDA]*\s+\-\s*(\(.+?\)\s*|SAR)*', "", \
                 str(Series[freq].iloc[ind]['Short Label']).replace(Countries.loc[country, 'Country_Name'],'')).strip(' ,')
             if str(Series[freq].iloc[ind]['Scale']) != 'nan' and str(Series[freq].iloc[ind]['Scale']) != 'Unit':
                 unit = str(Series[freq].iloc[ind]['Scale'])+' of '+str(Series[freq].iloc[ind]['Unit'])
@@ -5222,7 +6138,7 @@ def INTLINE_EST(INTLINE_temp, data_path, country, address, fname, Series, freq, 
     if INTLINE_temp.empty:
         ERROR('Country Not Found in file '+str(fname)+': '+str(Countries.loc[country, 'Country_Name']))
     INTLINE_temp = INTLINE_temp.rename(columns={'INDIC_BT':'INDIC'})
-    INTLINE_temp = INTLINE_temp.sort_values(by=['GEO','S_ADJ','UNIT','TIME'], ignore_index=True)
+    INTLINE_temp = INTLINE_temp.sort_values(by=['GEO','S_ADJ','UNIT','INDIC','TIME'], ignore_index=True)
        
     INTLINE_t = pd.DataFrame()
     new_item_t = []
@@ -5245,8 +6161,11 @@ def INTLINE_EST(INTLINE_temp, data_path, country, address, fname, Series, freq, 
             nace = str(INTLINE_temp.iloc[i]['NACE_R2']).replace('-','')
         except KeyError:
             nace = ''
-        code_t = indic[:2]+nace+adj
-        if code_t != code:
+        if str(fname).find('cphi') >= 0:
+            code_t = indic[:2]+indic[6:]+nace+adj
+        else:
+            code_t = indic[:2]+nace+adj
+        if code_t != code and code_t in list(Series[freq].loc[Series[freq]['DataSet']==str(fname)][keyword]):
             if firstfound == True:
                 new_dataframe.append(new_item_t)
                 INTLINE_new = pd.DataFrame(new_dataframe, columns=new_index_t)
@@ -5744,7 +6663,7 @@ def INTLINE_CBFI(chrome, data_path, country, address, fname, sname, freq, update
     file_path = data_path+str(country)+'/'+address+str(sname)+' - Monthly.xlsx'
     IHS = readExcelFile(file_path, header_=0, index_col_=0, sheet_name_=0)
     IHS.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in IHS.columns]
-    if freq == 'M' and INTLINE_PRESENT(file_path) == True:
+    if freq == 'M' and INTLINE_PRESENT(file_path, discontinued=True) == True:
         label = IHS['Label']
         return IHS, label, note, footnote
     elif freq == 'Q':
@@ -5758,9 +6677,9 @@ def INTLINE_CBFI(chrome, data_path, country, address, fname, sname, freq, update
     
     chrome.get(fname)
     if address.find('CBFI') >= 0:
-        chrome.find_element_by_xpath('.//a[contains(., "人民币现行利率表")]').click()
+        chrome.find_element_by_xpath('.//a[contains(., "人民银行对金融机构贷款利率")]').click()
         chrome.switch_to.window(chrome.window_handles[-1])
-        target = chrome.find_element_by_xpath('.//table[contains(., "人民币现行利率表")]')
+        target = chrome.find_element_by_xpath('.//table[contains(., "人民银行对金融机构贷款利率")]')
         IN_t = pd.read_html(target.get_attribute('outerHTML'), skiprows=skip, header=head, index_col=index_col)[0]
         chrome.close()
         chrome.switch_to.window(chrome.window_handles[0])
@@ -5853,7 +6772,9 @@ def INTLINE_GACC(chrome, data_path, country, address, fname, sname, freq, skip=N
                     ERROR(link_meassage)
                 time.sleep(5)
                 IN_t = INTLINE_WEBDRIVER(chrome, country, address+'historical data/', sname+' - '+str(yr)+datetime.strptime(month[:3],'%b').strftime('%m'), tables=[0], header=head, index_col=index_col, skiprows=skip, csv=False)
+                time.sleep(1)
                 chrome.back()
+                time.sleep(1)
             if str(sname).find('Export') >= 0 and str(sname).find('Import') >= 0:
                 IN_t.index = [re.sub(r'[:，]|China|[0-9]+\.*', "", str(dex[1])).replace(', ',',').strip() for dex in IN_t.index]
                 if str(IN_t.columns[0][0]).strip() != 'Exports' and str(IN_t.columns[0][0]).strip() != 'Imports' and str(IN_t.columns[0][0]).strip() != 'Total':
@@ -6095,6 +7016,8 @@ def INTLINE_DEUSTATIS(INTLINE_tem, data_path, country, address, fname, sname, Se
             if bool(re.match(r'[0-9]{4}', str(INTLINE_tem.index[h]))):
                 year = str(INTLINE_tem.index[h]).strip()
             elif str(INTLINE_tem.index[h]).strip() not in FREQ:
+                if h+2 >= INTLINE_tem.shape[0]:
+                    break
                 table_head = h+1
                 for i in range(h+2, INTLINE_tem.shape[0]):
                     if str(INTLINE_tem.index[i]).strip() not in FREQ or str(INTLINE_tem.index[i]).find('_') >= 0:
@@ -6330,10 +7253,12 @@ def INTLINE_DEUSTATIS(INTLINE_tem, data_path, country, address, fname, sname, Se
     INTLINE_tem = INTLINE_tem.loc[~INTLINE_tem.index.duplicated()]
 
     return INTLINE_tem
-#INTLINE_keywords(INTLINE_temp, data_path, country, address, fname, freq, data_key='Index of Export Price', data_year=2015, multiplier=1)
-def INTLINE_keywords(INTLINE_temp, data_path, country, address, fname, freq, data_key, data_year, multiplier=1):
+#INTLINE_keywords(INTLINE_temp, data_path, country, address, fname, freq, data_key='Index of Export Price', data_year=2015, multiplier=1, check_long_label=False)
+def INTLINE_keywords(INTLINE_temp, data_path, country, address, fname, freq, data_key, data_year, multiplier=1, check_long_label=False, allow_duplicates=True, multiple=True):
     FREQ = {'A':'Annual','Q':'Quarterly','M':'Monthly'}
     print(INTLINE_temp)
+    index_selected = [False for dex in INTLINE_temp.index]
+    index_duplicated = []
     file_path = data_path+str(country)+'/IHS'+str(country)+'.xlsx'
     IHS = readExcelFile(file_path, header_=[0], index_col_=0, sheet_name_=FREQ[freq])
     if freq == 'A':
@@ -6345,26 +7270,47 @@ def INTLINE_keywords(INTLINE_temp, data_path, country, address, fname, freq, dat
     elif freq == 'M':
         time_range = [str(data_year)+'-'+str(k).rjust(2, '0') for k in range(1,13)]
         IHS.columns = [col.strftime('%Y-%m') if type(col) != str else col for col in IHS.columns]
-    INDEX = pd.DataFrame(index=IHS.index, columns=['DataSet','keyword'])
+    INDEX_path = data_path+str(country)+'/'+address+'INDEX.xlsx'
+    if os.path.isfile(INDEX_path):
+        INDEX = readExcelFile(INDEX_path, header_=[0], index_col_=0, sheet_name_=0)
+        INDEX_temp = pd.DataFrame(index=IHS.index, columns=['DataSet','keyword'])
+        INDEX = pd.concat([INDEX, INDEX_temp])
+        INDEX = INDEX.loc[~INDEX.index.duplicated()]
+    else:
+        INDEX = pd.DataFrame(index=IHS.index, columns=['DataSet','keyword'])
+    round_num = 3
     for ind in range(IHS.shape[0]):
         sys.stdout.write("\rFinding keyword...("+str(round((ind+1)*100/IHS.shape[0], 1))+"%)*")
         sys.stdout.flush()
         if str(IHS.index[ind]).find(data_key) >= 0:
             found = False
-            target = [round(float(i),3) if str(i).replace('.','',1).replace(',','',1).replace('-','',1).isdigit() else i for i in list(IHS.iloc[ind][time_range])]
+            target = [round(float(i),round_num) if str(i).replace('.','',1).replace(',','',1).replace('-','',1).isdigit() else i for i in list(IHS.iloc[ind][time_range])]
             for dex in range(INTLINE_temp.shape[0]):
+                key_label = INTLINE_temp.index[dex][:7]
                 try:
-                    data = [round(float(i)*multiplier,3) if str(i).replace('.','',1).replace(',','',1).replace('-','',1).isdigit() else i for i in list(INTLINE_temp.iloc[dex][time_range])]
+                    data = [round(float(i)*multiplier,round_num) if str(i).replace('.','',1).replace(',','',1).replace('-','',1).isdigit() else i for i in list(INTLINE_temp.iloc[dex][time_range])]
                 except KeyError:
                     ERROR('Incorrect year was given: '+str(data_year))
-                if data == target:# and str(IHS.loc[IHS.index[ind], 'Long Label']).find(str(INTLINE_temp.loc[INTLINE_temp.index[dex], 'Index'])) >= 0:
+                if data == target and allow_duplicates == False and index_selected[dex] == True:
+                    continue
+                elif data == target:
+                    if (check_long_label and str(IHS.loc[IHS.index[ind], 'Long Label']).find(str(key_label)) >= 0) or check_long_label == False:
+                        INDEX.loc[IHS.index[ind], 'DataSet'] = str(fname)
+                        INDEX.loc[IHS.index[ind], 'keyword'] = INTLINE_temp.index[dex]
+                        if index_selected[dex] == True:
+                            index_duplicated.append(INTLINE_temp.index[dex])
+                        index_selected[dex] = True
+                        found = True
+                        break
+                    elif check_long_label:
+                        print(str(IHS.loc[IHS.index[ind], 'Long Label']))
+                        print(str(INTLINE_temp.index[dex]))
+                """elif check_long_label and str(IHS.loc[IHS.index[ind], 'Long Label']).find(str(INTLINE_temp.index[dex])) >= 0:
                     INDEX.loc[IHS.index[ind], 'DataSet'] = str(fname)
                     INDEX.loc[IHS.index[ind], 'keyword'] = INTLINE_temp.index[dex]
+                    index_selected[dex] = True
                     found = True
-                    break
-                """elif data == target:
-                    print(str(IHS.loc[IHS.index[ind], 'Long Label']))
-                    print(str(INTLINE_temp.loc[INTLINE_temp.index[dex], 'Index']))"""
+                    break"""
         else:
             try:
                 INDEX = INDEX.drop([IHS.index[ind]])
@@ -6372,8 +7318,11 @@ def INTLINE_keywords(INTLINE_temp, data_path, country, address, fname, freq, dat
                 time.sleep(0)
     sys.stdout.write("\n\n")
     print(INDEX)
-    INDEX.to_excel(data_path+str(country)+'/'+address+'INDEX.xlsx', sheet_name=fname[:30])
-    ERROR('')
+    if not not index_duplicated:
+        print('Duplicates:', index_duplicated)
+    INDEX.to_excel(INDEX_path, sheet_name=fname[:30])
+    if multiple == False:
+        ERROR('')
 
 def INTLINE_combine(data_path, country, address, INDEX_list):
     INDEX = readExcelFile(data_path+str(country)+'/'+address+'INDEX'+INDEX_list[0]+'.xlsx', header_=[0], index_col_=0, sheet_name_=0)
@@ -6391,4 +7340,4 @@ def INTLINE_combine(data_path, country, address, INDEX_list):
     IN_t.to_excel(data_path+str(country)+'/'+address+'INDEX_final.xlsx', sheet_name='final')
     ERROR('')
 
-#INTLINE_combine(data_path, country=132, address='INSEE/', INDEX_list=['_f','A',''])
+#INTLINE_combine(data_path, country=142, address='STANOR/', INDEX_list=[str(i) for i in range(1,6)]+[])

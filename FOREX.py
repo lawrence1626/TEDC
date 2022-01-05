@@ -290,7 +290,7 @@ for g in range(start_file,last_file+1):
                 try:
                     COUNTRY(FOREX_t.index[i], noprint=True)
                 except:
-                    ERROR('發現未知國家: '+FOREX_t.index[i]+', 請於 Country.xlsx 作調整')
+                    ERROR('發現未知國家: '+FOREX_t.index[i]+', 請於 Country.csv 作調整')
                     #continue
                 source = 'International Financial Statistics (IFS)'
                 freqnum = None

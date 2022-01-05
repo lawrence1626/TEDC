@@ -25,7 +25,7 @@ main_suf = '?'
 merge_suf = '?'
 dealing_start_year = 1957
 start_year = 1957
-maximum = 8
+maximum = 6
 merging = bool(int(input('Merging data file (1/0): ')))
 updating = bool(int(input('Updating TOT file (1/0): ')))
 if merging and updating:

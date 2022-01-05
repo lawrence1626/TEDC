@@ -94,11 +94,11 @@ for q in range(start_year,this_year):
         FREQLIST['Q'].append(str(q)+'-Q'+str(r))
 
 KEY_DATA = []
-DATA_BASE_dict = {}
+DATA_BASE_main = {}
 db_table_t_dict = {}
 DB_name_dict = {}
 for f in FREQNAME:
-    DATA_BASE_dict[f] = {}
+    DATA_BASE_main[f] = {}
     db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
     DB_name_dict[f] = []
 DB_TABLE = 'DB_'
@@ -186,14 +186,18 @@ while data_processing == False:
             sys.stdout.write("\rSetting new keys: "+str(db_table_new)+" "+str(db_code_new))
             sys.stdout.flush()
             freq = main_file.iloc[f]['freq']
-            df_key, DATA_BASE_dict[freq], DB_name_dict[freq], db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], db_table_new, db_code_new = \
-                NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, main_file, main_database, db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], DATA_BASE_dict[freq], DB_name_dict[freq])
+            df_key, DATA_BASE_main[freq], DB_name_dict[freq], db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], db_table_new, db_code_new = \
+                NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, main_file, main_database, db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], DATA_BASE_main[freq], DB_name_dict[freq])
         sys.stdout.write("\n")
         for f in FREQNAME:
             if db_table_t_dict[f].empty == False:
-                DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+                DATA_BASE_main[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
                 DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
-        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown, DATA_BASE_t=merge_database)
+        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_main, DB_name_dict, find_unknown=find_unknown, DATA_BASE_t=merge_database)
+        for f in FREQNAME:
+            DATA_BASE_main[f] = {}
+            db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
+            DB_name_dict[f] = []
     elif updating:
         df_key, DATA_BASE_dict = UPDATE(merge_file, main_file, key_list, NAME, out_path, merge_suf, main_suf, original_database=merge_database, updated_database=main_database)
     merge_file_loaded = True
@@ -395,8 +399,8 @@ for dataset in dataset_list:
                 elif name not in DF_KEY.index and find_unknown == True:
                     new_item_counts+=1
 
-                code_num_dict[frequency], table_num_dict[frequency], DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl = \
-                  QNIA_DATA(i, name, QNIA_t, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, DATA_BASE_dict[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, FREQLIST[frequency], frequency)  
+                code_num_dict[frequency], table_num_dict[frequency], DATA_BASE_main[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl = \
+                  QNIA_DATA(i, name, QNIA_t, code_num_dict[frequency], table_num_dict[frequency], KEY_DATA, DATA_BASE_main[frequency], db_table_t_dict[frequency], DB_name_dict[frequency], snl, FREQLIST[frequency], frequency)  
                  
             sys.stdout.write("\n\n")
             if find_unknown == True:
@@ -408,14 +412,14 @@ if data_processing:
     measure_file.to_excel(data_path+'QNIA_Measures.xlsx', sheet_name='QNIA_Measures')
     for f in FREQNAME:
         if db_table_t_dict[f].empty == False:
-            DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+            DATA_BASE_main[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
             DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
     df_key = pd.DataFrame(KEY_DATA, columns = key_list)
     if df_key.empty and find_unknown == False:
         ERROR('Empty dataframe')
     elif df_key.empty and find_unknown == True:
         ERROR('No new items were found.')
-    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown)
+    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_main, DB_name_dict, find_unknown=find_unknown)
 
 logging.info(df_key)
 #logging.info(DATA_BASE_t)

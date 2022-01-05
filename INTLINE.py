@@ -1,7 +1,7 @@
 # !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
-import math, sys, calendar, os, copy, time, logging, zipfile
+import math, sys, calendar, os, copy, time, logging, zipfile, sqlalchemy
 import regex as re
 import pandas as pd
 import numpy as np
@@ -16,6 +16,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from iteration_utilities import duplicates
+from sqlalchemy import create_engine
 import INTLINE_extention as EXT
 from INTLINE_extention import ERROR, readFile, readExcelFile, GET_NAME, MERGE, NEW_KEYS, CONCATE, UPDATE, INTLINE_NOTE, takeFirst, INTLINE_BLS, INTLINE_BASE_YEAR, NEW_LABEL, \
  INTLINE_STL, INTLINE_FTD, INTLINE_DOE, INTLINE_LATEST_STEEL, INTLINE_STEEL, INTLINE_STOCK, INTLINE_ONS, INTLINE_WEB, INTLINE_BOE, INTLINE_EUC, INTLINE_EST, INTLINE_KERI, \
@@ -35,13 +36,13 @@ start_yearM = 1901
 start_yearS = 1901
 merging = False
 updating = False
-data_processing = True#bool(int(input('Processing data (1/0): ')))#
+data_processing = bool(int(input('Processing data (1/0): ')))#True#
 keyword = ['','']
 bls_start = dealing_start_year
 STOCK_start = dealing_start_year
 DF_suffix = test.DF_suffix
 #Historical = True
-make_discontinued = True#False#
+make_discontinued = False#True#
 ENCODING = EXT.ENCODING
 excel_suffix = EXT.excel_suffix
 LOG = ['excel_suffix', 'data_processing', 'find_unknown','dealing_start_year']
@@ -66,6 +67,17 @@ for i in range(len(key_list)):
         snl_pos = i
         break
 tStart = time.time()
+using_database = True
+pwd = open(data_path+'password.txt','r',encoding='ANSI').read()
+try:
+    engine = create_engine('mysql+pymysql://root:'+pwd+'@localhost:3306')
+    connection = engine.connect()
+except sqlalchemy.exc.OperationalError:
+    using_database = False
+else:
+    if 'intline' not in connection.dialect.get_schema_names(connection):
+        connection.execute('create database intline')
+    engine = create_engine('mysql+pymysql://root:'+pwd+'@localhost:3306/intline')
 
 FREQNAME = {'A':'annual','M':'month','Q':'quarter','S':'semiannual','W':'week','D':'daily'}
 FREQLIST = {}
@@ -88,11 +100,11 @@ FREQLIST['D'] = pd.date_range(start = str(start_year)+'-01-01', end = update).st
 FREQLIST['D'].reverse()
 
 KEY_DATA = []
-DATA_BASE_dict = {}
+DATA_BASE_main = {}
 db_table_t_dict = {}
 DB_name_dict = {}
 for f in FREQNAME:
-    DATA_BASE_dict[f] = {}
+    DATA_BASE_main[f] = {}
     db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
     DB_name_dict[f] = []
 DB_TABLE = 'DB_'
@@ -101,8 +113,8 @@ table_num_dict = {}
 code_num_dict = {}
 
 if data_processing:
-    find_unknown = True
-    #find_unknown = bool(int(input('Check if new items exist (1/0): ')))
+    #find_unknown = True
+    find_unknown = bool(int(input('Check if new items exist (1/0): ')))
     """if find_unknown == False:
         dealing_start_year = int(input("Dealing with data from year: "))
         start_year = dealing_start_year-10
@@ -111,6 +123,9 @@ if data_processing:
         start_yearS = dealing_start_year-10"""
     keyword = input('keyword: ')
     keyword = re.split(r'/', keyword)
+    process_from = False
+    start_key = None
+    start = True
     if len(keyword) < 2:
         keyword.append('')
     if keyword[0] == '134':
@@ -119,6 +134,12 @@ if data_processing:
             ignore = re.split(r',', ig)
         else:
             ignore = []
+    elif keyword[0] == 'from':
+        process_from = True
+        start_key = keyword[1]
+        start = False
+        keyword = ['','']
+        ignore = []
     else:
         ignore = []
     sys.stdout.write("\n\n")
@@ -194,14 +215,18 @@ while data_processing == False:
             sys.stdout.write("\rSetting new keys: "+str(db_table_new)+" "+str(db_code_new))
             sys.stdout.flush()
             freq = main_file.iloc[f]['freq']
-            df_key, DATA_BASE_dict[freq], DB_name_dict[freq], db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], db_table_new, db_code_new = \
-                NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, main_file, main_database, db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], DATA_BASE_dict[freq], DB_name_dict[freq])
+            main_file, DATA_BASE_main[freq], DB_name_dict[freq], db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], db_table_new, db_code_new = \
+                NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, main_file, main_database, db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], DATA_BASE_main[freq], DB_name_dict[freq])
         sys.stdout.write("\n")
         for f in FREQNAME:
             if db_table_t_dict[f].empty == False:
-                DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+                DATA_BASE_main[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
                 DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
-        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown, DATA_BASE_t=merge_database)
+        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, main_file, merge_file, DATA_BASE_main, DB_name_dict, find_unknown=find_unknown, DATA_BASE_t=merge_database)
+        for f in FREQNAME:
+            DATA_BASE_main[f] = {}
+            db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
+            DB_name_dict[f] = []
     elif updating:
         if 'table_id' in key_list:
             key_list.remove('table_id')
@@ -220,7 +245,14 @@ while data_processing == False:
 DF_KEY = pd.DataFrame()
 if updating == False and DF_suffix != merge_suf:
     logging.info('Reading file: INTLINE_key'+DF_suffix+', Time: '+str(int(time.time() - tStart))+'s'+'\n')
-    DF_KEY = readExcelFile(out_path+'INTLINE_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='INTLINE_key')
+    try:
+        pd.read_sql_query("SELECT * FROM "+('INTLINE_key'+DF_suffix).lower(), engine)
+    except:
+        using_database = False
+    if using_database:
+        DF_KEY = pd.read_sql_query("SELECT * FROM "+('INTLINE_key'+DF_suffix).lower(), engine)
+    else:
+        DF_KEY = readExcelFile(out_path+'INTLINE_key'+DF_suffix+'.xlsx', header_ = 0, acceptNoFile=False, index_col_=0, sheet_name_='INTLINE_key')
     DF_KEY = DF_KEY.set_index('name')
 elif updating == False and DF_suffix == merge_suf:
     DF_KEY = merge_file
@@ -823,6 +855,11 @@ for country in COUNTRY(TABLES):
         continue
     for source in SOURCE(country):
         for address in FILE_ADDRESS(country, source):
+            if process_from == True and start == False:
+                if str(country) == start_key or str(address).find(start_key)>=0:
+                    start = True
+                else:
+                    continue
             if (str(country)+str(address)).find(keyword[0]) < 0:
                 continue
             to_be_ignore =False
@@ -919,6 +956,8 @@ for country in COUNTRY(TABLES):
                         sname = None
                     if make_discontinued == False and source != 'Bureau of Economic Analysis' and str(NEW_TABLES.loc[(country,address,fname), 'keyword']).find('discontinued') >= 0:
                         continue
+                    elif str(NEW_TABLES.loc[(country,address,fname), 'keyword']).find('suspended') >= 0:
+                        continue
                     if address.find('BOJ') >= 0 and (str(sname).find('LTPLR') >= 0 or str(sname).find('PR') >= 0):
                         country_datasets = False
                     bls_read = False
@@ -1000,11 +1039,25 @@ for country in COUNTRY(TABLES):
                                     if csv == False and tables[0] != 0 and tables[0] != 'None':
                                         if tables[0] == '-1':
                                             INTLINE_temp2 = INTLINE_temp[list(INTLINE_temp.keys())[-1]].copy()
+                                        elif address.find('ANFIA') >= 0:
+                                            yr_change = False
+                                            try:
+                                                INTLINE_temp2 = INTLINE_temp[t].copy()
+                                            except KeyError:
+                                                t = t.replace(str(datetime.today().year), str(datetime.today().year-1))
+                                                INTLINE_temp2 = INTLINE_temp[t].copy()
+                                                yr_change = True
                                         else:
                                             INTLINE_temp2 = INTLINE_temp[t].copy()
                                         if type(INTLINE_previous) == dict:
                                             if address.find('ITIA') >= 0:
                                                 INTLINE_previous2 = INTLINE_previous[Table.loc[fname, 'previous_sheet']].copy()
+                                            elif address.find('ANFIA') >= 0:
+                                                t_previous = t.replace(str(datetime.today().year), str(datetime.today().year-1))
+                                                if yr_change == False:
+                                                    INTLINE_previous2 = INTLINE_previous[t_previous].copy()
+                                                else:
+                                                    INTLINE_previous2 = INTLINE_previous[t_previous.replace(str(datetime.today().year-1), str(datetime.today().year-2))].copy()
                                             else:
                                                 INTLINE_previous2 = INTLINE_previous[t].copy()
                                     if single_key == True:
@@ -1018,11 +1071,13 @@ for country in COUNTRY(TABLES):
                                     elif address.find('IIPD') >= 0 or address.find('MCPI') >= 0:
                                         INTLINE_tem, label_tem, label_level_tem, note, footnote = INTLINE_METI(INTLINE_temp2, INTLINE_previous2, data_path, country, address, sname, t, Table=Table.reset_index().set_index('File or Sheet'), freq=freq, transpose=trans, base_year=base_year)
                                         label_level = pd.concat([label_level, label_level_tem], ignore_index=False)
+                                    # if INTLINE_tem == 'testing':
+                                    #     continue
                                     INTLINE_t = pd.concat([INTLINE_t, INTLINE_tem], ignore_index=False)
                                     INTLINE_t = INTLINE_t.sort_index(axis=1)
                                     label = pd.concat([label, label_tem], ignore_index=False)
                             #print(INTLINE_t)
-                            #continue
+                            # continue
                         elif source == 'Bank of Japan' and (str(sname).find('LTPLR') >= 0 or str(sname).find('PR') >= 0):
                             if str(sname).find('LTPLR') >= 0:
                                 st_year = 1966
@@ -1238,7 +1293,7 @@ for country in COUNTRY(TABLES):
                         if not not list(duplicates(label.index.dropna())):
                             if False in [d in NonValue for d in list(duplicates(label.index.dropna()))]:
                                 ERROR('Duplicated Indices found in the file.')
-                        #print(INTLINE_t)
+                        print(INTLINE_t)
                         #continue
                         nG = INTLINE_t.shape[0]
                         if find_unknown == False:
@@ -1264,8 +1319,8 @@ for country in COUNTRY(TABLES):
                                 repl = '-'
                             elif freq == 'Q' and source == 'Bureau of Economic Analysis':
                                 repl = '-Q'
-                            code_num_dict[freq], table_num_dict[freq], DATA_BASE_dict[freq], db_table_t_dict[freq], DB_name_dict[freq], snl = \
-                                INTLINE_DATA(i, name, INTLINE_t, country, address, fname, sname, value, index, code_num_dict[freq], table_num_dict[freq], KEY_DATA, DATA_BASE_dict[freq],\
+                            code_num_dict[freq], table_num_dict[freq], DATA_BASE_main[freq], db_table_t_dict[freq], DB_name_dict[freq], snl = \
+                                INTLINE_DATA(i, name, INTLINE_t, country, address, fname, sname, value, index, code_num_dict[freq], table_num_dict[freq], KEY_DATA, DATA_BASE_main[freq],\
                                     db_table_t_dict[freq], DB_name_dict[freq], snl, source, FREQLIST[freq], freq, unit, label, label_level, note, footnote, series=Series, \
                                         table=Table, titles=Titles, repl=repl, repl2=repl2, QUAR=QUAR2, RAUQ=RAUQ, country_series=country_series)
                         sys.stdout.write("\n\n")
@@ -1279,14 +1334,14 @@ print('Time: '+str(int(time.time() - tStart))+' s'+'\n')
 if data_processing:
     for f in FREQNAME:
         if db_table_t_dict[f].empty == False:
-            DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+            DATA_BASE_main[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
             DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
     df_key = pd.DataFrame(KEY_DATA, columns = key_list)
     if df_key.empty and find_unknown == False:
         ERROR('Empty dataframe')
     elif df_key.empty and find_unknown == True:
         ERROR('No new items were found.')
-    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown)
+    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_main, DB_name_dict, find_unknown=find_unknown)
 
     if find_unknown == True:
         NEW_TABLES['new_counts'] = [0 for i in range(NEW_TABLES.shape[0])]
@@ -1316,7 +1371,7 @@ if data_processing:
                 ERROR('Item not counted: name = '+df_key.iloc[ind]['name']+', table_id = '+df_key.iloc[ind]['table_id'])
         for ind in range(NEW_TABLES.shape[0]):
             if NEW_TABLES.iloc[ind]['new_counts'] != 0 and NEW_TABLES.iloc[ind]['counts'] != NEW_TABLES.iloc[ind]['new_counts']:
-                new_tables = new_tables.append(NEW_TABLES.iloc[ind])
+                new_tables = new_tables.append(NEW_TABLES.reset_index().set_index(['Sheet','File']).iloc[ind])
         sys.stdout.write("\n\n")
         df_key = df_key.drop(columns=['table_id'])
     else:

@@ -16,6 +16,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from iteration_utilities import duplicates
+import sqlalchemy
+from sqlalchemy import create_engine
 import US_extention as EXT
 from US_extention import ERROR, readFile, readExcelFile, US_NOTE, US_HISTORYDATA, DATA_SETS, takeFirst, US_IHS, US_BLS, MERGE, NEW_KEYS, CONCATE, UPDATE, ATTRIBUTES,\
  US_POPP, US_FAMI, EXCHANGE, NEW_LABEL, US_STL, US_DOT, US_TICS, US_BTSDOL, US_ISM, US_RCM, US_CBS, US_DOA, US_AISI, US_EIAIRS, US_SEMI, US_WEB, GET_NAME, PRESENT, US_FTD_NEW, US_POPT
@@ -63,6 +65,17 @@ for i in range(len(key_list)):
         snl_pos = i
         break
 tStart = time.time()
+using_database = True
+pwd = open(data_path+'password.txt','r',encoding='ANSI').read()
+try:
+    engine = create_engine('mysql+pymysql://root:'+pwd+'@localhost:3306')
+    connection = engine.connect()
+except sqlalchemy.exc.OperationalError:
+    using_database = False
+else:
+    if databank.lower() not in connection.dialect.get_schema_names(connection):
+        connection.execute('create database '+databank.lower())
+    engine = create_engine('mysql+pymysql://root:'+pwd+'@localhost:3306/'+databank.lower())
 
 FREQNAME = {'A':'annual','M':'month','Q':'quarter','S':'semiannual','W':'week'}
 FREQLIST = {}
@@ -87,11 +100,11 @@ FREQLIST['W'] = pd.date_range(start = str(start_year)+'-01-01',end=update,freq='
 #FREQLIST['W_s'] = pd.date_range(start = str(start_year)+'-01-01',end=update,freq='W-SAT').strftime('%Y-%m-%d')
 
 KEY_DATA = []
-DATA_BASE_dict = {}
+DATA_BASE_main = {}
 db_table_t_dict = {}
 DB_name_dict = {}
 for f in FREQNAME:
-    DATA_BASE_dict[f] = {}
+    DATA_BASE_main[f] = {}
     db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
     DB_name_dict[f] = []
 DB_TABLE = 'DB_'
@@ -210,14 +223,18 @@ while data_processing == False:
             sys.stdout.write("\rSetting new keys: "+str(db_table_new)+" "+str(db_code_new))
             sys.stdout.flush()
             freq = main_file.iloc[f]['freq']
-            df_key, DATA_BASE_dict[freq], DB_name_dict[freq], db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], db_table_new, db_code_new = \
-                NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, main_file, main_database, db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], DATA_BASE_dict[freq], DB_name_dict[freq])
+            df_key, DATA_BASE_main[freq], DB_name_dict[freq], db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], db_table_new, db_code_new = \
+                NEW_KEYS(f, freq, FREQLIST, DB_TABLE, DB_CODE, main_file, main_database, db_table_t_dict[freq], table_num_dict[freq], code_num_dict[freq], DATA_BASE_main[freq], DB_name_dict[freq])
         sys.stdout.write("\n")
         for f in FREQNAME:
             if db_table_t_dict[f].empty == False:
-                DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+                DATA_BASE_main[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
                 DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
-        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown, DATA_BASE_t=merge_database)
+        df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_main, DB_name_dict, DATA_BASE_t=merge_database)
+        for f in FREQNAME:
+            DATA_BASE_main[f] = {}
+            db_table_t_dict[f] = pd.DataFrame(index = FREQLIST[f], columns = [])
+            DB_name_dict[f] = []
     elif updating:
         if 'table_id' in key_list:
             key_list.remove('table_id')
@@ -235,7 +252,10 @@ while data_processing == False:
 
 if updating == False and DF_suffix != merge_suf:
     logging.info('Reading file: US_key'+DF_suffix+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
-    DF_KEY = readExcelFile(out_path+'US_key'+DF_suffix+'.xlsx', header_=0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
+    if using_database:
+        DF_KEY = pd.read_sql_query("SELECT * FROM "+('US_key'+DF_suffix).lower(), engine)
+    else:
+        DF_KEY = readExcelFile(out_path+'US_key'+DF_suffix+'.xlsx', header_=0, acceptNoFile=False, index_col_=0, sheet_name_='US_key')
     DF_KEY = DF_KEY.set_index('name')
 elif updating == False and DF_suffix == merge_suf:
     DF_KEY = merge_file
@@ -957,7 +977,8 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
             if str(Table['base_year'][US_t.iloc[ind]['Index']]).isnumeric():
                 unit = str(US_t.iloc[ind]['unit'])
             else:
-                unit = series['UNIT'].loc[US_t.iloc[ind]['unit'], uni+'_'+text].capitalize().replace('%', 'Percent')
+                series['UNIT'].index = [str(dex) for dex in series['UNIT'].index]
+                unit = series['UNIT'].loc[str(US_t.iloc[ind]['unit']), uni+'_'+text].capitalize().replace('%', 'Percent')
         elif address.find('ec/') >= 0:
             unit_t = series['UNIT'].loc[US_t.iloc[ind]['unit'], uni+'_'+text].capitalize()
             if unit_t.find('Index') >= 0:
@@ -1267,8 +1288,14 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
     if (bls_start == None or (bls_start != None and find_unknown == True)) and source == 'Bureau Of Labor Statistics':
         if frequency == 'M' and start.replace('-', '-M') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('-M','-')]).strip() not in NonValue:
             ERROR('start error: '+str(name)+', produced start = '+start.replace('-', '-M')+', dataframe start = '+US_t.iloc[ind]['start'])
-        elif frequency == 'A' and str(start)+YEAR[repl] != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['start'].replace(YEAR[repl],''))]).strip() not in NonValue:
-            ERROR('start error: '+str(name)+', produced start = '+str(last)+YEAR[repl]+', dataframe start = '+US_t.iloc[ind]['start'])
+        elif frequency == 'A' and str(start)+YEAR[repl] != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find(YEAR[repl]) >= 0:
+            year_index = US_t.iloc[ind]['start'].replace(YEAR[repl],'')
+            try:
+                year_value = US_t.iloc[ind][int(year_index)]
+            except IndexError:
+                year_value = US_t.iloc[ind][year_index]
+            if str(year_value).strip() not in NonValue:
+                ERROR('start error: '+str(name)+', produced start = '+str(last)+YEAR[repl]+', dataframe start = '+US_t.iloc[ind]['start'])
         elif frequency == 'S' and start.replace('S', 'S0') != US_t.iloc[ind]['start'] and US_t.iloc[ind]['start'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace('S0','S')]).strip() not in NonValue:
             ERROR('start error: '+str(name)+', produced start = '+start.replace('S', 'S0')+', dataframe start = '+US_t.iloc[ind]['start'])
         elif frequency == 'Q' and US_t.iloc[ind]['start'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['start'].replace(US_t.iloc[ind]['start'][-3:],QUAR[US_t.iloc[ind]['start'][-3:]])]).strip() not in NonValue:
@@ -1277,8 +1304,14 @@ def US_DATA(ind, name, US_t, address, file_name, sheet_name, value, index, code_
     if source == 'Bureau Of Labor Statistics' and str(US_t.iloc[ind]['last'])[:4] >= str(dealing_start_year):
         if frequency == 'M' and last.replace('-', '-M') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('-M13') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('-M','-')]).strip() not in NonValue:
             ERROR('last error: '+str(name)+', produced last = '+last.replace('-', '-M')+', dataframe last = '+US_t.iloc[ind]['last'])
-        elif frequency == 'A' and str(last)+YEAR[repl] != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find(YEAR[repl]) >= 0 and str(US_t.iloc[ind][int(US_t.iloc[ind]['last'].replace(YEAR[repl],''))]).strip() not in NonValue:
-            ERROR('last error: '+str(name)+', produced last = '+str(last)+YEAR[repl]+', dataframe last = '+US_t.iloc[ind]['last'])
+        elif frequency == 'A' and str(last)+YEAR[repl] != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find(YEAR[repl]) >= 0:
+            year_index = US_t.iloc[ind]['last'].replace(YEAR[repl],'')
+            try:
+                year_value = US_t.iloc[ind][int(year_index)]
+            except IndexError:
+                year_value = US_t.iloc[ind][year_index]
+            if str(year_value).strip() not in NonValue:
+                ERROR('last error: '+str(name)+', produced last = '+str(last)+YEAR[repl]+', dataframe last = '+US_t.iloc[ind]['last'])
         elif frequency == 'S' and last.replace('S', 'S0') != US_t.iloc[ind]['last'] and US_t.iloc[ind]['last'].find('S03') < 0 and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace('S0','S')]).strip() not in NonValue:
             ERROR('last error: '+str(name)+', produced last = '+last.replace('S', 'S0')+', dataframe last = '+US_t.iloc[ind]['last'])
         elif frequency == 'Q' and US_t.iloc[ind]['last'][-3:] in QUAR and str(US_t.iloc[ind][US_t.iloc[ind]['last'].replace(US_t.iloc[ind]['last'][-3:],QUAR[US_t.iloc[ind]['last'][-3:]])]).strip() not in NonValue:
@@ -1735,6 +1768,26 @@ for source in SOURCE(TABLES):
                         new_label = bool(Series['datasets'].loc[address, 'NEW_LAB'])
                         bls_key = str(Series['datasets'].loc[address, 'Y_KEY'])
                         bls_key2 = str(Series['datasets'].loc[address, 'Q_KEY'])
+                        cat_idx = str(Series['datasets'].loc[address, 'CATEGORIES'])[3:]
+                        item = str(Series['datasets'].loc[address, 'CONTENT']).lower()
+                        idb = str(Series['datasets'].loc[address, 'UNIT'])[3:]+'_code'
+                        labb = 'series_title'
+                        if str(Series['datasets'].loc[address, 'LAB_BASE']) != 'nan':
+                            labb = str(Series['datasets'].loc[address, 'LAB_BASE'])+'_code'
+                        if address.find('bd/') >= 0:
+                            cat_idx = 'industry'
+                        if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ei/') >= 0:
+                            idb = 'base_period'
+                        elif address.find('ce/') >= 0:
+                            idb = 'data_type_code'
+                        elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
+                            idb = 'base_year'
+                        elif address.find('in/') >= 0:
+                            idb = 'economicseries_code'
+                        elif address.find('ml/') >= 0:
+                            idb = 'irc_code'
+                        elif str(Series['datasets'].loc[address, 'UNIT']) == 'nan':
+                            idb = 'base_date'
                         PERIODS = {'A':YEAR[bls_key],'S':SEMI,'Q':QUAR[bls_key2],'M':MON}
                         US_t_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+' - '+FREQ[freq]+' - Final.csv'
                         freq_path = data_path+'BLS/'+address[-3:-1]+'/'+fname+' - '+FREQ[freq]+'.csv'
@@ -1778,29 +1831,10 @@ for source in SOURCE(TABLES):
                                 US_temp = US_temp.loc[US_temp['period'].isin(PERIODS[freq])]
                                 US_temp.to_csv(freq_path)
                             if US_temp.empty == False:
-                                cat_idx = str(Series['datasets'].loc[address, 'CATEGORIES'])[3:]
-                                item = str(Series['datasets'].loc[address, 'CONTENT']).lower()
-                                idb = str(Series['datasets'].loc[address, 'UNIT'])[3:]+'_code'
-                                labb = 'series_title'
-                                if str(Series['datasets'].loc[address, 'LAB_BASE']) != 'nan':
-                                    labb = str(Series['datasets'].loc[address, 'LAB_BASE'])+'_code'
-                                if address.find('bd/') >= 0:
-                                    cat_idx = 'industry'
-                                if address.find('cu') >= 0 or address.find('cw') >= 0 or address.find('li/') >= 0 or address.find('ei/') >= 0:
-                                    idb = 'base_period'
-                                elif address.find('ce/') >= 0:
-                                    idb = 'data_type_code'
-                                elif address.find('pr/') >= 0 or address.find('mp/') >= 0:
-                                    idb = 'base_year'
-                                elif address.find('in/') >= 0:
-                                    idb = 'economicseries_code'
-                                elif address.find('ml/') >= 0:
-                                    idb = 'irc_code'
-                                elif str(Series['datasets'].loc[address, 'UNIT']) == 'nan':
-                                    idb = 'base_date'
                                 US_t, label, note, footnote = US_BLS(US_temp, Table, freq, YEAR, QUAR, index_base=idb, address=address, DF_KEY=DF_KEY, start=bls_start, key=bls_key, key2=bls_key2, lab_base=labb, find_unknown=find_unknown, Series=Series)
                                 US_t.index.name = 'index'
-                                US_t.to_csv(US_t_path)
+                                if find_unknown == False:
+                                    US_t.to_csv(US_t_path)
                             else:
                                 continue
                         if US_t.empty == False:
@@ -1905,8 +1939,8 @@ for source in SOURCE(TABLES):
                             repl = '-'
                         elif freq == 'Q' and source == 'Bureau of Economic Analysis':
                             repl = '-Q'
-                        code_num_dict[freq], table_num_dict[freq], DATA_BASE_dict[freq], db_table_t_dict[freq], DB_name_dict[freq], snl = \
-                            US_DATA(i, name, US_t, address, fname, sname, value, index, code_num_dict[freq], table_num_dict[freq], KEY_DATA, DATA_BASE_dict[freq],\
+                        code_num_dict[freq], table_num_dict[freq], DATA_BASE_main[freq], db_table_t_dict[freq], DB_name_dict[freq], snl = \
+                            US_DATA(i, name, US_t, address, fname, sname, value, index, code_num_dict[freq], table_num_dict[freq], KEY_DATA, DATA_BASE_main[freq],\
                                  db_table_t_dict[freq], DB_name_dict[freq], snl, source, FREQLIST[freq], freq, unit, label, label_level, note, footnote, series=Series, \
                                      table=Table, titles=Titles, repl=repl, repl2=repl2, formnote=formnote, YEAR=YEAR2, QUAR=QUAR2, RAUQ=RAUQ)
                     sys.stdout.write("\n\n")
@@ -1923,14 +1957,14 @@ if data_processing:
             #if f == 'W':
             #    db_table_t_dict[f] = db_table_t_dict[f].reindex(FREQLIST['W_s'])
             #    #FREQLIST['W'] = FREQLIST['W_s']
-            DATA_BASE_dict[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
+            DATA_BASE_main[f][DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0')] = db_table_t_dict[f]
             DB_name_dict[f].append(DB_TABLE+f+'_'+str(table_num_dict[f]).rjust(4,'0'))
     df_key = pd.DataFrame(KEY_DATA, columns = key_list)
     if df_key.empty and find_unknown == False:
         ERROR('Empty dataframe')
     elif df_key.empty and find_unknown == True:
         ERROR('No new items were found.')
-    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_dict, DB_name_dict, find_unknown=find_unknown)
+    df_key, DATA_BASE_dict = CONCATE(NAME, merge_suf, out_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart, df_key, merge_file, DATA_BASE_main, DB_name_dict)
 
     if find_unknown == True:
         NEW_TABLES['new_counts'] = [0 for i in range(NEW_TABLES.shape[0])]
@@ -2011,6 +2045,7 @@ if monthly_num > maximum:#database_num > 1:
             writer.save()
             sys.stdout.write("\n")
 else:
+    database_num = 1
     with pd.ExcelWriter(out_path+NAME+"database"+excel_suffix+".xlsx") as writer: # pylint: disable=abstract-class-instantiated
         for key in DATA_BASE_dict:
             sys.stdout.write("\rOutputing sheet: "+str(key))

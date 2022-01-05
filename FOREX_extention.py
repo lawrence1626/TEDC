@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=E1101
 # pylint: disable=unbalanced-tuple-unpacking
-import math, re, sys, calendar, os, copy, time, shutil, logging
+import math, re, sys, calendar, os, copy, time, shutil, logging, traceback
 import pandas as pd
 import numpy as np
 import requests as rq
@@ -21,6 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import NoSuchElementException
 from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import ElementClickInterceptedException
 import webdriver_manager
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -91,9 +92,9 @@ def ERROR(error_text, waiting=False):
         sys.stdout.write('\n\n')
     sys.exit()
 
-def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,encoding_=ENCODING,engine_='python',sep_=None, wait=False):
+def readFile(dire, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,encoding_=ENCODING,engine_='python',sep_=None, wait=False):
     try:
-        t = pd.read_csv(dir, header=header_,skiprows=skiprows_,index_col=index_col_,skipfooter=skipfooter_,\
+        t = pd.read_csv(dire, header=header_,skiprows=skiprows_,index_col=index_col_,skipfooter=skipfooter_,\
                         names=names_,usecols=usecols_,nrows=nrows_,encoding=encoding_,engine=engine_,sep=sep_)
         #print(t)
         return t
@@ -104,7 +105,7 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
             if wait == True:
                 ERROR('Waiting for Download...', waiting=True)
             else:
-                ERROR('找不到檔案：'+dir)
+                ERROR('找不到檔案：'+dire)
     except HTTPError as err:
         if acceptNoFile:
             return default
@@ -112,17 +113,17 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
             ERROR(str(err))
     except:
         try: #檔案編碼格式不同
-            t = pd.read_csv(dir, header=header_,skiprows=skiprows_,index_col=index_col_,skipfooter=skipfooter_,\
+            t = pd.read_csv(dire, header=header_,skiprows=skiprows_,index_col=index_col_,skipfooter=skipfooter_,\
                         names=names_,usecols=usecols_,nrows=nrows_,engine=engine_,sep=sep_)
             #print(t)
             return t
         except UnicodeDecodeError as err:
             ERROR(str(err))
 
-def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
-             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine_='openpyxl',wait=False):
+def readExcelFile(dire, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
+             header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine_=None,wait=False):
     try:
-        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_,engine=engine_)
+        t = pd.read_excel(dire,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_, engine=engine_)
         #print(t)
         return t
     except (OSError, FileNotFoundError):
@@ -132,10 +133,10 @@ def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=Tru
             if wait == True:
                 ERROR('Waiting for Download...', waiting=True)
             else:
-                ERROR('找不到檔案：'+dir)
+                ERROR('找不到檔案：'+dire)
     except:
         try: #檔案編碼格式不同
-            t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
+            t = pd.read_excel(dire,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
             #print(t)
             return t
         except UnicodeDecodeError as err:
@@ -278,19 +279,19 @@ def FOREX_WEB(chrome, g, file_name, url, header=None, index_col=0, skiprows=None
                     #ActionChains(chrome).send_keys(Keys.ENTER).perform()
                     link_found = True
             elif g >= 3 and g <= 7:
-                WebDriverWait(chrome, 15).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="PPTSScrollBarContainer"]')))
+                WebDriverWait(chrome, 30).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="PPTSScrollBarContainer"]')))
                 if g >= 3 and g <= 6:
                     chrome.find_element_by_xpath('.//div[@class="PPTabControlItems"]/div[contains(., "'+FREQ[freq]+'")]').click()
                     while True:
                         time.sleep(5)
                         WebDriverWait(chrome, 10).until(EC.element_to_be_clickable((By.XPATH, './/td[@class="Custom PPTextBoxSideContainer"]/div/div'))).click()
                         ActionChains(chrome).move_to_element(chrome.find_element_by_xpath('.//td[input[@class="PPTextBoxInput"]]')).send_keys(ITEM[g]).perform()
-                        time.sleep(5)
-                        WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/table[@class="PPTLVNodesTable"]/tbody/tr'))).click()
+                        time.sleep(10)
+                        WebDriverWait(chrome, 20).until(EC.visibility_of_element_located((By.XPATH, './/table[@class="PPTLVNodesTable"]/tbody/tr'))).click()
                         try:
-                            WebDriverWait(chrome, 10).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="PPTSCellConText"][contains(text(), "'+ITEM[g]+'")]')))
+                            WebDriverWait(chrome, 20).until(EC.visibility_of_element_located((By.XPATH, './/div[@class="PPTSCellConText"][contains(text(), "'+ITEM[g]+'")]')))
                             #chrome.find_element_by_xpath('.//div[@class="PPTSCellConText"][contains(text(), "'+ITEM[g]+'")]')
-                        except (NoSuchElementException, StaleElementReferenceException):
+                        except (TimeoutException, NoSuchElementException, StaleElementReferenceException, ElementClickInterceptedException):
                             time.sleep(1)
                         else:
                             report = 'Selected sheets'
@@ -313,7 +314,8 @@ def FOREX_WEB(chrome, g, file_name, url, header=None, index_col=0, skiprows=None
                 link_found = True
             if link_found == False:
                 raise FileNotFoundError
-        except (FileNotFoundError, TimeoutException):
+        except (FileNotFoundError, TimeoutException, ElementClickInterceptedException):
+            print(str(traceback.format_exc())[:700])
             y+=500
             if (y > min(height, 5000) and link_found == False):
                 if link_message != None:
@@ -547,7 +549,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                         keep = k
                     else:
                         repeated_index.append(k)
-        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
+        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found ("+str(round((i+1)*100/len(KEY_DATA_t), 1))+"%)*")
         sys.stdout.flush()
     sys.stdout.write("\n")
     for target in repeated_index:

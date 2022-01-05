@@ -58,14 +58,18 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
                         names=names_,usecols=usecols_,nrows=nrows_,encoding=encoding_,engine=engine_,sep=sep_)
         #print(t)
         return t
-    except (OSError, FileNotFoundError):
+    except (OSError, FileNotFoundError) as err:
         if acceptNoFile:
             return default
+        elif str(err).find('urlopen error') >= 0:
+            logging.info(str(err))
+            time.sleep(3)
+            return readFile(dir,header_=header_,names_=names_,skiprows_=skiprows_,index_col_=index_col_,usecols_=usecols_,skipfooter_=skipfooter_,nrows_=nrows_,encoding_=encoding_,engine_='engine_',sep_=sep_, wait=wait)
         else:
             if wait == True:
                 ERROR('Waiting for Download...', waiting=True)
             else:
-                ERROR('找不到檔案：'+dir)
+                ERROR('找不到檔案：'+dir+' '+str(err))
     except HTTPError as err:
         if acceptNoFile:
             return default
@@ -83,7 +87,7 @@ def readFile(dir, default=pd.DataFrame(), acceptNoFile=False,header_=None,names_
 def readExcelFile(dir, default=pd.DataFrame(), acceptNoFile=True, na_filter_=True, \
              header_=None,names_=None,skiprows_=None,index_col_=None,usecols_=None,skipfooter_=0,nrows_=None,sheet_name_=None,engine_='openpyxl',wait=False):
     try:
-        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_,engine=engine_)
+        t = pd.read_excel(dir,sheet_name=sheet_name_, header=header_,names=names_,index_col=index_col_,skiprows=skiprows_,skipfooter=skipfooter_,usecols=usecols_,nrows=nrows_,na_filter=na_filter_)
         #print(t)
         return t
     except (OSError, FileNotFoundError):
@@ -342,13 +346,18 @@ def US_WEBDRIVER(chrome, address, sname, header=None, index_col=None, skiprows=N
         ERROR('The file was not properly downloaded')
     excel_file = chrome.execute_script("return document.querySelector('downloads-manager').shadowRoot.querySelector('#downloadsList downloads-item').shadowRoot.querySelector('div#content  #file-link').text")
     if address.find('NFIB') >= 0:
+        path = (Path.home() / "Downloads" / excel_file).as_posix()
+        timeStart = time.time()
+        while os.path.isfile(path) == False:
+            time.sleep(0)
+            if int(time.time() - timeStart) > 60:
+                ERROR('File Download Error')
         try:
             xl = win32.gencache.EnsureDispatch('Excel.Application')
         except:
             xl = win32.DispatchEx('Excel.Application')
         xl.DisplayAlerts=False
         xl.Visible = 0
-        path = (Path.home() / "Downloads" / excel_file).as_posix()
         ExcelFile = xl.Workbooks.Open(path)
         path_t = path.replace('.xlsx','1.xlsx')
         ExcelFile.SaveCopyAs(path_t)
@@ -409,6 +418,7 @@ def US_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=False, 
     
     link_list = WebDriverWait(chrome, 5).until(EC.presence_of_all_elements_located((By.XPATH, './/*[@href]')))
     link_found = False
+    error_count = 0
     for link in link_list:
         if (text_match == True and link.text.find(keyword) >= 0) or (text_match == False and (link.get_attribute(get_attribute).find(keyword) >= 0 or link.get_attribute(get_attribute).find(keyword.title()) >= 0)):
             while True:
@@ -416,8 +426,10 @@ def US_WEB_LINK(chrome, fname, keyword, get_attribute='href', text_match=False, 
                     link.click()
                 except (ElementClickInterceptedException, StaleElementReferenceException):
                     if fname.find('bea.gov') >= 0:
-                        driver.refresh()
-                        time.sleep(5)
+                        error_count+=1
+                        if error_count > 3:
+                            raise ElementClickInterceptedException
+                        ActionChains(driver).send_keys(Keys.ESCAPE).perform()
                     else:
                         raise ElementClickInterceptedException
                 else:
@@ -467,6 +479,7 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
                     link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='categories=flatfiles', driver=chrome)
                     time.sleep(2)
                     link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.zip', driver=chrome)
+                chrome.refresh()
             elif address.find('STL') >= 0 or file_name == 'UIWC' or file_name == 'UIIT' or file_name == 'BEOL' or file_name == 'TRPT':
                 email = open(data_path+'email.txt','r',encoding='ANSI').read()
                 password = open(data_path+'password.txt','r',encoding='ANSI').read()
@@ -487,7 +500,7 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
                     WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/label[@data-test-id="preset-label-all"]'))).click()
                     time.sleep(2)
                     WebDriverWait(chrome, 5).until(EC.element_to_be_clickable((By.XPATH, './/span[contains(., "Download CSV File")]'))).click()
-                    time.sleep(10)
+                    time.sleep(15)
                     link_found = True
                     #link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.csv.zip')
                 elif address.find('TICS') >= 0:
@@ -510,14 +523,22 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
                 link_found = True
             elif address.find('BTS') >= 0:
                 if sname == 'dl201':
-                    menu = Select(chrome.find_element_by_xpath('.//select[@name="menu"]'))
-                    for op in range(len(menu.options)):
-                        if menu.options[op].text[-4:].isnumeric():
-                            dex = op
+                    start = 0
+                    dex = 0
+                    while True:
+                        menu = Select(chrome.find_element_by_xpath('.//select[@name="menu"]'))
+                        for op in range(start, len(menu.options)):
+                            if menu.options[op].text[-4:].isnumeric():
+                                dex = op
+                                break
+                        menu.select_by_index(dex)
+                        chrome.find_element_by_xpath('.//input[@value="Go"]').click()
+                        link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.cfm')
+                        if link_found == False:
+                            start +=1
+                            chrome.back()
+                        else:
                             break
-                    menu.select_by_index(op)
-                    chrome.find_element_by_xpath('.//input[@value="Go"]').click()
-                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword=str(sname)+'.cfm')
                     US_temp = pd.read_html(chrome.page_source, skiprows=skiprows, header=header, index_col=index_col)[0]
                 elif str(sname).find('table') == 0:
                     link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='.xlsx')
@@ -733,6 +754,8 @@ def US_WEB(chrome, address, fname, sname, freq=None, tables=[0], Table=None, hea
             sys.stdout.write('\n')
             if str(e.__class__.__name__) != 'ElementClickInterceptedException':
                 print(traceback.format_exc())
+            else:
+                ActionChains(chrome).send_keys(Keys.ESCAPE).perform()
             y+=500
             if y > height and link_found == False:
                 print(y, height)
@@ -817,7 +840,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                     DATA_BASE_t[d] = DB_t[d]
         except:
             logging.info('Reading file: '+NAME+'database'+suf+', Time: '+str(int(time.time() - tStart))+' s'+'\n')
-            DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0)
+            DATA_BASE_t = readExcelFile(data_path+NAME+'database'+suf+'.xlsx', header_ = 0, index_col_=0, acceptNoFile=True)
     if KEY_DATA_t.empty == False and type(DATA_BASE_t) != dict:
         ERROR(NAME+'database'+suf+'.xlsx Not Found.')
     elif type(DATA_BASE_t) != dict:
@@ -879,7 +902,7 @@ def CONCATE(NAME, suf, data_path, DB_TABLE, DB_CODE, FREQNAME, FREQLIST, tStart,
                     else:
                         repeated_index.append(k)
             #print(KEY_DATA_t.iloc[keep]) 
-        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found")
+        sys.stdout.write("\r"+str(repeated)+" repeated data key(s) found ("+str(round((i+1)*100/len(KEY_DATA_t), 1))+"%)*")
         sys.stdout.flush()
     sys.stdout.write("\n")
     #rp_idx = []
@@ -1328,7 +1351,7 @@ def US_country(US_temp, Series, prefix, middle, freq, name, bal=False):
 
     return US_t, new_code_t, new_label_t, new_order_t
 
-def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_series=None, MONTH=None, password='', header=None, index_col=None, skiprows=None, freq=None, x='', transpose=True, HIES=False, usecols=None, names=None, multi=None, subword=None, prefix=None, middle=None, suffix=None, chrome=None, key_text='', Zip_table=None, website=None, find_unknown=False, DF_KEY=None):
+def DATA_SETS(data_path, address, datasets=None, fname=None, sname=None, DIY_series=None, MONTH=None, password='', header=None, index_col=None, skiprows=None, freq=None, x='', transpose=True, HIES=False, usecols=None, names=None, multi=None, subword=None, prefix=None, middle=None, suffix=None, chrome=None, key_text=None, Zip_table=None, website=None, find_unknown=False, DF_KEY=None):
     note = []
     footnote = []
     if datasets != None:
@@ -2507,10 +2530,19 @@ def US_FTD(US_t, fname, Series, prefix, middle, suffix, freq, trans, datatype=No
             if str(US_t.columns[ind]).strip().isnumeric():
                 year = str(US_t.columns[ind]).strip()
             if freq == 'A' and re.sub(r'\s+\([A-Z]+\)\s*$', "", str(US_t.columns[ind])).replace(' ', '').strip() in YEAR:
+                if year == 0:
+                    print(US_t.columns)
+                    ERROR('Year Not Found, try to modify the skiprows settings in tables.xlsx')
                 new_columns.append(year)
             elif freq == 'M' and re.sub(r'\s+\([A-Z]+\)\s*$|\s*\.\s*$', "", str(US_t.columns[ind])).strip() in MONTH:
+                if year == 0:
+                    print(US_t.columns)
+                    ERROR('Year Not Found, try to modify the skiprows settings in tables.xlsx')
                 new_columns.append(year+'-'+str(datetime.strptime(re.sub(r'\s+\([A-Z]+\)\s*$|\s*\.\s*$', "", str(US_t.columns[ind])).strip(),'%B').month).rjust(2,'0'))
             elif freq == 'A' and fname.find('SA') >= 0 and str(US_t.columns[ind]).strip().isnumeric():
+                if year == 0:
+                    print(US_t.columns)
+                    ERROR('Year Not Found, try to modify the skiprows settings in tables.xlsx')
                 new_columns.append(year)
             else:
                 new_columns.append(None)
@@ -2594,13 +2626,15 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, US_present=p
                                 table_tail = i
                                 break
                         if key == 'present':
-                            tables[key] = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', header=[3,4], index_col=0, widths=[30]+[8]*13, nrows=table_tail-table_head+1)
+                            tables[key] = pd.read_fwf('https://ticdata.treasury.gov/Publish/mfh.txt', skiprows=list(range(table_head-1)), index_col=0, widths=[30]+[8]*13, nrows=table_tail-table_head+1)
+                            tables[key].columns = pd.MultiIndex.from_frame(tables[key].iloc[:2].T)
                             tables[key].to_csv(data_path+address+fname.replace('his01_historical','')+'.csv')
                         else:
                             tables[key] = readFile(data_path+address+fname.replace('_historical','')+'.csv', header_=[0,1], index_col_=0, skiprows_=list(range(table_head)), nrows_=table_tail-table_head)
                         if tables[key].empty == True:
                             ERROR('Table Not Found: '+key)
                         cols = []
+                        table_temp = tables[key].copy()
                         for col in tables[key].columns:
                             try:
                                 cols.append(col[1]+'-'+str(datetime.strptime(col[0].strip(),'%b').month).rjust(2,'0'))
@@ -2608,12 +2642,15 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, US_present=p
                                 cols.append(None)
                         tables[key].columns = cols
                         tables[key] = tables[key].loc[:,tables[key].columns.dropna()]
+                        if tables[key].empty == True:
+                            print(table_temp)
+                            ERROR('Table Column Error: '+key)
                         inds = []
                         GRAND = ['For. Official', 'Treasury Bills' , 'T-Bonds & Notes']
                         for dex in tables[key].index:
                             middle = ''
                             suffix = ''
-                            if str(dex).strip() == 'nan' or str(dex).strip() == 'Of which:':
+                            if str(dex).strip() == 'nan' or str(dex).strip() == 'Of which:' or str(dex).strip() == 'Country':
                                 inds.append(None)
                                 continue
                             elif str(dex).strip() in GRAND:
@@ -2626,6 +2663,8 @@ def US_TICS(US_temp, Series, data_path, address, fname, start=None, US_present=p
                                     if suf_key in re.split(r'//', item.strip()):
                                         suffix = str(Series['GEO LEVELS'].loc[Series['GEO LEVELS']['name'] == item].index[0])
                             if middle == '' or suffix == '':
+                                print(tables[key])
+                                print("\n"+dex)
                                 ERROR('Item code of "'+str(dex).strip()+'" not found in table: '+key)
                             inds.append(prefix+middle+suffix)
                             if bool(re.search(r'[0-9]+/', str(dex))) and suffix not in Note_suf:
@@ -3950,6 +3989,23 @@ def US_POPT(chrome, website, data_path, address, fname, sname):
         target_link = None
         for link in link_list:
             if link.get_attribute('href')[-5:-1].isnumeric() and int(link.get_attribute('href')[-5:-1]) > target_year:
+                link_url = link.get_attribute('href')
+                chrome.execute_script("window.open()")
+                chrome.switch_to.window(chrome.window_handles[-1])
+                chrome.get(link_url)
+                link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='national')
+                if link_found == False: 
+                    chrome.close()
+                    chrome.switch_to.window(chrome.window_handles[0])
+                    continue
+                else:
+                    link_found, link_meassage = US_WEB_LINK(chrome, fname, keyword='asrh')
+                    if link_found == False:
+                        chrome.close()
+                        chrome.switch_to.window(chrome.window_handles[0])
+                        continue
+                chrome.close()
+                chrome.switch_to.window(chrome.window_handles[0])    
                 target_year = int(link.get_attribute('href')[-5:-1])
                 target_link = link
         if target_link == None:
@@ -4020,6 +4076,8 @@ def US_FTD_NEW(chrome, data_path, address, fname, Series, prefix, middle, suffix
         for auto in AMV:
             US_t = US_FTD_HISTORICAL(chrome, data_path, address, fname, fname_t, Series, prefix, middle, suffix, freq, trans, Zip_table, excel=excel, skip=skip, head=head, index_col=index_col, usecols=usecols, names=names, multi=multi, datatype=data, AMV=auto, final_name=final_name, ft900_name=ft900_name)
     
+    if 'Index' not in US_t.columns:
+        US_t.insert(loc=0, column='Index', value=US_t.index)
     US_t = US_t.sort_values(by=['order','Label'])
     US_t = US_t.loc[US_t.index.dropna()]
     label = US_t['Label']
